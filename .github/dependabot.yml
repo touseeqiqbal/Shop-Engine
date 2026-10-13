@@ -1,0 +1,30 @@
+# Weekly update pull requests – each one is checked by CI (.github/workflows/ci.yml) before you merge it.
+# Payload packages must always move together (one version for all), so they come as one grouped PR.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Karachi
+    open-pull-requests-limit: 5
+    groups:
+      payload:
+        patterns: ["payload", "@payloadcms/*"]
+      next-react:
+        patterns: ["next", "react", "react-dom", "eslint-config-next", "@next/*"]
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+        exclude-patterns: ["payload", "@payloadcms/*", "next", "react", "react-dom", "eslint-config-next", "@next/*"]
+    ignore:
+      # the legacy Prisma tools are frozen (read-only data tools, removed after launch)
+      - dependency-name: "prisma"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@prisma/*"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

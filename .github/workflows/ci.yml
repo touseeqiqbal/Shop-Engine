@@ -1,0 +1,75 @@
+# Checks every push and pull request: lint, types, unit tests, migration safety and a full production build
+# against a fresh Postgres (the same steps Railway's build runs, without touching the live database).
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: urko_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/urko_ci
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      AUTH_TRUST_HOST: "true"
+      # production build without S3 storage / email (only allowed outside Railway)
+      LOCAL_PRODUCTION_TEST: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the migration check compares with the base commit
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Throwaway secrets for this run
+        run: |
+          for name in PAYLOAD_SECRET AUTH_SECRET; do
+            value=$(openssl rand -hex 32)
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+
+      - run: npm ci
+
+      - name: Migrations only add things
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: node scripts/ci/check-migrations.mjs
+
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Payload migrations on an empty database
+        run: npx payload migrate
+        env:
+          NODE_ENV: production
+
+      - name: Production build
+        run: npm run build
+        env:
+          NODE_ENV: production

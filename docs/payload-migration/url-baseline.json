@@ -1,0 +1,678 @@
+{
+  "base": "master (live code)",
+  "takenAt": "2026-10-05T18:10:42.770Z",
+  "urls": {
+    "/": {
+      "status": 200,
+      "location": null
+    },
+    "/about": {
+      "status": 200,
+      "location": null
+    },
+    "/account/login": {
+      "status": 200,
+      "location": null
+    },
+    "/audio/logitech-h390-usb-headset": {
+      "status": 200,
+      "location": null
+    },
+    "/audio/redragon-h510-zeus-gaming-headset": {
+      "status": 200,
+      "location": null
+    },
+    "/batteries/dell-latitude-5420-replacement-battery": {
+      "status": 200,
+      "location": null
+    },
+    "/batteries/hp-elitebook-840-g5-replacement-battery": {
+      "status": 200,
+      "location": null
+    },
+    "/blog": {
+      "status": 200,
+      "location": null
+    },
+    "/blog/best-gaming-mouse-and-keyboards-pakistan": {
+      "status": 200,
+      "location": null
+    },
+    "/blog/best-laptops-under-100000-pakistan": {
+      "status": 200,
+      "location": null
+    },
+    "/blog/category/buying-guides": {
+      "status": 200,
+      "location": null
+    },
+    "/blog/category/gaming": {
+      "status": 200,
+      "location": null
+    },
+    "/blog/category/how-to": {
+      "status": 200,
+      "location": null
+    },
+    "/blog/how-to-choose-laptop-charger": {
+      "status": 200,
+      "location": null
+    },
+    "/blog/laptop-buying-guide-students-pakistan": {
+      "status": 200,
+      "location": null
+    },
+    "/blog/tag/budget-laptops": {
+      "status": 200,
+      "location": null
+    },
+    "/blog/tag/laptop-price-in-pakistan": {
+      "status": 200,
+      "location": null
+    },
+    "/blog/tag/students": {
+      "status": 200,
+      "location": null
+    },
+    "/blog/tag/used-laptops": {
+      "status": 200,
+      "location": null
+    },
+    "/blog/used-vs-new-laptops-pakistan": {
+      "status": 200,
+      "location": null
+    },
+    "/brands": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/a4tech": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/apple": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/asus": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/dell": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/hp": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/kingston": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/lenovo": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/logitech": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/mixed-brands": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/msi": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/razer": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/redragon": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/samsung": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/tp-link": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/ugreen": {
+      "status": 200,
+      "location": null
+    },
+    "/brands/urko": {
+      "status": 200,
+      "location": null
+    },
+    "/cables-hubs/4k-hdmi-cable-1-5m": {
+      "status": 200,
+      "location": null
+    },
+    "/cables-hubs/7-in-1-usb-c-hub-hdmi-4k": {
+      "status": 200,
+      "location": null
+    },
+    "/cart": {
+      "status": 200,
+      "location": null
+    },
+    "/category": {
+      "status": 200,
+      "location": null
+    },
+    "/category/2-in-1-laptops": {
+      "status": 200,
+      "location": null
+    },
+    "/category/adapters": {
+      "status": 200,
+      "location": null
+    },
+    "/category/audio": {
+      "status": 200,
+      "location": null
+    },
+    "/category/bags-sleeves": {
+      "status": 200,
+      "location": null
+    },
+    "/category/batteries": {
+      "status": 200,
+      "location": null
+    },
+    "/category/budget-laptops": {
+      "status": 200,
+      "location": null
+    },
+    "/category/business-laptops": {
+      "status": 200,
+      "location": null
+    },
+    "/category/cables-hubs": {
+      "status": 200,
+      "location": null
+    },
+    "/category/chargers": {
+      "status": 200,
+      "location": null
+    },
+    "/category/cooling-pads": {
+      "status": 200,
+      "location": null
+    },
+    "/category/ddr4-ram": {
+      "status": 200,
+      "location": null
+    },
+    "/category/ddr5-ram": {
+      "status": 200,
+      "location": null
+    },
+    "/category/dell-batteries": {
+      "status": 200,
+      "location": null
+    },
+    "/category/earbuds": {
+      "status": 200,
+      "location": null
+    },
+    "/category/gaming-headsets": {
+      "status": 200,
+      "location": null
+    },
+    "/category/gaming-keyboards": {
+      "status": 200,
+      "location": null
+    },
+    "/category/gaming-laptops": {
+      "status": 200,
+      "location": null
+    },
+    "/category/gaming-mouse": {
+      "status": 200,
+      "location": null
+    },
+    "/category/hard-drives": {
+      "status": 200,
+      "location": null
+    },
+    "/category/hdmi-cables": {
+      "status": 200,
+      "location": null
+    },
+    "/category/headphones": {
+      "status": 200,
+      "location": null
+    },
+    "/category/hp-batteries": {
+      "status": 200,
+      "location": null
+    },
+    "/category/keyboards": {
+      "status": 200,
+      "location": null
+    },
+    "/category/laptop-accessories": {
+      "status": 200,
+      "location": null
+    },
+    "/category/laptop-chargers": {
+      "status": 200,
+      "location": null
+    },
+    "/category/laptop-replacement-keyboards": {
+      "status": 200,
+      "location": null
+    },
+    "/category/laptop-skins": {
+      "status": 200,
+      "location": null
+    },
+    "/category/laptop-stands": {
+      "status": 200,
+      "location": null
+    },
+    "/category/laptops": {
+      "status": 200,
+      "location": null
+    },
+    "/category/lenovo-batteries": {
+      "status": 200,
+      "location": null
+    },
+    "/category/macbooks": {
+      "status": 200,
+      "location": null
+    },
+    "/category/mechanical-keyboards": {
+      "status": 200,
+      "location": null
+    },
+    "/category/memory-cards": {
+      "status": 200,
+      "location": null
+    },
+    "/category/monitors": {
+      "status": 200,
+      "location": null
+    },
+    "/category/mouse": {
+      "status": 200,
+      "location": null
+    },
+    "/category/networking": {
+      "status": 200,
+      "location": null
+    },
+    "/category/ram": {
+      "status": 200,
+      "location": null
+    },
+    "/category/routers": {
+      "status": 200,
+      "location": null
+    },
+    "/category/screen-protectors": {
+      "status": 200,
+      "location": null
+    },
+    "/category/speakers": {
+      "status": 200,
+      "location": null
+    },
+    "/category/ssd": {
+      "status": 200,
+      "location": null
+    },
+    "/category/storage": {
+      "status": 200,
+      "location": null
+    },
+    "/category/student-laptops": {
+      "status": 200,
+      "location": null
+    },
+    "/category/type-c-chargers": {
+      "status": 200,
+      "location": null
+    },
+    "/category/type-c-docks": {
+      "status": 200,
+      "location": null
+    },
+    "/category/universal-adapters": {
+      "status": 200,
+      "location": null
+    },
+    "/category/usb-flash-drives": {
+      "status": 200,
+      "location": null
+    },
+    "/category/usb-hubs": {
+      "status": 200,
+      "location": null
+    },
+    "/category/used-refurbished-laptops": {
+      "status": 200,
+      "location": null
+    },
+    "/category/webcams": {
+      "status": 200,
+      "location": null
+    },
+    "/category/wholesale-lots": {
+      "status": 200,
+      "location": null
+    },
+    "/category/wifi-adapters": {
+      "status": 200,
+      "location": null
+    },
+    "/category/wired-mouse": {
+      "status": 200,
+      "location": null
+    },
+    "/category/wireless-keyboards": {
+      "status": 200,
+      "location": null
+    },
+    "/category/wireless-mouse": {
+      "status": 200,
+      "location": null
+    },
+    "/chargers/dell-65w-type-c-laptop-charger": {
+      "status": 200,
+      "location": null
+    },
+    "/chargers/hp-65w-blue-pin-laptop-charger": {
+      "status": 200,
+      "location": null
+    },
+    "/chargers/lenovo-65w-type-c-laptop-charger": {
+      "status": 200,
+      "location": null
+    },
+    "/chargers/universal-90w-laptop-adapter-8-tips": {
+      "status": 200,
+      "location": null
+    },
+    "/checkout": {
+      "status": 200,
+      "location": null
+    },
+    "/compare": {
+      "status": 200,
+      "location": null
+    },
+    "/contact": {
+      "status": 200,
+      "location": null
+    },
+    "/deals": {
+      "status": 200,
+      "location": null
+    },
+    "/faqs": {
+      "status": 200,
+      "location": null
+    },
+    "/find-parts": {
+      "status": 200,
+      "location": null
+    },
+    "/installments": {
+      "status": 200,
+      "location": null
+    },
+    "/keyboards/hp-elitebook-840-g5-replacement-keyboard": {
+      "status": 200,
+      "location": null
+    },
+    "/keyboards/logitech-k380-wireless-bluetooth-keyboard": {
+      "status": 200,
+      "location": null
+    },
+    "/keyboards/redragon-k552-mechanical-gaming-keyboard": {
+      "status": 200,
+      "location": null
+    },
+    "/laptop-accessories/adjustable-aluminium-laptop-stand": {
+      "status": 200,
+      "location": null
+    },
+    "/laptop-accessories/anti-theft-laptop-backpack-15-6-inch": {
+      "status": 200,
+      "location": null
+    },
+    "/laptop-accessories/laptop-cooling-pad-5-fans-rgb": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-abbottabad": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-bahawalpur": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-faisalabad": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-gujranwala": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-hyderabad": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-islamabad": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-karachi": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-lahore": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-larkana": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-mardan": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-multan": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-peshawar": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-quetta": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-rawalpindi": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-sahiwal": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-sargodha": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-sialkot": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops-in-sukkur": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops/apple-macbook-air-m2-8gb-256gb": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops/asus-tuf-gaming-f15-core-i5-12th-gen-rtx-3050": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops/dell-latitude-5420-core-i7-11th-gen": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops/dell-xps-13-9310-core-i7-11th-gen": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops/hp-elitebook-840-g8-core-i5-11th-gen": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops/hp-pavilion-x360-14-core-i5-11th-gen-touch": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops/hp-probook-450-g8-core-i5-11th-gen": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops/lenovo-ideapad-3-core-i3-12th-gen": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops/lenovo-thinkpad-t14-ryzen-5-pro": {
+      "status": 200,
+      "location": null
+    },
+    "/laptops/msi-gf63-thin-core-i7-12th-gen-rtx-4050": {
+      "status": 200,
+      "location": null
+    },
+    "/llms.txt": {
+      "status": 200,
+      "location": null
+    },
+    "/manifest.webmanifest": {
+      "status": 200,
+      "location": null
+    },
+    "/monitors/samsung-24-inch-ips-75hz-monitor": {
+      "status": 200,
+      "location": null
+    },
+    "/mouse/a4tech-op-620d-wired-mouse": {
+      "status": 200,
+      "location": null
+    },
+    "/mouse/logitech-m185-wireless-mouse": {
+      "status": 200,
+      "location": null
+    },
+    "/mouse/razer-deathadder-essential-gaming-mouse": {
+      "status": 200,
+      "location": null
+    },
+    "/networking/tp-link-archer-c6-ac1200-router": {
+      "status": 200,
+      "location": null
+    },
+    "/networking/tp-link-archer-t2u-plus-wifi-adapter": {
+      "status": 200,
+      "location": null
+    },
+    "/opengraph-image": {
+      "status": 200,
+      "location": null
+    },
+    "/privacy-policy": {
+      "status": 200,
+      "location": null
+    },
+    "/ram/kingston-16gb-ddr4-3200mhz-laptop-ram": {
+      "status": 200,
+      "location": null
+    },
+    "/ram/kingston-fury-impact-16gb-ddr5-4800mhz-laptop-ram": {
+      "status": 200,
+      "location": null
+    },
+    "/robots.txt": {
+      "status": 200,
+      "location": null
+    },
+    "/shipping-policy": {
+      "status": 200,
+      "location": null
+    },
+    "/shop": {
+      "status": 200,
+      "location": null
+    },
+    "/sitemap.xml": {
+      "status": 200,
+      "location": null
+    },
+    "/storage/kingston-datatraveler-exodia-64gb-usb": {
+      "status": 200,
+      "location": null
+    },
+    "/storage/kingston-nv2-512gb-nvme-ssd": {
+      "status": 200,
+      "location": null
+    },
+    "/storage/samsung-870-evo-500gb-sata-ssd": {
+      "status": 200,
+      "location": null
+    },
+    "/terms": {
+      "status": 200,
+      "location": null
+    },
+    "/track-order": {
+      "status": 200,
+      "location": null
+    },
+    "/warranty-returns": {
+      "status": 200,
+      "location": null
+    },
+    "/webcams/logitech-c270-hd-webcam": {
+      "status": 200,
+      "location": null
+    },
+    "/wholesale": {
+      "status": 200,
+      "location": null
+    },
+    "/wholesale-lots/wholesale-lot-20-hp-elitebook-840-g5-core-i5-8th-gen": {
+      "status": 200,
+      "location": null
+    },
+    "/wholesale-lots/wholesale-lot-25-mixed-dell-hp-core-i5-8th-gen": {
+      "status": 200,
+      "location": null
+    },
+    "/wholesale-lots/wholesale-lot-50-laptop-chargers-hp-dell-lenovo-65w": {
+      "status": 200,
+      "location": null
+    }
+  }
+}

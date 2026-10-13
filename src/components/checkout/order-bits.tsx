@@ -1,0 +1,65 @@
+"use client";
+import { useState } from "react";
+import { m as motion } from "framer-motion";
+import { Check, Copy } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+/** Animated success check with confetti-ish burst. */
+export function SuccessBadge() {
+  const dots = Array.from({ length: 12 });
+  return (
+    <div className="relative mx-auto grid size-28 place-items-center" aria-hidden="true">
+      {dots.map((_, i) => {
+        const angle = (i / dots.length) * Math.PI * 2;
+        return (
+          <motion.span
+            key={i}
+            className={cn("absolute size-2 rounded-full", i % 3 === 0 ? "bg-cyan-400" : i % 3 === 1 ? "bg-blue-500" : "bg-violet-500")}
+            initial={{ x: 0, y: 0, opacity: 0, scale: 0.4 }}
+            animate={{ x: Math.cos(angle) * 64, y: Math.sin(angle) * 64, opacity: [0, 1, 0], scale: [0.4, 1, 0.6] }}
+            transition={{ duration: 1.1, delay: 0.35, ease: "easeOut" }}
+          />
+        );
+      })}
+      <motion.div
+        className="absolute inset-2 rounded-full bg-brand-gradient opacity-30 blur-xl"
+        initial={{ scale: 0.6 }}
+        animate={{ scale: [0.6, 1.15, 1] }}
+        transition={{ duration: 0.9 }}
+      />
+      <motion.div
+        className="relative grid size-24 place-items-center rounded-full bg-brand-gradient shadow-2xl"
+        initial={{ scale: 0, rotate: -30 }}
+        animate={{ scale: 1, rotate: 0 }}
+        transition={{ type: "spring", stiffness: 260, damping: 16 }}
+      >
+        <svg viewBox="0 0 24 24" className="size-12 text-white" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+          <motion.path d="M5 12.5l4.5 4.5L19 7.5" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.5, delay: 0.3 }} />
+        </svg>
+      </motion.div>
+    </div>
+  );
+}
+
+export function CopyButton({ value, label = "Copy", className }: { value: string; label?: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className={cn("btn btn-secondary btn-sm", className)}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1800);
+        } catch {
+          /* clipboard blocked */
+        }
+      }}
+      aria-label={copied ? "Copied" : `${label} ${value}`}
+    >
+      {copied ? <Check className="size-4 text-emerald-400" aria-hidden="true" /> : <Copy className="size-4" aria-hidden="true" />}
+      <span aria-live="polite">{copied ? "Copied" : label}</span>
+    </button>
+  );
+}

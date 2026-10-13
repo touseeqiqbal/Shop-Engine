@@ -1,0 +1,189 @@
+import * as migration_20261005_174104_initial from './20261005_174104_initial';
+import * as migration_20261005_174544_redirects_legacy_id from './20261005_174544_redirects_legacy_id';
+import * as migration_20261005_193301_online_store from './20261005_193301_online_store';
+import * as migration_20261005_194436_menu_links from './20261005_194436_menu_links';
+import * as migration_20261005_194929_whatsapp_contacts from './20261005_194929_whatsapp_contacts';
+import * as migration_20261005_202933_page_builder from './20261005_202933_page_builder';
+import * as migration_20261005_205418_catalog_tools from './20261005_205418_catalog_tools';
+import * as migration_20261005_212316_shipping_payments from './20261005_212316_shipping_payments';
+import * as migration_20261005_214730_sales from './20261005_214730_sales';
+import * as migration_20261005_220629_site_content from './20261005_220629_site_content';
+import * as migration_20261005_222031_post_edit_dates from './20261005_222031_post_edit_dates';
+import * as migration_20261006_000458_order_stock from './20261006_000458_order_stock';
+import * as migration_20261006_002019_shop_counter from './20261006_002019_shop_counter';
+import * as migration_20261006_004016_order_protection from './20261006_004016_order_protection';
+import * as migration_20261006_010125_returns_warranty from './20261006_010125_returns_warranty';
+import * as migration_20261006_012426_two_factor from './20261006_012426_two_factor';
+import * as migration_20261006_013541_cookie_notice from './20261006_013541_cookie_notice';
+import * as migration_20261006_015129_sales_channels from './20261006_015129_sales_channels';
+import * as migration_20261006_020722_engagement from './20261006_020722_engagement';
+import * as migration_20261006_022159_inventory from './20261006_022159_inventory';
+import * as migration_20261006_023005_staff_guide from './20261006_023005_staff_guide';
+import * as migration_20261006_085112_users_email_verified from './20261006_085112_users_email_verified';
+import * as migration_20261006_213603_order_safety from './20261006_213603_order_safety';
+import * as migration_20261006_220216_security_hardening from './20261006_220216_security_hardening';
+import * as migration_20261006_230758_session_revocation from './20261006_230758_session_revocation';
+import * as migration_20261008_144504_guest_customers from './20261008_144504_guest_customers';
+import * as migration_20261010_044330_history_and_costs from './20261010_044330_history_and_costs';
+import * as migration_20261012_114523_per_page_seo from './20261012_114523_per_page_seo';
+import * as migration_20261012_115415_theme_history from './20261012_115415_theme_history';
+import * as migration_20261012_120546_product_drafts from './20261012_120546_product_drafts';
+import * as migration_20261012_122952_product_variants from './20261012_122952_product_variants';
+
+export const migrations = [
+  {
+    up: migration_20261005_174104_initial.up,
+    down: migration_20261005_174104_initial.down,
+    name: '20261005_174104_initial',
+  },
+  {
+    up: migration_20261005_174544_redirects_legacy_id.up,
+    down: migration_20261005_174544_redirects_legacy_id.down,
+    name: '20261005_174544_redirects_legacy_id',
+  },
+  {
+    up: migration_20261005_193301_online_store.up,
+    down: migration_20261005_193301_online_store.down,
+    name: '20261005_193301_online_store',
+  },
+  {
+    up: migration_20261005_194436_menu_links.up,
+    down: migration_20261005_194436_menu_links.down,
+    name: '20261005_194436_menu_links',
+  },
+  {
+    up: migration_20261005_194929_whatsapp_contacts.up,
+    down: migration_20261005_194929_whatsapp_contacts.down,
+    name: '20261005_194929_whatsapp_contacts',
+  },
+  {
+    up: migration_20261005_202933_page_builder.up,
+    down: migration_20261005_202933_page_builder.down,
+    name: '20261005_202933_page_builder',
+  },
+  {
+    up: migration_20261005_205418_catalog_tools.up,
+    down: migration_20261005_205418_catalog_tools.down,
+    name: '20261005_205418_catalog_tools',
+  },
+  {
+    up: migration_20261005_212316_shipping_payments.up,
+    down: migration_20261005_212316_shipping_payments.down,
+    name: '20261005_212316_shipping_payments',
+  },
+  {
+    up: migration_20261005_214730_sales.up,
+    down: migration_20261005_214730_sales.down,
+    name: '20261005_214730_sales',
+  },
+  {
+    up: migration_20261005_220629_site_content.up,
+    down: migration_20261005_220629_site_content.down,
+    name: '20261005_220629_site_content',
+  },
+  {
+    up: migration_20261005_222031_post_edit_dates.up,
+    down: migration_20261005_222031_post_edit_dates.down,
+    name: '20261005_222031_post_edit_dates',
+  },
+  {
+    up: migration_20261006_000458_order_stock.up,
+    down: migration_20261006_000458_order_stock.down,
+    name: '20261006_000458_order_stock',
+  },
+  {
+    up: migration_20261006_002019_shop_counter.up,
+    down: migration_20261006_002019_shop_counter.down,
+    name: '20261006_002019_shop_counter',
+  },
+  {
+    up: migration_20261006_004016_order_protection.up,
+    down: migration_20261006_004016_order_protection.down,
+    name: '20261006_004016_order_protection',
+  },
+  {
+    up: migration_20261006_010125_returns_warranty.up,
+    down: migration_20261006_010125_returns_warranty.down,
+    name: '20261006_010125_returns_warranty',
+  },
+  {
+    up: migration_20261006_012426_two_factor.up,
+    down: migration_20261006_012426_two_factor.down,
+    name: '20261006_012426_two_factor',
+  },
+  {
+    up: migration_20261006_013541_cookie_notice.up,
+    down: migration_20261006_013541_cookie_notice.down,
+    name: '20261006_013541_cookie_notice',
+  },
+  {
+    up: migration_20261006_015129_sales_channels.up,
+    down: migration_20261006_015129_sales_channels.down,
+    name: '20261006_015129_sales_channels',
+  },
+  {
+    up: migration_20261006_020722_engagement.up,
+    down: migration_20261006_020722_engagement.down,
+    name: '20261006_020722_engagement',
+  },
+  {
+    up: migration_20261006_022159_inventory.up,
+    down: migration_20261006_022159_inventory.down,
+    name: '20261006_022159_inventory',
+  },
+  {
+    up: migration_20261006_023005_staff_guide.up,
+    down: migration_20261006_023005_staff_guide.down,
+    name: '20261006_023005_staff_guide',
+  },
+  {
+    up: migration_20261006_085112_users_email_verified.up,
+    down: migration_20261006_085112_users_email_verified.down,
+    name: '20261006_085112_users_email_verified',
+  },
+  {
+    up: migration_20261006_213603_order_safety.up,
+    down: migration_20261006_213603_order_safety.down,
+    name: '20261006_213603_order_safety',
+  },
+  {
+    up: migration_20261006_220216_security_hardening.up,
+    down: migration_20261006_220216_security_hardening.down,
+    name: '20261006_220216_security_hardening',
+  },
+  {
+    up: migration_20261006_230758_session_revocation.up,
+    down: migration_20261006_230758_session_revocation.down,
+    name: '20261006_230758_session_revocation',
+  },
+  {
+    up: migration_20261008_144504_guest_customers.up,
+    down: migration_20261008_144504_guest_customers.down,
+    name: '20261008_144504_guest_customers',
+  },
+  {
+    up: migration_20261010_044330_history_and_costs.up,
+    down: migration_20261010_044330_history_and_costs.down,
+    name: '20261010_044330_history_and_costs',
+  },
+  {
+    up: migration_20261012_114523_per_page_seo.up,
+    down: migration_20261012_114523_per_page_seo.down,
+    name: '20261012_114523_per_page_seo',
+  },
+  {
+    up: migration_20261012_115415_theme_history.up,
+    down: migration_20261012_115415_theme_history.down,
+    name: '20261012_115415_theme_history',
+  },
+  {
+    up: migration_20261012_120546_product_drafts.up,
+    down: migration_20261012_120546_product_drafts.down,
+    name: '20261012_120546_product_drafts',
+  },
+  {
+    up: migration_20261012_122952_product_variants.up,
+    down: migration_20261012_122952_product_variants.down,
+    name: '20261012_122952_product_variants'
+  },
+];

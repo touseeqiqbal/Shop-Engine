@@ -1,0 +1,23 @@
+# Local PostgreSQL for development:  docker compose up -d
+# Then set DATABASE_URL=postgresql://urko:urko@localhost:5432/urko_tech_store in .env
+services:
+  postgres:
+    image: postgres:17
+    container_name: urko-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: urko
+      POSTGRES_PASSWORD: urko
+      POSTGRES_DB: urko_tech_store
+    ports:
+      - "5432:5432"
+    volumes:
+      - urko-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U urko -d urko_tech_store"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  urko-pgdata:

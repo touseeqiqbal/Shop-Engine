@@ -1,0 +1,122 @@
+import { getAllProducts, getBlogPosts, getCategories, getFaqs, getStoreSettings } from "@/lib/repo/catalog";
+import { absoluteUrl } from "@/lib/site";
+import { getSiteInfo } from "@/lib/repo/site-content";
+import { LANDING_CITIES, citySlug } from "@/lib/cities";
+import { conditionMeta, effectivePrice, formatPKR } from "@/lib/utils";
+
+/**
+ * /llms.txt – a Markdown summary of the store for AI assistants and LLM-powered search
+ * (ChatGPT, Claude, Perplexity, Gemini…), following https://llmstxt.org.
+ * Generated from the live catalog: admin edits to products, categories, blog posts, FAQs or settings
+ * call revalidatePath("/", "layout"), which regenerates this file too.
+ */
+export const revalidate = 3600;
+
+const MAX_PRODUCTS = 500;
+
+export async function GET() {
+  const [categories, products, posts, faqs, settings] = await Promise.all([
+    getCategories(),
+    getAllProducts(),
+    getBlogPosts(),
+    getFaqs(),
+    getStoreSettings(),
+  ]);
+  const site = await getSiteInfo(); // live business profile (/cms → Settings → Store details)
+
+  const top = categories.filter((c) => !c.parentId);
+  const byTop = new Map<string, typeof products>();
+  for (const p of products) byTop.set(p.topCategoryId, [...(byTop.get(p.topCategoryId) ?? []), p]);
+
+  const lines: string[] = [];
+  const push = (...l: string[]) => lines.push(...l);
+
+  push(
+    `# ${site.name}`,
+    "",
+    `> ${site.tagline}. ${site.description}`,
+    "",
+    "## Store details",
+    `- Address: ${site.address.full}`,
+    ...site.phones.map((p) => `- Phone / WhatsApp: ${p.display} (https://wa.me/${p.wa})`),
+    `- Email: ${site.email}`,
+    `- Hours: ${site.hoursDisplay}`,
+    `- Map: ${site.mapLink}`,
+    `- Delivery: all over Pakistan. Karachi same/next day, major cities 1–3 working days, other areas 3–5 working days. Free delivery above ${formatPKR(settings.freeDeliveryThreshold)}.`,
+    `- Payment: Cash on Delivery (all cities), JazzCash, EasyPaisa, bank transfer.`,
+    `- Couriers: ${site.couriers.join(", ")}.`,
+    `- All prices are in Pakistani Rupees (PKR) and include the current sale price where applicable.`,
+    "",
+    "## Key pages",
+    `- [Shop all products](${absoluteUrl("/shop")})`,
+    `- [Hot deals](${absoluteUrl("/deals")})`,
+    `- [Find parts for your laptop (chargers, batteries, keyboards, RAM by model)](${absoluteUrl("/find-parts")})`,
+    `- [Wholesale & bulk orders](${absoluteUrl("/wholesale")}): bulk laptops, laptop lots and accessories for shops, resellers and offices (quote only)`,
+    `- [Track an order](${absoluteUrl("/track-order")})`,
+    `- [Shipping policy](${absoluteUrl("/shipping-policy")}): delivery times and charges by city`,
+    `- [Warranty & return policy](${absoluteUrl("/warranty-returns")})`,
+    `- [FAQs](${absoluteUrl("/faqs")})`,
+    `- [About](${absoluteUrl("/about")}) · [Contact](${absoluteUrl("/contact")})`,
+    "",
+    "## Laptop conditions",
+    ...Object.values(conditionMeta).map((c) => `- ${c.label}: ${c.description}`),
+    "",
+    "## Categories",
+    ...top.map((c) => `- [${c.name}](${absoluteUrl(`/category/${c.slug}`)}): ${c.shortDescription}`),
+    ""
+  );
+
+  let count = 0;
+  push("## Products");
+  for (const c of top) {
+    const list = (byTop.get(c.id) ?? []).sort((a, b) => b.soldCount - a.soldCount);
+    if (!list.length || count >= MAX_PRODUCTS) continue;
+    push("", `### ${c.name}`);
+    for (const p of list) {
+      if (count++ >= MAX_PRODUCTS) break;
+      const price = effectivePrice(p);
+      const parts = [
+        p.priceOnRequest ? "Price on request (wholesale lot – quote only)" : formatPKR(price) + (price < p.price ? ` (was ${formatPKR(p.price)})` : ""),
+        p.condition ? conditionMeta[p.condition].label : null,
+        p.stock > 0 ? "in stock" : "out of stock",
+        p.warranty || null,
+      ].filter(Boolean);
+      push(`- [${p.name}](${absoluteUrl(p.url)}): ${parts.join(" · ")}. ${p.shortDescription}`);
+    }
+  }
+  if (products.length > MAX_PRODUCTS) push("", `More products: ${absoluteUrl("/sitemap.xml")}`);
+
+  if (posts.length) {
+    push("", "## Buying guides & articles");
+    for (const post of posts) push(`- [${post.title}](${absoluteUrl(`/blog/${post.slug}`)}): ${post.excerpt}`);
+  }
+
+  const lots = products.filter((p) => p.priceOnRequest);
+  push(
+    "",
+    "## Wholesale",
+    `Urko Tech Store sells wholesale / in bulk from Saddar, Karachi to computer shops, resellers, companies and educational institutes all over Pakistan. Wholesale is quote-only: no wholesale prices are published – buyers send a quote request at ${absoluteUrl("/wholesale#quote")} or message on WhatsApp.`,
+    "- Bulk quantities of a single model (e.g. 20× HP EliteBook 840 G5), usually from 5 units per model.",
+    "- Mixed laptop lots / pallets (e.g. 25 mixed Dell & HP Core i5 8th Gen, Grade A/B). Grade A = light signs of use; Grade B = visible wear but fully working.",
+    "- Accessories in bulk: chargers, batteries, mouse, keyboards, SSDs and RAM for repair shops and resellers.",
+    "- Every unit checked & tested, checking warranty on bulk, invoice provided, courier or cargo delivery nationwide.",
+    ...lots.map((p) => `- [${p.name}](${absoluteUrl(p.url)}): price on request. ${p.shortDescription}`)
+  );
+
+  push("", "## Nationwide delivery pages");
+  push(LANDING_CITIES.map((city) => `[Laptops in ${city}](${absoluteUrl(`/laptops-in-${citySlug(city)}`)})`).join(" · "));
+
+  if (faqs.length) {
+    push("", "## Frequently asked questions");
+    for (const f of faqs) push(`- **${f.q}** ${f.a}`);
+  }
+
+  push("", "## Optional", `- [Sitemap](${absoluteUrl("/sitemap.xml")})`, "");
+
+  return new Response(lines.join("\n"), {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "public, max-age=0, s-maxage=3600, stale-while-revalidate=86400",
+    },
+  });
+}

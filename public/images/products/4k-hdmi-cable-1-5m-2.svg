@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="4K HDMI 2.0 Cable – 1.5m Braided – alternate view">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="40%" r="55%">
+      <stop offset="0" stop-color="#06b6d4" stop-opacity="0.38"/>
+      <stop offset="0.6" stop-color="#3b82f6" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#06b6d4" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="800" fill="url(#glow)"/>
+  <ellipse cx="400" cy="640" rx="260" ry="26" fill="#000" opacity="0.28"/>
+  
+    <g transform="translate(400 400) rotate(-12) translate(-400 -400)">
+      <path d="M220 300 C420 120 620 480 380 520 S200 520 580 580" stroke="#1b1c22" stroke-width="20" fill="none" stroke-linecap="round"/>
+      <path d="M220 300 C420 120 620 480 380 520 S200 520 580 580" stroke="#3b82f6" stroke-width="3" fill="none" opacity="0.6" stroke-dasharray="6 10"/>
+      <rect x="170" y="250" width="80" height="60" rx="10" fill="#2a2c37" transform="rotate(-40 210 280)"/>
+      <rect x="560" y="560" width="80" height="60" rx="10" fill="#2a2c37" transform="rotate(10 600 590)"/>
+      <rect x="150" y="226" width="52" height="30" rx="4" fill="#c4c9d4" transform="rotate(-40 176 241)"/>
+    </g>
+</svg>

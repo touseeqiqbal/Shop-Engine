@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="Kingston DataTraveler Exodia 64GB USB 3.2 Flash Drive – alternate view">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="40%" r="55%">
+      <stop offset="0" stop-color="#3b82f6" stop-opacity="0.38"/>
+      <stop offset="0.6" stop-color="#8b5cf6" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#3b82f6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="800" fill="url(#glow)"/>
+  <ellipse cx="400" cy="640" rx="260" ry="26" fill="#000" opacity="0.28"/>
+  
+    <g transform="translate(400 400) rotate(30) translate(-400 -400)">
+      <rect x="250" y="350" width="260" height="100" rx="20" fill="#1b1c22" stroke="#8b5cf6" stroke-width="3"/>
+      <rect x="510" y="368" width="80" height="64" rx="4" fill="#c4c9d4"/>
+      <rect x="530" y="384" width="16" height="12" fill="#1b1c22"/><rect x="556" y="384" width="16" height="12" fill="#1b1c22"/>
+      <circle cx="285" cy="400" r="14" fill="none" stroke="#4a4e5d" stroke-width="5"/>
+      <text x="400" y="410" text-anchor="middle" font-family="Arial, sans-serif" font-weight="700" font-size="30" fill="#3b82f6">64GB</text>
+    </g>
+</svg>

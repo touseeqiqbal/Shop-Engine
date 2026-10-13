@@ -1,0 +1,308 @@
+// Urko Tech Store – PostgreSQL schema (Prisma 7).
+// Field names mirror src/lib/types.ts exactly (camelCase); columns are snake_case via @map.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Category {
+  id               String     @id @default(cuid())
+  slug             String     @unique
+  name             String
+  nameUr           String?    @map("name_ur")
+  parentId         String?    @map("parent_id")
+  parent           Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children         Category[] @relation("CategoryTree")
+  icon             String     @default("Package")
+  image            String?
+  shortDescription String     @default("") @map("short_description")
+  seoContent       String?    @map("seo_content")
+  seoTitle         String?    @map("seo_title")
+  seoDescription   String?    @map("seo_description")
+  /// CategoryAttribute[] – filterable attributes
+  attributes       Json       @default("[]")
+  compatibility    Boolean    @default(false)
+  featured         Boolean    @default(false)
+  sortOrder        Int        @default(0) @map("sort_order")
+  products         Product[]
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+
+  @@index([parentId])
+  @@map("categories")
+}
+
+model Brand {
+  slug String  @id
+  name String
+  logo String?
+
+  @@map("brands")
+}
+
+model LaptopModel {
+  id     String @id
+  brand  String
+  series String
+  name   String
+
+  @@index([brand])
+  @@map("laptop_models")
+}
+
+model Product {
+  id                    String         @id @default(cuid())
+  slug                  String         @unique
+  name                  String
+  brand                 String
+  categoryId            String         @map("category_id")
+  category              Category       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  sku                   String         @unique
+  shortDescription      String         @default("") @map("short_description")
+  description           String         @default("")
+  price                 Int
+  salePrice             Int?           @map("sale_price")
+  stock                 Int            @default(0)
+  condition             String?
+  conditionNotes        String?        @map("condition_notes")
+  warranty              String         @default("")
+  /// Legacy / external image URLs (used when no uploaded ProductImage rows exist)
+  images                String[]       @default([])
+  productImages         ProductImage[]
+  video                 String?
+  specs                 Json           @default("[]")
+  attributes            Json           @default("{}")
+  compatibility         String[]       @default([])
+  upgrades              Json           @default("[]")
+  boughtTogether        String[]       @default([]) @map("bought_together")
+  bundleDiscountPercent Int?           @map("bundle_discount_percent")
+  rating                Float          @default(0)
+  reviewCount           Int            @default(0) @map("review_count")
+  soldCount             Int            @default(0) @map("sold_count")
+  tags                  String[]       @default([])
+  featured              Boolean        @default(false)
+  hotDeal               Boolean        @default(false) @map("hot_deal")
+  dealEndsAt            DateTime?      @map("deal_ends_at")
+  bestSeller            Boolean        @default(false) @map("best_seller")
+  status                String         @default("active")
+  seoTitle              String?        @map("seo_title")
+  seoDescription        String?        @map("seo_description")
+  /// Lot / quote-only listing: price is never shown and it can't be bought online
+  priceOnRequest        Boolean        @default(false) @map("price_on_request")
+  /// WholesaleInfo { available, minQty?, lotSize?, grades?, contents?, note? }
+  wholesale             Json?
+  reviews               Review[]
+  createdAt             DateTime       @default(now()) @map("created_at")
+  updatedAt             DateTime       @updatedAt @map("updated_at")
+
+  @@index([categoryId])
+  @@index([brand])
+  @@index([status, createdAt])
+  @@index([compatibility], type: Gin)
+  @@map("products")
+}
+
+/// Uploaded product photos stored in the private S3 bucket (served via /media/[...key]).
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String   @map("product_id")
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  key       String   @unique
+  alt       String   @default("")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([productId, sortOrder])
+  @@map("product_images")
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  productId String   @map("product_id")
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String
+  city      String?
+  rating    Int
+  title     String?
+  body      String
+  approved  Boolean  @default(false)
+  verified  Boolean? @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([productId, approved])
+  @@map("reviews")
+}
+
+model BlogPost {
+  id                String    @id @default(cuid())
+  slug              String    @unique
+  title             String
+  excerpt           String    @default("")
+  content           String    @default("")
+  cover             String    @default("")
+  category          String    @default("")
+  tags              String[]  @default([])
+  author            String    @default("Urko Tech Team")
+  publishedAt       DateTime  @default(now()) @map("published_at")
+  updatedAt         DateTime? @map("updated_at")
+  relatedProducts   String[]  @default([]) @map("related_products")
+  relatedCategories String[]  @default([]) @map("related_categories")
+  seoTitle          String?   @map("seo_title")
+  seoDescription    String?   @map("seo_description")
+  status            String    @default("draft")
+
+  @@index([status, publishedAt])
+  @@map("blog_posts")
+}
+
+model Banner {
+  id        String  @id @default(cuid())
+  eyebrow   String?
+  title     String
+  subtitle  String  @default("")
+  ctaLabel  String  @default("Shop now") @map("cta_label")
+  ctaHref   String  @default("/shop") @map("cta_href")
+  image     String  @default("")
+  accent    String?
+  placement String  @default("hero")
+  sortOrder Int     @default(0) @map("sort_order")
+  active    Boolean @default(true)
+
+  @@map("banners")
+}
+
+model Coupon {
+  code       String    @id
+  kind       String
+  value      Int
+  minOrder   Int       @default(0) @map("min_order")
+  expiresAt  DateTime? @map("expires_at")
+  usageLimit Int?      @map("usage_limit")
+  used       Int       @default(0)
+  active     Boolean   @default(true)
+
+  @@map("coupons")
+}
+
+model FlashSale {
+  id         String   @id @default(cuid())
+  title      String
+  endsAt     DateTime @map("ends_at")
+  productIds String[] @default([]) @map("product_ids")
+  active     Boolean  @default(true)
+
+  @@map("flash_sales")
+}
+
+model Redirect {
+  fromPath  String  @id @map("from_path")
+  toPath    String  @map("to_path")
+  permanent Boolean @default(true)
+
+  @@map("redirects")
+}
+
+model Order {
+  id                   String   @id @default(cuid())
+  orderNumber          String   @unique @map("order_number")
+  createdAt            DateTime @default(now()) @map("created_at")
+  status               String   @default("pending")
+  /// OrderCustomer
+  customer             Json
+  /// OrderItem[]
+  items                Json
+  subtotal             Int
+  discount             Int      @default(0)
+  couponCode           String?  @map("coupon_code")
+  deliveryCharge       Int      @default(0) @map("delivery_charge")
+  total                Int
+  advancePaid          Int?     @map("advance_paid")
+  paymentMethod        String   @map("payment_method")
+  paymentStatus        String   @map("payment_status")
+  /// Private bucket key under payments/ (or legacy URL)
+  paymentScreenshotUrl String?  @map("payment_screenshot_url")
+  courier              String?
+  trackingNumber       String?  @map("tracking_number")
+  notes                String?
+  /// OrderEvent[]
+  history              Json     @default("[]")
+  userId               String?  @map("user_id")
+  user                 User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([createdAt])
+  @@index([userId])
+  @@map("orders")
+}
+
+/// Key/value store for site settings (store, testimonials, faqs).
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String?
+  phone        String?
+  /// customer | staff | admin
+  role         String   @default("customer")
+  /// SavedAddress[]
+  addresses    Json     @default("[]")
+  wishlist     String[] @default([])
+  orders       Order[]
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model ContactMessage {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  email     String?
+  subject   String?
+  message   String
+  handled   Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([handled, createdAt])
+  @@map("contact_messages")
+}
+
+/// Wholesale / bulk quote requests from /wholesale (quote-only – no wholesale prices are published).
+model WholesaleInquiry {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now()) @map("created_at")
+  /// new | contacted | quoted | won | lost
+  status       String   @default("new")
+  name         String
+  businessName String?  @map("business_name")
+  phone        String
+  email        String?
+  city         String
+  /// shop | reseller | corporate | education | individual | other
+  buyerType    String   @map("buyer_type")
+  /// WholesaleInquiryItem[] – { productId?, productName, url?, qty }
+  items        Json     @default("[]")
+  message      String?
+  budget       String?
+  adminNotes   String?  @map("admin_notes")
+  /// Page path the inquiry was sent from
+  source       String?
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("wholesale_inquiries")
+}

@@ -1,0 +1,105 @@
+import type { Metadata } from "next";
+import { Gift, PackageCheck, Truck, Wallet } from "lucide-react";
+import { PolicyLayout } from "@/components/content/policy-layout";
+import { Markdown } from "@/components/ui/markdown";
+import { InlineText } from "@/components/content/inline-text";
+import { getPageMeta } from "@/lib/page-seo";
+import { getResolvedPageContent } from "@/lib/repo/site-content";
+import { formatPKR } from "@/lib/utils";
+import { deliveryCharge, deliveryEstimate } from "@/lib/cities";
+
+export const revalidate = 300;
+
+export async function generateMetadata(): Promise<Metadata> {
+  return getPageMeta("/shipping-policy");
+}
+
+export default async function ShippingPolicyPage() {
+  const c = await getResolvedPageContent("/shipping-policy");
+  const { settings: s, info: site } = c;
+  const charge = (city: string) => formatPKR(deliveryCharge(city, 0, s));
+  const free = formatPKR(s.freeDeliveryThreshold);
+
+  // Zones from /cms → Delivery & payments → Delivery charges (the same ones checkout uses); old defaults otherwise
+  const rows = s.zones?.length
+    ? s.zones.map((z) => ({
+        zone: z.name,
+        areas: z.rest ? "All other cities, towns and areas served by our courier partners, including AJK and Gilgit-Baltistan" : z.cities.join(", "),
+        time: z.estimate?.trim() || (z.rest ? "3–5 working days" : deliveryEstimate(z.cities[0] ?? "", s).label),
+        fee: `${formatPKR(z.charge)}${z.freeAbove != null && z.freeAbove !== s.freeDeliveryThreshold ? (z.freeAbove > 0 ? ` (free over ${formatPKR(z.freeAbove)})` : " (never free)") : ""}`,
+      }))
+    : [
+        { zone: "Karachi", areas: "All areas of Karachi incl. DHA, Clifton, Gulshan, North Nazimabad, Korangi, Malir", time: "Same day / next day", fee: charge("Karachi") },
+        { zone: "Major cities", areas: "Lahore, Islamabad, Rawalpindi, Faisalabad, Multan, Peshawar, Quetta, Hyderabad, Sialkot, Gujranwala, Sukkur", time: "1–3 working days", fee: `${charge("Lahore")} – ${formatPKR(s.defaultDeliveryCharge)}` },
+        { zone: "Other cities & towns", areas: "All other cities, towns and areas served by our courier partners, including AJK and Gilgit-Baltistan", time: "3–5 working days", fee: formatPKR(s.defaultDeliveryCharge) },
+      ];
+
+  // Policy text: /cms → Online store → Page texts (defaults in src/lib/content/page-defaults.ts).
+
+  return (
+    <PolicyLayout path="/shipping-policy" name="Shipping Policy" eyebrow={c.eyebrow || undefined} title={<InlineText text={c.title} />} description={c.description} updated={c.updated}>
+      <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          { icon: Truck, t: "Karachi same / next day", d: "Major cities 1–3 days" },
+          { icon: Gift, t: `Free delivery over ${free}`, d: "On every order" },
+          { icon: Wallet, t: "Cash on Delivery", d: "All over Pakistan" },
+          { icon: PackageCheck, t: "Tracked & safely packed", d: "Bubble wrap + box" },
+        ].map((b) => (
+          <li key={b.t} className="card flex items-center gap-3 p-4">
+            <b.icon className="size-6 shrink-0 text-sky-400" aria-hidden="true" />
+            <span>
+              <span className="block text-sm font-semibold text-fg">{b.t}</span>
+              <span className="block text-xs text-muted">{b.d}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      <section aria-labelledby="times-heading">
+        <h2 id="times-heading" className="mb-4 text-2xl font-bold text-fg">
+          Delivery times & charges
+        </h2>
+        <div className="prose-store">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Zone</th>
+                <th scope="col">Cities / areas</th>
+                <th scope="col">Delivery time</th>
+                <th scope="col">Charge (under {free})</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.zone}>
+                  <td className="font-semibold text-fg">{r.zone}</td>
+                  <td>{r.areas}</td>
+                  <td className="whitespace-nowrap">{r.time}</td>
+                  <td className="whitespace-nowrap">{r.fee}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-sm text-muted">
+          Orders of <strong className="text-fg">{free}</strong> or more ship free. Working days are Monday to Saturday, excluding public holidays.
+        </p>
+      </section>
+
+      <section aria-labelledby="couriers-heading">
+        <h2 id="couriers-heading" className="mb-4 text-2xl font-bold text-fg">
+          Our courier partners
+        </h2>
+        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {site.couriers.map((c) => (
+            <li key={c} className="card grid h-16 place-items-center font-display text-lg font-bold text-muted">
+              {c}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <Markdown content={c.body} className="card p-6 sm:p-10" />
+    </PolicyLayout>
+  );
+}

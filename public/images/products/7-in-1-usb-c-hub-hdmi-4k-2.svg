@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="7-in-1 USB-C Hub – 4K HDMI, 100W PD, SD/TF, 3× USB 3.0 – alternate view">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="40%" r="55%">
+      <stop offset="0" stop-color="#3b82f6" stop-opacity="0.38"/>
+      <stop offset="0.6" stop-color="#8b5cf6" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#3b82f6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="800" fill="url(#glow)"/>
+  <ellipse cx="400" cy="640" rx="260" ry="26" fill="#000" opacity="0.28"/>
+  
+    <defs>
+  <linearGradient id="m" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#3a3d4a"/><stop offset="1" stop-color="#1c1e27"/>
+  </linearGradient></defs>
+    <g transform="translate(400 400) rotate(12) translate(-400 -400)">
+      <rect x="200" y="330" width="380" height="140" rx="30" fill="url(#m)" stroke="#4a4e5d" stroke-width="3"/>
+      <rect x="230" y="372" width="56" height="22" rx="4" fill="#0b0b10"/><rect x="300" y="372" width="56" height="22" rx="4" fill="#0b0b10"/>
+      <rect x="370" y="372" width="56" height="22" rx="4" fill="#0b0b10"/><rect x="440" y="368" width="64" height="30" rx="6" fill="#0b0b10" stroke="#8b5cf6" stroke-width="2"/>
+      <rect x="230" y="412" width="44" height="16" rx="6" fill="#0b0b10"/><rect x="290" y="412" width="30" height="12" rx="3" fill="#0b0b10"/>
+      <circle cx="540" cy="400" r="8" fill="#3b82f6"/>
+      <path d="M200 400 C120 400 120 260 200 230" stroke="#2a2c37" stroke-width="16" fill="none" stroke-linecap="round"/>
+      <rect x="196" y="200" width="44" height="64" rx="10" fill="#2a2c37" transform="rotate(20 218 232)"/>
+    </g>
+</svg>
