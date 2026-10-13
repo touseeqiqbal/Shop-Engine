@@ -29,6 +29,29 @@ Built with **Next.js 16 (App Router)**, **React 19**, **Tailwind CSS v4** and **
 
 ---
 
+## Current implementation status
+
+ShopEngine is now a working multi-tenant platform foundation rather than a single-store demo. The project includes tenant-aware user and store models, merchant onboarding primitives, and basic SaaS billing collections, while keeping the existing storefront and admin experience intact.
+
+This is a strong foundation for a Shopify-like product, but it is not yet a final production-grade commerce SaaS. The remaining work is concentrated in the transaction-critical path: checkout safety, inventory reservation behavior, payment-provider verification, refund handling, and consistent tenant isolation across every commerce collection.
+
+**Verified progress**
+- Multi-store user and store membership primitives are in place in [`src/payload/collections/Users.ts`](src/payload/collections/Users.ts) and [`src/payload/collections/Stores.ts`](src/payload/collections/Stores.ts)
+- Tenant-scoped access is hardened in [`src/payload/access.ts`](src/payload/access.ts)
+- Merchant onboarding and plan selection are implemented in [`src/lib/store-tenant.ts`](src/lib/store-tenant.ts) and [`src/app/(frontend)/(store)/account/stores/actions.ts`](src/app/(frontend)/(store)/account/stores/actions.ts)
+- SaaS billing foundations exist in [`src/payload/collections/billing.ts`](src/payload/collections/billing.ts)
+- Server-side cart pricing is enforced in [`src/lib/cart-pricing.ts`](src/lib/cart-pricing.ts)
+- Focused access regression tests were added in [`tests/unit/access.test.ts`](tests/unit/access.test.ts)
+
+**Still required before production use**
+- Payment provider integration and webhook verification
+- Inventory reservation release on failed or timed-out checkout
+- Payment/refund lifecycle separation and idempotent order finalization
+- Broader tenant-isolation verification across all commerce collections
+- Platform-admin billing enforcement and limit checks
+
+---
+
 ## Features
 
 **Storefront**

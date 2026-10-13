@@ -99,8 +99,8 @@ export function StoreOnboardingForm({ plans = [] }: { plans?: StorePlanOption[] 
                 {selectedPlan === plan.id ? <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] text-primary-foreground">Selected</span> : null}
               </div>
               <p className="mt-2 text-sm text-muted">{plan.description}</p>
-              <p className="mt-3 text-xl font-bold">{plan.priceMonthly === 0 ? "Free" : `PKR ${plan.priceMonthly.toLocaleString()}/mo`}</p>
-              <p className="mt-1 text-xs text-muted">{plan.trialDays} day trial</p>
+          <p className="mt-3 text-xl font-bold">{(plan.priceMonthly ?? 0) === 0 ? "Free" : `PKR ${(plan.priceMonthly ?? 0).toLocaleString()}/mo`}</p>
+          <p className="mt-1 text-xs text-muted">{plan.trialDays ?? 14} day trial</p>
             </button>
           ))}
         </div>

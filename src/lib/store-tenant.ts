@@ -342,10 +342,65 @@ export async function publishStore(userId: string, storeId: string) {
     limit: 1,
     depth: 0,
     overrideAccess: true,
-  })).docs[0] as { id: string | number; status?: string } | undefined;
+  })).docs[0] as { id: string | number; status?: string; plan?: { id?: string | number } | string | number | null; trialEndsAt?: string | Date | null } | undefined;
 
   if (!store) {
     return { ok: false as const, error: "You do not have permission to publish this store." };
+  }
+
+  const planId = typeof store.plan === "object" && store.plan && "id" in store.plan ? store.plan.id : store.plan;
+  if (planId) {
+    const plan = (await payload.find({
+      collection: "subscription-plans" as never,
+      where: { id: { equals: String(planId) } },
+      limit: 1,
+      depth: 0,
+      overrideAccess: true,
+    })).docs[0] as { id?: string | number; trialDays?: number } | undefined;
+
+    const trialEndsAt = plan?.trialDays ? new Date(Date.now() + Number(plan.trialDays) * 86400000).toISOString() : store.trialEndsAt ? new Date(store.trialEndsAt).toISOString() : undefined;
+
+    await payload.update({
+      collection: "stores" as never,
+      id: store.id,
+      data: {
+        status: "active",
+        subscriptionStatus: "trialing",
+        trialEndsAt,
+      } as never,
+      depth: 0,
+      overrideAccess: true,
+    });
+
+    const existingSub = (await payload.find({
+      collection: "store-subscriptions" as never,
+      where: { and: [{ storeId: { equals: String(store.id) } }, { plan: { equals: String(planId) } }] },
+      limit: 1,
+      depth: 0,
+      overrideAccess: true,
+    })).docs[0] as { id?: string | number } | undefined;
+
+    if (!existingSub) {
+      await payload.create({
+        collection: "store-subscriptions" as never,
+        data: {
+          storeId: store.id,
+          plan: planId,
+          status: "trialing",
+          billingCycle: "monthly",
+          trialEndsAt,
+          currentPeriodStart: new Date().toISOString(),
+          currentPeriodEnd: trialEndsAt,
+          amount: 0,
+          currency: "PKR",
+          paymentProvider: "manual",
+        } as never,
+        depth: 0,
+        overrideAccess: true,
+      });
+    }
+
+    return { ok: true as const };
   }
 
   await payload.update({
@@ -357,6 +412,97 @@ export async function publishStore(userId: string, storeId: string) {
   });
 
   return { ok: true as const };
+}
+
+export async function setStorePlanForUser(userId: string, storeId: string, planId: string) {
+  if (!userId || !storeId || !planId || !isDatabaseConfigured) {
+    return { ok: false as const, error: "A valid plan selection is required." };
+  }
+
+  const payload = await payloadClient();
+  const store = (await payload.find({
+    collection: "stores" as never,
+    where: { and: [{ id: { equals: storeId } }, { owner: { equals: userId } }] },
+    limit: 1,
+    depth: 0,
+    overrideAccess: true,
+  })).docs[0] as { id: string | number; plan?: { id?: string | number } | string | number | null } | undefined;
+
+  if (!store) {
+    return { ok: false as const, error: "You do not have permission to update this store plan." };
+  }
+
+  const plan = (await payload.find({
+    collection: "subscription-plans" as never,
+    where: { id: { equals: planId } },
+    limit: 1,
+    depth: 0,
+    overrideAccess: true,
+  })).docs[0] as { id?: string | number; name?: string; priceMonthly?: number; trialDays?: number } | undefined;
+
+  if (!plan) {
+    return { ok: false as const, error: "This plan could not be found." };
+  }
+
+  const trialEndsAt = plan.trialDays ? new Date(Date.now() + Number(plan.trialDays) * 86400000).toISOString() : undefined;
+
+  await payload.update({
+    collection: "stores" as never,
+    id: store.id,
+    data: {
+      plan: plan.id,
+      subscriptionStatus: "trialing",
+      trialEndsAt,
+    } as never,
+    depth: 0,
+    overrideAccess: true,
+  });
+
+  const existing = (await payload.find({
+    collection: "store-subscriptions" as never,
+    where: { storeId: { equals: String(store.id) } },
+    limit: 20,
+    depth: 0,
+    overrideAccess: true,
+  })).docs[0] as { id?: string | number } | undefined;
+
+  if (existing?.id) {
+    await payload.update({
+      collection: "store-subscriptions" as never,
+      id: existing.id,
+      data: {
+        plan: plan.id,
+        status: "trialing",
+        billingCycle: "monthly",
+        trialEndsAt,
+        currentPeriodStart: new Date().toISOString(),
+        currentPeriodEnd: trialEndsAt,
+        amount: Number(plan.priceMonthly ?? 0),
+      } as never,
+      depth: 0,
+      overrideAccess: true,
+    });
+  } else {
+    await payload.create({
+      collection: "store-subscriptions" as never,
+      data: {
+        storeId: store.id,
+        plan: plan.id,
+        status: "trialing",
+        billingCycle: "monthly",
+        trialEndsAt,
+        currentPeriodStart: new Date().toISOString(),
+        currentPeriodEnd: trialEndsAt,
+        amount: Number(plan.priceMonthly ?? 0),
+        currency: "PKR",
+        paymentProvider: "manual",
+      } as never,
+      depth: 0,
+      overrideAccess: true,
+    });
+  }
+
+  return { ok: true as const, planId: String(plan.id) };
 }
 
 export async function getCurrentStoreForUser(userId: string) {
