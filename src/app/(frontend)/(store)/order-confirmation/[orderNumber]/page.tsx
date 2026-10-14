@@ -14,26 +14,29 @@ import { ORDER_NUMBER_RE } from "@/lib/order-number";
 import { PAYMENT_LABEL, PAYMENT_STATUS_LABEL, paymentAccountLines } from "@/lib/order-display";
 import { getStoreSettings } from "@/lib/repo/catalog";
 import { getOrderByNumber } from "@/lib/repo/orders";
+import { getSiteInfo } from "@/lib/repo/site-content";
 import { pageMetadata } from "@/lib/seo";
 import { waLink } from "@/lib/site";
+import { primaryPhone } from "@/lib/site-info";
 import { formatDate, formatPKR } from "@/lib/utils";
+import { payNow } from "./pay-action";
 
 export const dynamic = "force-dynamic";
 
-type Props = { params: Promise<{ orderNumber: string }> };
+type Props = { params: Promise<{ orderNumber: string }>; searchParams: Promise<{ payment?: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { orderNumber } = await params;
   return pageMetadata({
-    title: "Order Confirmed | Urko Tech Store",
-    description: "Thank you for your order at Urko Tech Store.",
+    title: "Order confirmed",
+    description: "Thank you for your order.",
     path: `/order-confirmation/${encodeURIComponent(orderNumber)}`,
     noindex: true,
   });
 }
 
-export default async function OrderConfirmationPage({ params }: Props) {
-  const { orderNumber: raw } = await params;
+export default async function OrderConfirmationPage({ params, searchParams }: Props) {
+  const [{ orderNumber: raw }, { payment }] = await Promise.all([params, searchParams]);
   const orderNumber = decodeURIComponent(raw).trim().toUpperCase();
   const [order, jar, user] = await Promise.all([
     ORDER_NUMBER_RE.test(orderNumber) ? getOrderByNumber(orderNumber) : Promise.resolve(null),
@@ -60,7 +63,7 @@ export default async function OrderConfirmationPage({ params }: Props) {
     );
   }
 
-  const settings = await getStoreSettings();
+  const [settings, site] = await Promise.all([getStoreSettings(), getSiteInfo()]);
   const eta = deliveryEstimate(order.customer.city, settings);
   const accountLines = paymentAccountLines(order.paymentMethod, settings);
   const awaitingCode = order.status === "awaiting-confirmation" && Boolean(order.confirmation);
@@ -77,7 +80,24 @@ export default async function OrderConfirmationPage({ params }: Props) {
           <h1 className="mt-6 font-display text-3xl font-bold sm:text-4xl">
             Thank you, <span className="gradient-text">{order.customer.name.split(" ")[0]}</span>!
           </h1>
-          {order.status === "awaiting-confirmation" && order.confirmation ? (
+          {order.paymentMethod === "card" && order.status === "awaiting-payment" ? (
+            // the order is only paid when the payment provider confirms it (never from this page's address)
+            <div className="mx-auto mt-3 max-w-md space-y-3 text-muted">
+              {payment === "done" ? (
+                <p>We&apos;re confirming your card payment with the bank – this usually takes a few seconds. Refresh this page in a moment.</p>
+              ) : (
+                <p>
+                  {payment === "cancelled" ? "The card payment wasn't completed. " : payment === "expired" ? "The payment page has expired. " : ""}
+                  Your order is reserved for 30 minutes while you pay.
+                </p>
+              )}
+              <form action={payNow.bind(null, order.orderNumber)}>
+                <button className="btn btn-primary btn-lg">Pay {formatPKR(order.total)} by card</button>
+              </form>
+            </div>
+          ) : order.paymentMethod === "card" && order.status === "cancelled" && order.paymentStatus !== "paid" ? (
+            <p className="mx-auto mt-2 max-w-md text-muted">The card payment wasn&apos;t completed, so this order was cancelled and nothing was charged. You can place it again from your cart.</p>
+          ) : order.status === "awaiting-confirmation" && order.confirmation ? (
             <ConfirmCodeForm
               orderNumber={order.orderNumber}
               phone={order.customer.phone}
@@ -100,7 +120,7 @@ export default async function OrderConfirmationPage({ params }: Props) {
             <CopyButton value={order.orderNumber} />
           </div>
           <div className="mt-6 flex flex-col justify-center gap-2.5 sm:flex-row">
-            <a href={waLink(undefined, waText)} target="_blank" rel="noopener noreferrer" className="btn btn-whatsapp btn-lg">
+            <a href={waLink(primaryPhone(site).wa, waText)} target="_blank" rel="noopener noreferrer" className="btn btn-whatsapp btn-lg">
               <WhatsAppIcon className="size-5" /> {awaitingCode ? "Questions? WhatsApp us" : "Confirm on WhatsApp"}
             </a>
             <Link href={`/track-order?order=${encodeURIComponent(order.orderNumber)}`} className="btn btn-secondary btn-lg">

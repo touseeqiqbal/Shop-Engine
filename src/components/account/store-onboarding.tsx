@@ -4,75 +4,117 @@ import Link from "next/link";
 import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { CheckCircle2, Loader2, PlusCircle } from "lucide-react";
-import { acceptInvitationAction, createStoreAction, publishStoreAction, type StoreFormState } from "@/app/(frontend)/(store)/account/stores/actions";
+import {
+  acceptInvitationAction,
+  cancelPlanAction,
+  changePlanAction,
+  connectPaymentsAction,
+  createStoreAction,
+  publishStoreAction,
+  refreshPaymentsAction,
+  setDomainAction,
+  verifyDomainAction,
+  type StoreFormState,
+} from "@/app/(frontend)/(store)/account/stores/actions";
 import { Field, fieldAria } from "@/components/checkout/field";
+import { Turnstile } from "@/components/ui/turnstile";
+import type { MyStore, SubscriptionPlanOption } from "@/lib/store-tenant";
 
-export type StorePlanOption = {
-  id: string;
-  slug?: string;
-  name: string;
-  description?: string | null;
-  priceMonthly?: number;
-  trialDays?: number;
-};
+export type StorePlanOption = SubscriptionPlanOption;
 
-function SubmitButton({ label, pendingLabel }: { label: string; pendingLabel?: string }) {
+const money = (amount: number, currency = "PKR") => (amount === 0 ? "Free" : `${currency} ${amount.toLocaleString("en-PK")}`);
+
+function SubmitButton({ label, pendingLabel, className = "btn btn-primary btn-lg w-full", icon = true }: { label: string; pendingLabel?: string; className?: string; icon?: boolean }) {
   const { pending } = useFormStatus();
   return (
-    <button type="submit" className="btn btn-primary btn-lg w-full" disabled={pending}>
-      {pending ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <PlusCircle className="size-4" aria-hidden="true" />}
-      {pending ? pendingLabel ?? label : label}
+    <button type="submit" className={className} disabled={pending}>
+      {pending ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : icon ? <PlusCircle className="size-4" aria-hidden="true" /> : null}
+      {pending ? (pendingLabel ?? label) : label}
     </button>
   );
 }
 
-export function StoreOnboardingForm({ plans = [] }: { plans?: StorePlanOption[] }) {
-  const defaultPlans = plans.length > 0 ? plans : [
-    { id: "starter", name: "Starter", description: "Launch a single storefront with a basic feature set.", priceMonthly: 0, trialDays: 14 },
-    { id: "growth", name: "Growth", description: "For scaling merchants with more products and staff.", priceMonthly: 9999, trialDays: 14 },
-    { id: "scale", name: "Scale", description: "Advanced operations and higher limits for growing commerce teams.", priceMonthly: 29999, trialDays: 14 },
-  ];
-  const [state, action] = useActionState<StoreFormState, FormData>(createStoreAction, {});
-  const [slug, setSlug] = useState("");
-  const [selectedPlan, setSelectedPlan] = useState<string>(defaultPlans[0]?.id ?? "starter");
-
+/** Success / error line of a form; follows `redirectUrl` (payment pages) once shown. */
+function FormMessage({ state }: { state: StoreFormState }) {
   useEffect(() => {
-    const input = document.querySelector<HTMLInputElement>('input[name="planId"]');
-    if (input) input.value = selectedPlan;
-  }, [selectedPlan]);
+    if (state.redirectUrl) window.location.assign(state.redirectUrl);
+  }, [state.redirectUrl, state.ts]);
+  if (state.error)
+    return (
+      <p role="alert" className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        {state.error}
+      </p>
+    );
+  if (state.message)
+    return (
+      <p role="status" className="flex items-start gap-2 rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+        <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" /> {state.message}
+      </p>
+    );
+  return null;
+}
+
+function PlanCards({ plans, selected, onSelect, trialUsed = false }: { plans: StorePlanOption[]; selected: string; onSelect: (id: string) => void; trialUsed?: boolean }) {
+  return (
+    <div className="grid gap-3 md:grid-cols-3" role="radiogroup" aria-label="Plans">
+      {plans.map((plan) => (
+        <button
+          key={plan.id}
+          type="button"
+          role="radio"
+          aria-checked={selected === plan.id}
+          onClick={() => onSelect(plan.id)}
+          className={`rounded-2xl border p-4 text-left transition ${selected === plan.id ? "border-primary bg-primary/10" : "border-border bg-surface"}`}
+        >
+          <span className="flex items-center justify-between gap-2">
+            <span className="font-semibold">{plan.name}</span>
+            {selected === plan.id ? <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] text-primary-foreground">Selected</span> : null}
+          </span>
+          {plan.description ? <span className="mt-2 block text-sm text-muted">{plan.description}</span> : null}
+          <span className="mt-3 block text-xl font-bold">
+            {money(plan.priceMonthly ?? 0, plan.currency)}
+            {(plan.priceMonthly ?? 0) > 0 ? <span className="text-sm font-normal text-muted">/month</span> : null}
+          </span>
+          <span className="mt-1 block text-xs text-muted">
+            {(plan.maxProducts ?? 0) > 0 ? `${plan.maxProducts} products` : "Unlimited products"} · {(plan.maxStaffMembers ?? 0) > 0 ? `${plan.maxStaffMembers} team members` : "Unlimited team"}
+          </span>
+          {(plan.priceMonthly ?? 0) > 0 && (plan.trialDays ?? 0) > 0 && !trialUsed ? <span className="mt-1 block text-xs text-muted">{plan.trialDays}-day free trial</span> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function StoreOnboardingForm({ plans = [] }: { plans?: StorePlanOption[] }) {
+  const [state, action] = useActionState<StoreFormState, FormData>(createStoreAction, {});
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [selectedPlan, setSelectedPlan] = useState<string>(plans[0]?.id ?? "");
+  const suggested = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
 
   return (
     <form action={action} className="space-y-4" noValidate>
-      {state.error && (
-        <p role="alert" className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-          {state.error}
-        </p>
-      )}
-      {state.message && (
-        <p role="status" className="flex items-start gap-2 rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-          <CheckCircle2 className="mt-0.5 size-4" aria-hidden="true" /> {state.message}
-        </p>
-      )}
+      <FormMessage state={state} />
 
       <Field id="store-name" label="Store name" required>
-        <input {...fieldAria("store-name")} name="name" placeholder="My Shop" autoComplete="organization" required />
+        <input {...fieldAria("store-name")} name="name" placeholder="My Shop" autoComplete="organization" required value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
-      <Field id="store-slug" label="Store URL slug" hint="Used for your storefront subdomain">
-        <input
-          {...fieldAria("store-slug", undefined, "hint")}
-          name="slug"
-          placeholder="myshop"
-          value={slug}
-          onChange={(e) => setSlug(e.target.value)}
-          autoComplete="off"
-        />
+      <Field id="store-slug" label="Store address" hint="Letters, numbers and dashes – your shop's web address and sub-domain">
+        <input {...fieldAria("store-slug", undefined, "hint")} name="slug" placeholder={suggested || "myshop"} value={slug} onChange={(e) => setSlug(e.target.value)} autoComplete="off" />
+      </Field>
+      <Field id="store-business" label="Business name" hint="Shown on invoices (defaults to the store name)">
+        <input {...fieldAria("store-business", undefined, "hint")} name="businessName" placeholder={name || "My Shop (Pvt) Ltd"} autoComplete="off" />
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field id="store-country" label="Country">
           <input {...fieldAria("store-country")} name="country" placeholder="Pakistan" />
         </Field>
         <Field id="store-currency" label="Currency">
-          <input {...fieldAria("store-currency")} name="currency" placeholder="PKR" />
+          <input {...fieldAria("store-currency")} name="currency" placeholder="PKR" maxLength={3} />
         </Field>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -84,62 +126,52 @@ export function StoreOnboardingForm({ plans = [] }: { plans?: StorePlanOption[] 
         </Field>
       </div>
 
-      <div>
-        <label className="mb-2 block text-sm font-medium text-foreground">Choose a plan</label>
-        <div className="grid gap-3 md:grid-cols-3">
-          {defaultPlans.map((plan) => (
-            <button
-              key={plan.id}
-              type="button"
-              onClick={() => setSelectedPlan(plan.id)}
-              className={`rounded-2xl border p-4 text-left transition ${selectedPlan === plan.id ? "border-primary bg-primary/10" : "border-border bg-surface"}`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold">{plan.name}</span>
-                {selectedPlan === plan.id ? <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] text-primary-foreground">Selected</span> : null}
-              </div>
-              <p className="mt-2 text-sm text-muted">{plan.description}</p>
-          <p className="mt-3 text-xl font-bold">{(plan.priceMonthly ?? 0) === 0 ? "Free" : `PKR ${(plan.priceMonthly ?? 0).toLocaleString()}/mo`}</p>
-          <p className="mt-1 text-xs text-muted">{plan.trialDays ?? 14} day trial</p>
-            </button>
-          ))}
+      {plans.length > 0 ? (
+        <div>
+          <p className="mb-2 block text-sm font-medium text-foreground">Choose a plan</p>
+          <PlanCards plans={plans} selected={selectedPlan} onSelect={setSelectedPlan} />
         </div>
-      </div>
+      ) : (
+        <p className="text-sm text-muted">No plans are offered yet – the store starts without one and ShopEngine support activates it.</p>
+      )}
 
-      <FieldsHidden slug={slug} selectedPlan={selectedPlan} />
+      <input type="hidden" name="subdomain" value={slug || suggested} />
+      <input type="hidden" name="planId" value={selectedPlan} />
+      <Turnstile action="create-store" />
       <SubmitButton label="Create store" pendingLabel="Creating store..." />
     </form>
   );
 }
 
-function FieldsHidden({ slug, selectedPlan }: { slug: string; selectedPlan: string }) {
-  return (
-    <>
-      <input type="hidden" name="businessName" value={slug || ""} />
-      <input type="hidden" name="subdomain" value={slug || ""} />
-      <input type="hidden" name="planId" value={selectedPlan || ""} />
-    </>
-  );
-}
+type Invitation = { id: number; store: { id: number; name: string } | null; role: string; expiresAt: string | null };
+const ROLE_LABEL: Record<string, string> = { store_owner: "Owner", store_manager: "Manager", store_staff: "Staff" };
 
-export function StoreInviteActions({ invitations }: { invitations: Array<{ id: string | number; store?: { id: string | number; name?: string; slug?: string } | null }> }) {
+export function StoreInviteActions({ invitations, token }: { invitations: Invitation[]; token?: string | null }) {
   const [state, action] = useActionState<StoreFormState, FormData>(acceptInvitationAction, {});
-
   return (
     <div className="space-y-3">
-      {state.error && <p role="alert" className="...">{state.error}</p>}
-      {state.message && <p role="status" className="...">{state.message}</p>}
-      {invitations.length === 0 ? (
+      <FormMessage state={state} />
+      {token && !state.ok ? (
+        <form action={action} className="flex flex-col gap-2 rounded-2xl border border-primary/40 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between" noValidate>
+          <p className="text-sm">You opened an invitation link. Accept it to join the store with this account.</p>
+          <input type="hidden" name="token" value={token} />
+          <SubmitButton label="Accept invitation" pendingLabel="Accepting…" className="btn btn-primary btn-sm" icon={false} />
+        </form>
+      ) : null}
+      {invitations.length === 0 && !token ? (
         <p className="text-sm text-muted">No pending invites right now.</p>
       ) : (
         invitations.map((invitation) => (
-          <form key={String(invitation.id)} action={action} className="flex flex-col gap-2 rounded-2xl border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between" noValidate>
+          <form key={invitation.id} action={action} className="flex flex-col gap-2 rounded-2xl border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between" noValidate>
             <div>
               <p className="font-semibold">{invitation.store?.name ?? "Store invitation"}</p>
-              <p className="text-xs text-muted">{invitation.store?.slug ? `/${invitation.store.slug}` : "Store access"}</p>
+              <p className="text-xs text-muted">
+                {ROLE_LABEL[invitation.role] ?? "Team member"}
+                {invitation.expiresAt ? ` · until ${new Date(invitation.expiresAt).toLocaleDateString("en-PK")}` : ""}
+              </p>
             </div>
             <input type="hidden" name="membershipId" value={String(invitation.id)} />
-            <button type="submit" className="btn btn-secondary btn-sm">Accept invite</button>
+            <SubmitButton label="Accept invite" pendingLabel="Accepting…" className="btn btn-secondary btn-sm" icon={false} />
           </form>
         ))
       )}
@@ -147,20 +179,112 @@ export function StoreInviteActions({ invitations }: { invitations: Array<{ id: s
   );
 }
 
-export function StorePublishedStatus({ storeId, published }: { storeId: string; published: boolean }) {
-  const [state, action] = useActionState<StoreFormState, FormData>(publishStoreAction, {});
-  if (published) return <p className="text-sm text-emerald-200">This store is live.</p>;
+const STATUS_LABEL: Record<string, string> = { draft: "Not published", active: "Live", suspended: "Suspended", closed: "Closed" };
+const PLAN_STATUS_LABEL: Record<string, string> = { trialing: "Free trial", active: "Active", past_due: "Payment due", cancelled: "Cancelled", expired: "Ended", suspended: "Suspended" };
 
+function MiniForm({ action, storeId, label, pendingLabel, children, className = "btn btn-secondary btn-sm" }: { action: (s: StoreFormState, fd: FormData) => Promise<StoreFormState>; storeId: number; label: string; pendingLabel?: string; children?: React.ReactNode; className?: string }) {
+  const [state, formAction] = useActionState<StoreFormState, FormData>(action, {});
   return (
-    <form action={action} className="mt-3" noValidate>
-      {state.error && <p role="alert" className="mb-2 ...">{state.error}</p>}
-      {state.message && <p role="status" className="mb-2 ...">{state.message}</p>}
+    <form action={formAction} className="space-y-2" noValidate>
+      <FormMessage state={state} />
       <input type="hidden" name="storeId" value={storeId} />
-      <button type="submit" className="btn btn-secondary btn-sm">Publish store</button>
+      <div className="flex flex-wrap items-end gap-2">
+        {children}
+        <SubmitButton label={label} pendingLabel={pendingLabel ?? label} className={className} icon={false} />
+      </div>
     </form>
   );
 }
 
+/** One store in Account → Stores: status, plan, payments, domain and publishing (owner tools only for the owner). */
+export function StoreCard({ store, plans, rootDomain }: { store: MyStore; plans: StorePlanOption[]; rootDomain?: string | null }) {
+  const owner = store.role === "store_owner";
+  const [plan, setPlan] = useState(String(store.planId ?? plans[0]?.id ?? ""));
+  const address = store.customDomain && store.domainVerified ? store.customDomain : store.subdomain && rootDomain ? `${store.subdomain}.${rootDomain}` : null;
+  return (
+    <div className="space-y-4 rounded-2xl border border-border bg-surface p-4">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="font-semibold">{store.name}</p>
+          <p className="text-xs text-muted">
+            {STATUS_LABEL[store.status] ?? store.status} · {ROLE_LABEL[store.role] ?? store.role}
+            {store.planName ? ` · ${store.planName} (${PLAN_STATUS_LABEL[store.subscriptionStatus] ?? store.subscriptionStatus})` : ""}
+            {store.subscriptionStatus === "trialing" && store.trialEndsAt ? ` until ${new Date(store.trialEndsAt).toLocaleDateString("en-PK")}` : ""}
+          </p>
+          {address ? (
+            <a href={`https://${address}`} className="text-xs text-primary underline" target="_blank" rel="noreferrer">
+              {address}
+            </a>
+          ) : null}
+        </div>
+        <Link href="/cms" className="btn btn-secondary btn-sm">
+          Open /cms
+        </Link>
+      </div>
+
+      {store.subscriptionStatus === "past_due" ? (
+        <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+          The plan payment is due{store.graceEndsAt ? ` – the shop goes offline on ${new Date(store.graceEndsAt).toLocaleDateString("en-PK")}` : ""}. Choose the plan again below to pay.
+        </p>
+      ) : null}
+
+      {owner && store.status === "draft" ? <MiniForm action={publishStoreAction} storeId={store.id} label="Publish store" pendingLabel="Publishing…" className="btn btn-primary btn-sm" /> : null}
+
+      {owner && plans.length > 0 ? (
+        <details className="rounded-xl border border-border p-3">
+          <summary className="cursor-pointer text-sm font-medium">Plan</summary>
+          <div className="mt-3 space-y-3">
+            <PlanCards plans={plans} selected={plan} onSelect={setPlan} trialUsed={store.trialUsed} />
+            <MiniForm action={changePlanAction} storeId={store.id} label={String(store.planId) === plan && ["active", "trialing"].includes(store.subscriptionStatus) ? "Keep this plan" : "Choose this plan"} pendingLabel="Saving…">
+              <input type="hidden" name="planId" value={plan} />
+              <select name="cycle" className="input w-auto" defaultValue="monthly" aria-label="Billing">
+                <option value="monthly">Monthly</option>
+                <option value="annual">Yearly</option>
+              </select>
+            </MiniForm>
+            {["active", "trialing"].includes(store.subscriptionStatus) ? <MiniForm action={cancelPlanAction} storeId={store.id} label="Cancel plan at period end" pendingLabel="Cancelling…" /> : null}
+          </div>
+        </details>
+      ) : null}
+
+      {owner ? (
+        <details className="rounded-xl border border-border p-3">
+          <summary className="cursor-pointer text-sm font-medium">Card payments {store.paymentsReady ? "· ready" : store.paymentsConnected ? "· being checked" : ""}</summary>
+          <div className="mt-3 space-y-2 text-sm text-muted">
+            <p>Customers pay by card on the payment provider&apos;s secure page; the money goes to your own payment account.</p>
+            <MiniForm action={connectPaymentsAction} storeId={store.id} label={store.paymentsConnected ? "Continue payment setup" : "Connect payments"} pendingLabel="Opening…" />
+            {store.paymentsConnected ? <MiniForm action={refreshPaymentsAction} storeId={store.id} label="Check status" pendingLabel="Checking…" /> : null}
+          </div>
+        </details>
+      ) : null}
+
+      {owner ? (
+        <details className="rounded-xl border border-border p-3">
+          <summary className="cursor-pointer text-sm font-medium">Custom domain {store.customDomain ? `· ${store.customDomain}${store.domainVerified ? " (verified)" : " (not verified)"}` : ""}</summary>
+          <div className="mt-3 space-y-3 text-sm">
+            <MiniForm action={setDomainAction} storeId={store.id} label="Save domain" pendingLabel="Saving…">
+              <input name="domain" defaultValue={store.customDomain ?? ""} placeholder="shop.example.com" className="input" aria-label="Domain" />
+            </MiniForm>
+            {store.customDomain && !store.domainVerified && store.domainToken ? (
+              <>
+                <p className="text-muted">
+                  Point the domain to the platform (CNAME), then add a DNS <b>TXT</b> record on <code>_shopengine.{store.customDomain}</code> (or on the domain itself) with this value:
+                </p>
+                <code className="block break-all rounded-lg bg-black/30 p-2 text-xs">{store.domainToken}</code>
+                <MiniForm action={verifyDomainAction} storeId={store.id} label="Verify" pendingLabel="Checking DNS…" />
+              </>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 export function StoreHubLink() {
-  return <Link href="/account/stores" className="btn btn-secondary btn-sm">Manage stores</Link>;
+  return (
+    <Link href="/account/stores" className="btn btn-secondary btn-sm">
+      Manage stores
+    </Link>
+  );
 }

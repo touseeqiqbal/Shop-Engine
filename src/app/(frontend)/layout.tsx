@@ -1,8 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Montserrat, Poppins, Space_Grotesk } from "next/font/google";
 import "../globals.css";
-import { absoluteUrl, site } from "@/lib/site";
+import { currentAvailability, currentOrigin, getCurrentStore } from "@/lib/tenant";
 import { getSeoSettings, getSiteInfo } from "@/lib/repo/site-content";
+import { blankSiteInfo } from "@/lib/site-info";
 import { SiteInfoProvider } from "@/components/providers/site-info";
 import { PreferencesProvider } from "@/components/providers/preferences";
 import { themeInitScript } from "@/lib/theme-init";
@@ -10,7 +11,7 @@ import { RuntimeAnalytics } from "@/components/runtime-analytics";
 import { ChromeProvider } from "@/components/providers/chrome";
 import { MotionProvider } from "@/components/providers/motion";
 import { getChrome } from "@/lib/cms/chrome";
-import { themeCss } from "@/lib/cms/chrome-types";
+import { DEFAULT_CHROME, themeCss } from "@/lib/cms/chrome-types";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 const montserrat = Montserrat({ subsets: ["latin"], variable: "--font-montserrat", display: "swap", weight: ["800"] });
@@ -18,9 +19,20 @@ const grotesk = Space_Grotesk({ subsets: ["latin"], variable: "--font-grotesk", 
 // Only downloaded when chosen in Online store → Theme settings
 const poppins = Poppins({ subsets: ["latin"], variable: "--font-poppins", display: "swap", weight: ["400", "600", "700"], preload: false });
 
+/** An address no store owns (unknown sub-domain): the platform's own plain pages, never the original shop's profile. */
+const PLATFORM_NAME = "ShopEngine";
+async function isUnknownStore() {
+  const { availability } = await currentAvailability();
+  return !availability.open && availability.reason === "missing";
+}
+
 /** Global defaults – editable in /cms → Settings → Google & SEO (env vars remain as fallbacks). */
 export async function generateMetadata(): Promise<Metadata> {
-  const [seo, info, chrome] = await Promise.all([getSeoSettings(), getSiteInfo(), getChrome()]);
+  const [seo, info, chrome, origin, unknown, store] = await Promise.all([getSeoSettings(), getSiteInfo(), getChrome(), currentOrigin(), isUnknownStore(), getCurrentStore()]);
+  // the store's own favicon (Theme settings); the original shop's icon only on the original shop
+  const icon = chrome.theme.favicon || (!store || store.isDefault ? "/icon.svg" : "/brand/store-icon.svg");
+  const icons = { icon, apple: chrome.theme.favicon || (!store || store.isDefault ? "/apple-icon.png" : "/brand/store-icon.svg") };
+  if (unknown) return { metadataBase: new URL(origin), title: { default: PLATFORM_NAME, template: `%s | ${PLATFORM_NAME}` }, robots: { index: false, follow: false }, icons: { icon: "/brand/store-icon.svg" } };
   const google = seo.googleVerification || process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION || undefined;
   const bing = seo.bingVerification || process.env.NEXT_PUBLIC_BING_SITE_VERIFICATION || "";
   const fb = seo.facebookVerification || process.env.NEXT_PUBLIC_FB_DOMAIN_VERIFICATION || "";
@@ -29,7 +41,8 @@ export async function generateMetadata(): Promise<Metadata> {
   if (bing) other["msvalidate.01"] = bing;
   const index = !seo.discourageIndexing;
   return {
-    metadataBase: new URL(site.url),
+    // each store's own address: relative canonical / social links resolve against it
+    metadataBase: new URL(origin),
     title: {
       default: seo.defaultTitle,
       template: seo.titleTemplate,
@@ -37,14 +50,14 @@ export async function generateMetadata(): Promise<Metadata> {
     description: seo.defaultDescription || info.description,
     applicationName: info.name,
     keywords: seo.keywords,
-    authors: [{ name: info.name, url: site.url }],
+    authors: [{ name: info.name, url: origin }],
     creator: info.name,
     formatDetection: { telephone: true, email: true, address: true },
     openGraph: {
       siteName: info.name,
       locale: "en_PK",
       type: "website",
-      ...(seo.defaultOgImage ? { images: [{ url: /^https?:\/\//.test(seo.defaultOgImage) ? seo.defaultOgImage : absoluteUrl(seo.defaultOgImage), width: 1200, height: 630 }] } : {}),
+      ...(seo.defaultOgImage ? { images: [{ url: seo.defaultOgImage, width: 1200, height: 630 }] } : {}),
     },
     twitter: { card: "summary_large_image" },
     robots: index
@@ -55,7 +68,7 @@ export async function generateMetadata(): Promise<Metadata> {
       other: Object.keys(other).length ? other : undefined,
     },
     category: "shopping",
-    ...(chrome.theme.favicon ? { icons: { icon: chrome.theme.favicon, apple: chrome.theme.favicon } } : {}),
+    icons,
   };
 }
 
@@ -70,7 +83,10 @@ export const viewport: Viewport = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const [info, chrome] = await Promise.all([getSiteInfo(), getChrome()]);
+  const [storeInfo, storeChrome, origin, { store, availability }] = await Promise.all([getSiteInfo(), getChrome(), currentOrigin(), currentAvailability()]);
+  const unknown = !availability.open && availability.reason === "missing";
+  const info = unknown ? blankSiteInfo(PLATFORM_NAME, origin) : storeInfo;
+  const chrome = unknown ? DEFAULT_CHROME : storeChrome;
   const mode = chrome.theme.defaultMode;
   return (
     <html lang="en" data-theme={mode} className={`${inter.variable} ${grotesk.variable} ${montserrat.variable} ${poppins.variable}`} suppressHydrationWarning>
@@ -83,7 +99,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           Skip to content
         </a>
         <PreferencesProvider defaultTheme={mode}>
-          <SiteInfoProvider info={info}>
+          <SiteInfoProvider info={info} original={!unknown && (!store || store.isDefault)}>
             <ChromeProvider chrome={chrome}>
               <MotionProvider>{children}</MotionProvider>
             </ChromeProvider>

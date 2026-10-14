@@ -3,6 +3,7 @@ import Link from "next/link";
 import { CheckCircle2, CircleAlert, PackageX } from "lucide-react";
 import { findOrderByConfirmToken } from "@/lib/cms/confirm";
 import { formatPKR } from "@/lib/utils";
+import { amountToCollect } from "@/lib/order-money";
 import { cancelByLink, confirmByLink } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +33,9 @@ export default async function ConfirmOrderPage({ params, searchParams }: Props) 
   }
 
   const first = order.customer.name.split(" ")[0];
-  const due = order.total - (order.advancePaid ?? 0);
+  // an uploaded advance only counts once the shop has checked it (same rule as the rider's slip)
+  const due = amountToCollect(order);
+  const advancePending = order.paymentStatus === "awaiting-verification" && (order.advancePaid ?? 0) > 0;
   const deadline = order.confirmation?.expiresAt
     ? new Date(order.confirmation.expiresAt).toLocaleString("en-PK", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Karachi" })
     : "";
@@ -55,6 +58,7 @@ export default async function ConfirmOrderPage({ params, searchParams }: Props) 
         </ul>
         <p className="mt-4 rounded-xl border border-border bg-surface px-4 py-3 text-sm">
           Pay <strong className="text-fg">{formatPKR(due)}</strong> in cash when the rider arrives.
+          {advancePending ? ` Once we've checked your advance of ${formatPKR(order.advancePaid ?? 0)}, it is taken off this amount.` : ""}
         </p>
         {deadline && <p className="mt-3 text-xs text-subtle">Not confirmed by {deadline} = cancelled automatically.</p>}
         <form className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:justify-center">

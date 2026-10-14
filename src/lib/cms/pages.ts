@@ -3,13 +3,14 @@ import { unstable_cache } from "next/cache";
 import { convertLexicalToHTML } from "@payloadcms/richtext-lexical/html";
 import type { SerializedEditorState } from "@payloadcms/richtext-lexical/lexical";
 import { isCmsConfigured } from "@/lib/db/config";
+import { currentStoreId } from "@/lib/tenant";
 import { getHomeConfig } from "@/lib/repo/site-content";
 import { PAGES_TAG } from "@/payload/revalidate";
 import { legacyHomeToPage, textWithDefaults, emptyText, type BlockText, type PageBlock, type PageData, type ProductSource } from "./blocks-types";
 import type { HomeSectionType } from "@/lib/content/home";
 
 /**
- * Page-builder pages from Payload (collection `pages`), resolved for the storefront.
+ * Page-builder pages from Payload (collection `pages`) of the current store, resolved for the storefront.
  * Published pages are cached under PAGES_TAG (revalidated when an editor publishes);
  * in Draft Mode (live preview) the latest draft is read uncached.
  */
@@ -150,13 +151,15 @@ async function payloadClient() {
   return getPayload({ config });
 }
 
-async function fetchPage(slug: string, draft: boolean): Promise<PageData | null> {
+const inStore = (storeId: number | null) => (storeId == null ? [] : [{ store: { equals: storeId } }]);
+
+async function fetchPage(slug: string, draft: boolean, storeId: number | null): Promise<PageData | null> {
   if (!isCmsConfigured) return null;
   try {
     const payload = await payloadClient();
     const res = await payload.find({
       collection: "pages" as never,
-      where: draft ? { slug: { equals: slug } } : { and: [{ slug: { equals: slug } }, { _status: { equals: "published" } }] },
+      where: { and: [{ slug: { equals: slug } }, ...(draft ? [] : [{ _status: { equals: "published" } }]), ...inStore(storeId)] },
       draft,
       depth: 1,
       limit: 1,
@@ -171,11 +174,12 @@ async function fetchPage(slug: string, draft: boolean): Promise<PageData | null>
   }
 }
 
-const cachedPage = unstable_cache((slug: string) => fetchPage(slug, false), ["cms-page-v1"], { tags: [PAGES_TAG], revalidate: 300 });
+const cachedPage = unstable_cache((slug: string, storeId: number | null) => fetchPage(slug, false, storeId), ["cms-page-v2"], { tags: [PAGES_TAG], revalidate: 300 });
 
-/** A published page (or the latest draft in preview), null if it doesn't exist. */
-export function getPage(slug: string, { draft = false } = {}) {
-  return draft ? fetchPage(slug, true) : cachedPage(slug);
+/** A published page of the current store (or the latest draft in preview), null if it doesn't exist. */
+export async function getPage(slug: string, { draft = false } = {}) {
+  const storeId = await currentStoreId();
+  return draft ? fetchPage(slug, true, storeId) : cachedPage(slug, storeId);
 }
 
 /** Home page: the Payload page "home" when it exists, otherwise the legacy home builder config. */
@@ -183,13 +187,15 @@ export async function getHomePage({ draft = false } = {}): Promise<PageData> {
   return (await getPage("home", { draft })) ?? legacyHomeToPage(await getHomeConfig());
 }
 
-/** Published pages for the sitemap (home excluded – it's "/"). */
-export const listPublishedPages = unstable_cache(
-  async (): Promise<{ slug: string; updatedAt: string }[]> => {
+/** Published pages of the current store for the sitemap (home excluded – it's "/"). */
+export const listPublishedPages = async () => publishedPagesCached(await currentStoreId());
+
+const publishedPagesCached = unstable_cache(
+  async (storeId: number | null): Promise<{ slug: string; updatedAt: string }[]> => {
     if (!isCmsConfigured) return [];
     try {
       const payload = await payloadClient();
-      const res = await payload.find({ collection: "pages" as never, where: { _status: { equals: "published" } }, depth: 0, limit: 0, pagination: false, overrideAccess: true, select: { slug: true, updatedAt: true, meta: true } as never });
+      const res = await payload.find({ collection: "pages" as never, where: { and: [{ _status: { equals: "published" } }, ...inStore(storeId)] }, depth: 0, limit: 0, pagination: false, overrideAccess: true, select: { slug: true, updatedAt: true, meta: true } as never });
       // pages hidden from search engines (or pointing at another original) stay out of the sitemap
       return (res.docs as Doc[])
         .filter((d) => obj(d.meta as Rel)?.noindex !== true && !str(obj(d.meta as Rel)?.canonical))
@@ -199,6 +205,6 @@ export const listPublishedPages = unstable_cache(
       return [];
     }
   },
-  ["cms-pages-list-v2"],
+  ["cms-pages-list-v3"],
   { tags: [PAGES_TAG], revalidate: 300 }
 );

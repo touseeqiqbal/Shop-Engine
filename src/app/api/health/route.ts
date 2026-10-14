@@ -33,7 +33,8 @@ export async function GET() {
   }
   try {
     await payload.count({ collection: "users", overrideAccess: true });
-    return Response.json({ ok: true, db: "up", cms: "up", ...(warnings.length ? { warnings } : {}) }, { headers });
+    // only how many settings need attention (the details are on the /cms Home screen for platform admins)
+    return Response.json({ ok: true, db: "up", cms: "up", ...(warnings.length ? { warnings: warnings.length } : {}) }, { headers });
   } catch (e) {
     log.error("health.payload_cms_check_failed", e);
     return Response.json({ ok: false, db: "up", cms: "down" }, { status: 503, headers });

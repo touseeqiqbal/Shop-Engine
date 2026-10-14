@@ -92,9 +92,34 @@ export const DEFAULT_SITE_INFO: SiteInfo = {
 
 const nonEmpty = (s: unknown): s is string => typeof s === "string" && s.trim() !== "";
 
-/** Merge saved overrides onto the defaults. Empty strings / empty lists keep the default. */
-export function mergeSiteInfo(saved: SiteInfoOverrides | null | undefined): SiteInfo {
-  const d = DEFAULT_SITE_INFO;
+/**
+ * A new store's starting profile: its own name and address, nothing else (no phone numbers, socials or map of any
+ * other business). The owner fills the rest in Settings → Store details.
+ */
+export function blankSiteInfo(name: string, url: string, country = ""): SiteInfo {
+  return {
+    name,
+    shortName: name,
+    tagline: "",
+    description: "",
+    url,
+    email: "",
+    address: { street: "", area: "", city: "", region: "", postalCode: "", country, countryCode: "", full: "" },
+    geo: { lat: 0, lng: 0 },
+    phones: [],
+    hours: [],
+    hoursDisplay: "",
+    whatsappNote: "",
+    social: {},
+    mapEmbed: "",
+    mapLink: "",
+    couriers: [],
+  };
+}
+
+/** Merge saved overrides onto the defaults (`base`: the store's starting profile). Empty strings / empty lists keep the default. */
+export function mergeSiteInfo(saved: SiteInfoOverrides | null | undefined, base: SiteInfo = DEFAULT_SITE_INFO): SiteInfo {
+  const d = base;
   if (!saved || typeof saved !== "object") return structuredClone(d);
   const pick = (v: unknown, fallback: string) => (nonEmpty(v) ? v.trim() : fallback);
   const address = { ...d.address };
@@ -130,9 +155,14 @@ export function mergeSiteInfo(saved: SiteInfoOverrides | null | undefined): Site
   };
 }
 
-/** Primary phone (first in the list) – always defined. */
+/** Primary phone (first in the list) – always defined (empty when the store hasn't added one). */
 export function primaryPhone(info: SiteInfo): SitePhone {
-  return info.phones[0] ?? DEFAULT_SITE_INFO.phones[0];
+  return info.phones[0] ?? { label: "", display: "", tel: "", wa: "" };
+}
+
+/** Where the store is, e.g. "Saddar, Karachi" (area and city from its address; "" when it has none). */
+export function storePlace(info: SiteInfo, sep = ", ") {
+  return [info.address.area, info.address.city].filter(nonEmpty).join(sep);
 }
 
 /** Non-empty social links in display order. */

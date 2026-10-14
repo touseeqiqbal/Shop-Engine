@@ -1,11 +1,12 @@
 import "server-only";
-import type { Payload } from "payload";
+import type { Payload, Where } from "payload";
 import type { Brand, Category, CategoryAttribute, Condition, LaptopModel, Product, Review } from "@/lib/types";
 
 /**
  * Catalog read/write against Payload (single source of truth since Phase 4).
  * Documents are mapped to the storefront's existing types. Storefront ids stay the legacy (Prisma) ids for
  * migrated records – carts, wishlists, orders and flash sales keep working – and the Payload id for new ones.
+ * Everything is for ONE store (`storeId`); a product id from another store is treated as unknown.
  */
 
 type Doc = Record<string, unknown>;
@@ -46,6 +47,9 @@ export async function toMarkdown(payload: Payload, value: unknown): Promise<stri
     return "";
   }
 }
+
+/** Only this store's documents (no store = demo / single-store mode: no filter). */
+export const inStore = (storeId: number | null | undefined): Where => (storeId == null ? {} : { store: { equals: storeId } });
 
 const findAll = (payload: Payload, collection: string, extra: Record<string, unknown> = {}) =>
   payload
@@ -148,14 +152,15 @@ async function toProduct(payload: Payload, p: Doc): Promise<Product> {
   };
 }
 
-/** Whole catalog (all statuses – callers filter). */
-export async function loadCatalogFromPayload(): Promise<{ categories: Category[]; brands: Brand[]; products: Product[]; models: LaptopModel[] }> {
+/** A store's whole catalog (all statuses – callers filter). */
+export async function loadCatalogFromPayload(storeId: number | null): Promise<{ categories: Category[]; brands: Brand[]; products: Product[]; models: LaptopModel[] }> {
   const payload = await payloadClient();
+  const where = { where: inStore(storeId) };
   const [cats, brands, products, models] = await Promise.all([
-    findAll(payload, "categories", { depth: 1 }),
-    findAll(payload, "brands", { depth: 1 }),
-    findAll(payload, "products", { depth: 1 }),
-    findAll(payload, "laptop-models", { depth: 1 }),
+    findAll(payload, "categories", { depth: 1, ...where }),
+    findAll(payload, "brands", { depth: 1, ...where }),
+    findAll(payload, "products", { depth: 1, ...where }),
+    findAll(payload, "laptop-models", { depth: 1, ...where }),
   ]);
   return {
     categories: cats.map(toCategory),
@@ -166,9 +171,9 @@ export async function loadCatalogFromPayload(): Promise<{ categories: Category[]
 }
 
 /** Preview (staff, Draft Mode): the latest DRAFT of a product, uncached – shown on its product page before publishing. */
-export async function loadProductDraft(slug: string): Promise<{ product: Product; description: string } | null> {
+export async function loadProductDraft(slug: string, storeId: number | null): Promise<{ product: Product; description: string } | null> {
   const payload = await payloadClient();
-  const res = await payload.find({ collection: "products" as never, where: { slug: { equals: slug } } as never, draft: true, limit: 1, depth: 1, overrideAccess: true });
+  const res = await payload.find({ collection: "products" as never, where: { and: [{ slug: { equals: slug } }, inStore(storeId)] } as never, draft: true, limit: 1, depth: 1, overrideAccess: true });
   const doc = res.docs[0] as Doc | undefined;
   if (!doc) return null;
   const product = await toProduct(payload, doc);
@@ -176,18 +181,18 @@ export async function loadProductDraft(slug: string): Promise<{ product: Product
 }
 
 /** One product's full description as Markdown (the catalogue cache leaves descriptions out). */
-export async function loadProductDescription(id: string): Promise<string> {
+export async function loadProductDescription(id: string, storeId: number | null): Promise<string> {
   const payload = await payloadClient();
-  const doc = await findProductDoc(payload, id);
+  const doc = await findProductDoc(payload, id, storeId);
   return doc ? toMarkdown(payload, doc.description) : "";
 }
 
 /** Approved reviews – of one product (its newest 50) when `productId` is given. */
-export async function loadApprovedReviewsFromPayload(productId?: string): Promise<Review[]> {
+export async function loadApprovedReviewsFromPayload(storeId: number | null, productId?: string): Promise<Review[]> {
   const payload = await payloadClient();
-  const product = productId ? await findProductDoc(payload, productId) : null;
+  const product = productId ? await findProductDoc(payload, productId, storeId) : null;
   if (productId && !product) return [];
-  const where = product ? { and: [{ approved: { equals: true } }, { product: { equals: product.id } }] } : { approved: { equals: true } };
+  const where = product ? { and: [{ approved: { equals: true } }, { product: { equals: product.id } }] } : { and: [{ approved: { equals: true } }, inStore(storeId)] };
   const res = await payload.find({ collection: "reviews" as never, where: where as never, depth: 1, populate: { products: { legacyId: true } } as never, sort: "-createdAt", limit: product ? 50 : 500, overrideAccess: true });
   const docs = res.docs as unknown as Doc[];
   return docs.map((r) => ({
@@ -207,24 +212,24 @@ export async function loadApprovedReviewsFromPayload(productId?: string): Promis
 
 // ───────────────────────────── writes ─────────────────────────────
 
-/** Payload document of a product by storefront id (legacy id or Payload id). */
-export async function findProductDoc(payload: Payload, id: string): Promise<Doc | null> {
-  const where = /^\d+$/.test(id) ? { or: [{ id: { equals: Number(id) } }, { legacyId: { equals: id } }] } : { legacyId: { equals: id } };
-  const res = await payload.find({ collection: "products" as never, where: where as never, limit: 1, depth: 0, overrideAccess: true });
+/** Payload document of a product by storefront id (legacy id or Payload id) – in this store only. */
+export async function findProductDoc(payload: Payload, id: string, storeId: number | null): Promise<Doc | null> {
+  const byId = /^\d+$/.test(id) ? { or: [{ id: { equals: Number(id) } }, { legacyId: { equals: id } }] } : { legacyId: { equals: id } };
+  const res = await payload.find({ collection: "products" as never, where: { and: [byId, inStore(storeId)] } as never, limit: 1, depth: 0, overrideAccess: true });
   return (res.docs[0] as Doc | undefined) ?? null;
 }
 
 /** Live stock (bypasses caches) – used right before an order is placed. */
-export async function freshStock(id: string): Promise<number | null> {
-  const doc = await findProductDoc(await payloadClient(), id);
+export async function freshStock(id: string, storeId: number | null): Promise<number | null> {
+  const doc = await findProductDoc(await payloadClient(), id, storeId);
   return doc ? num(doc.stock) : null;
 }
 
-/** A shopper's review (unapproved until staff approve it in /cms → Reviews). */
-export async function submitReview(productId: string, r: { name: string; city?: string; rating: number; title?: string; body: string; photoKeys?: string[] }) {
+/** A shopper's review (unapproved until staff approve it in /cms → Reviews) – of a published product of this store. */
+export async function submitReview(storeId: number | null, productId: string, r: { name: string; city?: string; rating: number; title?: string; body: string; photoKeys?: string[] }) {
   const payload = await payloadClient();
-  const doc = await findProductDoc(payload, productId);
-  if (!doc || doc.status !== "active") return false;
-  await payload.create({ collection: "reviews" as never, data: { product: doc.id, ...r, approved: false, verified: false } as never, overrideAccess: true });
+  const doc = await findProductDoc(payload, productId, storeId);
+  if (!doc || doc.status !== "active" || doc._status === "draft") return false;
+  await payload.create({ collection: "reviews" as never, data: { store: doc.store, product: doc.id, ...r, approved: false, verified: false } as never, overrideAccess: true, context: { storefront: true } });
   return true;
 }

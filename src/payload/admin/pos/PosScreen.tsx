@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useAuth } from "@payloadcms/ui";
+import { useStoreRole } from "../ui/store-context";
 import { toast } from "../ui/toast";
 
 /**
@@ -35,8 +35,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function PosScreen({ storeName }: { storeName: string }) {
-  const { user } = useAuth();
-  const isManager = ["owner", "manager"].includes(String((user as { role?: string } | null)?.role));
+  const { isManager } = useStoreRole();
   const [tab, setTab] = useState<"sell" | "cashup">("sell");
   return (
     <div className="urko-pos">
@@ -68,6 +67,8 @@ function Sell({ storeName, isManager }: { storeName: string; isManager: boolean 
   const [customer, setCustomer] = useState({ name: "", phone: "" });
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<Sale | null>(null);
+  // one id per sale: pressing "Complete" again (double click, retry after a timeout) can't sell twice
+  const saleId = useRef("");
   const [recent, setRecent] = useState<Sale[]>([]);
   const search = useRef<HTMLInputElement>(null);
   const seq = useRef(0);
@@ -149,10 +150,12 @@ function Sell({ storeName, isManager }: { storeName: string; isManager: boolean 
     if (!lines.length) return toast("Add something to the sale first", "error");
     if (short > 0) return toast(`Payment is ${rs(short)} short`, "error");
     setBusy(true);
+    saleId.current ||= crypto.randomUUID();
     try {
       const j = await api<{ sale: Sale }>("/pos/sale", {
         method: "POST",
         body: JSON.stringify({
+          clientSaleId: saleId.current,
           lines: lines.map((l) => ({ productId: l.product.id, unitId: l.unit?.id, qty: l.qty, unitPrice: l.unitPrice })),
           discount: disc,
           payments: paidList.filter((p) => p.value > 0).map((p) => ({ method: p.method, amount: p.value })),
@@ -161,6 +164,7 @@ function Sell({ storeName, isManager }: { storeName: string; isManager: boolean 
         }),
       });
       setDone(j.sale);
+      saleId.current = "";
       setLines([]);
       setDiscount("");
       setPayments([{ method: "cash", amount: "" }]);

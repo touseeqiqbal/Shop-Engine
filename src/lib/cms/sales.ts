@@ -3,7 +3,8 @@ import { randomBytes } from "node:crypto";
 import { sql } from "@payloadcms/db-postgres";
 import { commitTransaction, createLocalReq, initTransaction, killTransaction, type Payload, type Where } from "payload";
 import type { Coupon, FlashSale, Order, OrderEvent, OrderItem, PaymentMethod, PaymentStatus, SavedAddress, WholesaleInquiry } from "@/lib/types";
-import { findProductDoc, payloadClient, storefrontId } from "./catalog-source";
+import { findProductDoc, inStore, payloadClient, storefrontId } from "./catalog-source";
+import { currentOrigin, currentStoreId } from "@/lib/tenant";
 import { checkVerifyToken, createVerifyToken, readVerifyToken, verifyEmailEmail } from "@/lib/account-email";
 import { deliverEmail } from "@/lib/mailer";
 import { log } from "@/lib/log";
@@ -12,6 +13,8 @@ import { log } from "@/lib/log";
  * Orders, customers, discounts, flash sales, wholesale inquiries and contact messages in Payload (Phase 6).
  * Everything is mapped to the storefront's existing types. Ids stay the legacy ids for migrated records
  * (order links, sessions, carts keep working) and the Payload id for new ones.
+ * Multi-store: orders, discounts, messages … belong to the store of the request (`currentStoreId()`); customer
+ * ACCOUNTS are shared by every store (a shopper signs in once), with `customerOf` listing the stores they use.
  */
 
 type Doc = Record<string, unknown>;
@@ -63,7 +66,10 @@ export function toOrder(d: Doc): Order {
     paymentScreenshotUrl: opt(str(d.paymentScreenshotKey)) ?? null,
     courier: opt(str(d.courier)) ?? null,
     trackingNumber: opt(str(d.trackingNumber)) ?? null,
-    notes: opt(str(d.notes)) ?? null,
+    // what the customer wrote at checkout – never the team's internal notes (this object reaches customers' pages and emails)
+    notes: opt(str(d.customerNote)) ?? null,
+    marketingConsent: d.marketingConsent === true,
+    storeId: d.store && typeof d.store === "object" ? Number((d.store as Doc).id) || null : d.store != null ? Number(d.store) || null : null,
     history: (Array.isArray(d.history) ? (d.history as Doc[]) : []).map((h): OrderEvent => ({ status: str(h.status) as OrderEvent["status"], at: str(h.at), note: opt(str(h.note)) })),
     userId: obj(d.user) ? storefrontId(obj(d.user)) : d.user != null ? String(d.user) : null,
     confirmation: obj(d.confirmation)?.expiresAt
@@ -74,18 +80,24 @@ export function toOrder(d: Doc): Order {
 }
 
 /** Storefront fields → Payload data (relationships resolved). */
-async function orderData(payload: Payload, o: Partial<Order>): Promise<Doc> {
+async function orderData(payload: Payload, o: Partial<Order>, storeId: number | null): Promise<Doc> {
   const data: Doc = {};
+  if (storeId != null) data.store = storeId;
   if (o.orderNumber !== undefined) data.orderNumber = o.orderNumber;
   if (o.createdAt !== undefined) data.placedAt = o.createdAt;
   if (o.status !== undefined) data.status = o.status;
   if (o.customer) data.customer = { ...o.customer, email: o.customer.email ?? null, landmark: o.customer.landmark ?? null };
   if (o.items) {
     data.items = await Promise.all(
-      o.items.map(async (i) => ({
+      o.items.map(async (i) => {
         // never save a line without its product – cancelling it would then never give the stock back
-        product: (await findProductDoc(payload, i.productId))?.id ?? null,
+        const doc = await findProductDoc(payload, i.productId, storeId);
+        return {
+        product: doc?.id ?? null,
         productLegacyId: i.productId,
+        // what was sold as it was then (the product may be renamed or deleted later)
+        sku: str(doc?.sku) || null,
+        options: doc?.optionValues ?? null,
         title: i.name,
         slug: i.slug,
         url: i.url,
@@ -93,12 +105,16 @@ async function orderData(payload: Payload, o: Partial<Order>): Promise<Doc> {
         unitPrice: i.unitPrice,
         qty: i.qty,
         upgrades: i.upgrades ?? [],
-      }))
+        };
+      })
     );
   }
-  for (const k of ["subtotal", "discount", "deliveryCharge", "total", "advancePaid", "paymentMethod", "paymentStatus", "courier", "trackingNumber", "notes", "couponCode"] as const) {
+  for (const k of ["subtotal", "discount", "deliveryCharge", "total", "advancePaid", "paymentMethod", "paymentStatus", "courier", "trackingNumber", "couponCode", "taxTotal", "paymentReference"] as const) {
     if (o[k] !== undefined) data[k] = o[k] ?? null;
   }
+  // the customer's own note (never the team's internal notes)
+  if (o.notes !== undefined) data.customerNote = o.notes ?? null;
+  if (o.marketingConsent !== undefined) data.marketingConsent = o.marketingConsent === true;
   if (o.paymentScreenshotUrl !== undefined) data.paymentScreenshotKey = o.paymentScreenshotUrl ?? null;
   if (o.confirmation !== undefined) data.confirmation = o.confirmation ?? { token: null, code: null, expiresAt: null, confirmedAt: null, via: null };
   if (o.risk !== undefined) data.risk = o.risk ?? { score: null, level: null, reasons: null };
@@ -107,10 +123,29 @@ async function orderData(payload: Payload, o: Partial<Order>): Promise<Doc> {
   return data;
 }
 
+/** Remember that this account shops at this store (its team then sees the customer). */
+export const addCustomerOf = (payload: Payload, user: Id | null | undefined, storeId: number | null | undefined) => addStoreLink(payload, user, storeId, "customerOf");
+
+/** Remember that this customer agreed to marketing emails from this store (never from any other). */
+export const addMarketingConsent = (payload: Payload, user: Id | null | undefined, storeId: number | null | undefined) => addStoreLink(payload, user, storeId, "marketingConsent");
+
+/** Adds a store to one of the account's store lists (plain SQL: no account hooks run for the shopper's own order). */
+async function addStoreLink(payload: Payload, user: Id | null | undefined, storeId: number | null | undefined, path: "customerOf" | "marketingConsent") {
+  if (user == null || storeId == null) return;
+  // a storefront id may be a migrated account's legacy id
+  const userId = typeof user === "number" || /^\d+$/.test(user) ? Number(user) : Number((await findOne(payload, "users", byStorefrontId(user)))?.id);
+  if (!Number.isFinite(userId)) return;
+  await (payload.db as unknown as { drizzle: { execute: (q: unknown) => Promise<unknown> } }).drizzle.execute(sql`
+    INSERT INTO "payload"."cms_users_rels" ("order", "parent_id", "path", "cms_stores_id")
+    SELECT 1, ${Number(userId)}, ${path}, ${storeId}
+    WHERE NOT EXISTS (SELECT 1 FROM "payload"."cms_users_rels" WHERE "parent_id" = ${Number(userId)} AND "path" = ${path} AND "cms_stores_id" = ${storeId})`);
+}
+
 export type PlaceOrderResult =
   | { ok: true; order: Order; duplicate?: boolean }
   | { ok: false; reason: "sold-out"; short: string[] }
-  | { ok: false; reason: "coupon" };
+  | { ok: false; reason: "coupon" }
+  | { ok: false; reason: "payment-reference" };
 
 const isUniqueViolation = (e: unknown) => /unique|duplicate key|already exists/i.test(String((e as { message?: string })?.message ?? e));
 
@@ -120,15 +155,19 @@ const isUniqueViolation = (e: unknown) => /unique|duplicate key|already exists/i
  * is kept. `attemptId` makes a repeated submit (double click, retry after a lost response) return the order
  * that was already placed instead of creating a second one.
  */
-export async function placeOrderCms(order: Order, lines: { id: string; qty: number; title: string }[], opts: { attemptId?: string | null; couponCode?: string | null }): Promise<PlaceOrderResult> {
+export async function placeOrderCms(order: Order, lines: { id: string; qty: number; title: string }[], opts: { attemptId?: string | null; couponCode?: string | null; afterSave?: (orderId: number, req: Awaited<ReturnType<typeof createLocalReq>>) => Promise<void> }): Promise<PlaceOrderResult> {
   const payload = await payloadClient();
-  const previous = async () => (opts.attemptId ? await findOne(payload, "orders", { attemptId: { equals: opts.attemptId } }) : null);
+  const storeId = order.storeId ?? null;
+  const previous = async () => (opts.attemptId ? await findOne(payload, "orders", { and: [{ attemptId: { equals: opts.attemptId } }, inStore(storeId)] }) : null);
   const earlier = await previous();
   if (earlier) return { ok: true, order: toOrder(earlier), duplicate: true };
+  // one payment receipt (transfer / wallet transaction id) pays for one order only
+  if (order.paymentReference && (await findOne(payload, "orders", { and: [{ paymentReference: { equals: order.paymentReference } }, inStore(storeId)] })))
+    return { ok: false, reason: "payment-reference" };
 
   const resolved: { productId: number; qty: number; title: string }[] = [];
   for (const l of lines) {
-    const doc = await findProductDoc(payload, l.id);
+    const doc = await findProductDoc(payload, l.id, storeId);
     if (!doc) return { ok: false, reason: "sold-out", short: [l.title] };
     resolved.push({ productId: Number(doc.id), qty: l.qty, title: l.title });
   }
@@ -138,7 +177,7 @@ export async function placeOrderCms(order: Order, lines: { id: string; qty: numb
   setStockLog(req, { reason: "order", ref: order.orderNumber });
   await initTransaction(req);
   try {
-    if (opts.couponCode && !(await consumeCoupon(payload, opts.couponCode, req))) {
+    if (opts.couponCode && !(await consumeCoupon(payload, opts.couponCode, storeId, req))) {
       await killTransaction(req);
       return { ok: false, reason: "coupon" };
     }
@@ -147,9 +186,16 @@ export async function placeOrderCms(order: Order, lines: { id: string; qty: numb
       await killTransaction(req);
       return { ok: false, reason: "sold-out", short };
     }
-    const data = { ...(await orderData(payload, order)), stockHeld: true, attemptId: opts.attemptId || null };
+    const data = { ...(await orderData(payload, order, storeId)), stockHeld: true, attemptId: opts.attemptId || null, couponConsumed: Boolean(opts.couponCode) };
     // context.fromStorefront: the stock was taken just above, so the Orders hook must not take it again
-    const doc = (await payload.create({ collection: "orders" as never, data: data as never, overrideAccess: true, depth: 0, context: { fromStorefront: true }, req })) as Doc;
+    const doc = (await payload.create({ collection: "orders" as never, data: data as never, overrideAccess: true, depth: 0, context: { fromStorefront: true, storefront: true, storeId }, req })) as Doc;
+    // in the same transaction: the confirmation messages (sent only if the order is really saved), online payment …
+    if (opts.afterSave) await opts.afterSave(Number(doc.id), req);
+    // a card order is announced once it is paid (src/lib/payments) – until then it's only a payment attempt
+    if (order.status !== "awaiting-payment") {
+      const { queueNotification } = await import("@/lib/notify");
+      await queueNotification(payload, "order-placed", storeId, { orderId: doc.id }, { req, dedupeKey: `order-placed:${doc.id}` });
+    }
     await commitTransaction(req);
     return { ok: true, order: { ...toOrder(doc), id: String(doc.id) } };
   } catch (e) {
@@ -165,23 +211,19 @@ export async function placeOrderCms(order: Order, lines: { id: string; qty: numb
   }
 }
 
-export async function insertOrderCms(order: Order): Promise<Order> {
-  const payload = await payloadClient();
-  // context.fromStorefront: checkout already took the stock (reserveStock), so the Orders hook must not take it again
-  const doc = (await payload.create({ collection: "orders" as never, data: { ...(await orderData(payload, order)), stockHeld: true } as never, overrideAccess: true, depth: 0, context: { fromStorefront: true } })) as Doc;
-  return { ...toOrder(doc), id: String(doc.id) };
-}
-
-export async function getOrderCms(where: Where): Promise<Order | null> {
-  const doc = await findOne(await payloadClient(), "orders", where, 1);
+/** An order of the current store (a shopper only ever sees the store they are on). */
+export async function getOrderCms(where: Where, storeId?: number | null): Promise<Order | null> {
+  const store = storeId === undefined ? await currentStoreId() : storeId;
+  const doc = await findOne(await payloadClient(), "orders", { and: [where, inStore(store)] }, 1);
   return doc ? toOrder(doc) : null;
 }
 
-export async function listOrdersCms(where: Where, opts: { page?: number; perPage?: number } = {}): Promise<{ items: Order[]; total: number }> {
+export async function listOrdersCms(where: Where, opts: { page?: number; perPage?: number; storeId?: number | null } = {}): Promise<{ items: Order[]; total: number }> {
   const payload = await payloadClient();
+  const store = opts.storeId === undefined ? await currentStoreId() : opts.storeId;
   const res = await payload.find({
     collection: "orders" as never,
-    where,
+    where: { and: [where, inStore(store)] },
     sort: "-placedAt",
     depth: 1,
     // only the ids of related products / customers are needed – not every whole product document
@@ -194,9 +236,10 @@ export async function listOrdersCms(where: Where, opts: { page?: number; perPage
 
 export async function updateOrderCms(id: string, patch: Partial<Order>): Promise<Order> {
   const payload = await payloadClient();
-  const doc = await findOne(payload, "orders", byStorefrontId(id));
+  const store = await currentStoreId();
+  const doc = await findOne(payload, "orders", { and: [byStorefrontId(id), inStore(store)] });
   if (!doc) throw new Error("Order not found");
-  const updated = (await payload.update({ collection: "orders" as never, id: doc.id as Id, data: (await orderData(payload, patch)) as never, overrideAccess: true, depth: 1 })) as Doc;
+  const updated = (await payload.update({ collection: "orders" as never, id: doc.id as Id, data: (await orderData(payload, patch, null)) as never, overrideAccess: true, depth: 1 })) as Doc;
   return toOrder(updated);
 }
 
@@ -305,10 +348,11 @@ export async function updateUserCms(storefrontUserId: string, patch: { name?: st
  * so unconfirmed accounts and phone matches are never used – otherwise a stranger could read that person's
  * orders (name, phone, address) in "My account". Staff accounts are never attached.
  */
-export async function linkOrderToCustomerCms(orderNumber: string, c: { email?: string | null; name: string; phone: string }): Promise<void> {
+export async function linkOrderToCustomerCms(orderNumber: string, c: { email?: string | null; name: string; phone: string; storeId?: number | null; marketingConsent?: boolean }): Promise<void> {
   const email = c.email?.trim().toLowerCase() || null;
   if (!email) return;
   const payload = await payloadClient();
+  const storeId = c.storeId === undefined ? await currentStoreId() : c.storeId;
   let customer = await findOne(payload, "users", { email: { equals: email } });
   if (customer && (str(customer.role) !== "customer" || (customer.hasAccount !== false && !customer.emailVerified))) return;
   if (!customer) {
@@ -331,6 +375,8 @@ export async function linkOrderToCustomerCms(orderNumber: string, c: { email?: s
   await (payload.db as unknown as { drizzle: { execute: (q: unknown) => Promise<unknown> } }).drizzle.execute(
     sql`UPDATE "payload"."cms_orders" SET "user_id" = ${customer.id as number} WHERE "order_number" = ${orderNumber} AND "user_id" IS NULL`,
   );
+  await addCustomerOf(payload, customer.id as Id, storeId);
+  if (c.marketingConsent) await addMarketingConsent(payload, customer.id as Id, storeId);
 }
 
 /**
@@ -398,8 +444,11 @@ export async function sendVerificationEmailCms(storefrontUserId: string): Promis
   const payload = await payloadClient();
   const doc = await findOne(payload, "users", byStorefrontId(storefrontUserId));
   if (!doc || doc.emailVerified || !str(doc.email)) return false;
-  const { html, text } = verifyEmailEmail(createVerifyToken(payload.secret, doc.id as Id, str(doc.email)), opt(str(doc.name)));
-  return deliverEmail({ to: str(doc.email), subject: "Confirm your email – Urko Tech Store", html, text });
+  // from the current store: its name and its own address (loaded here – site-content imports this module)
+  const { getSiteInfo } = await import("@/lib/repo/site-content");
+  const [info, origin] = await Promise.all([getSiteInfo(), currentOrigin()]);
+  const { html, text } = verifyEmailEmail(createVerifyToken(payload.secret, doc.id as Id, str(doc.email)), { name: info.name, origin }, opt(str(doc.name)));
+  return deliverEmail({ to: str(doc.email), subject: "Confirm your email", html, text });
 }
 
 /** Confirms the email from the link in the confirmation email. */
@@ -417,33 +466,61 @@ export async function confirmEmailCms(token: string): Promise<"ok" | "expired" |
 
 // ───────────────────────────── discounts ─────────────────────────────
 
-const toCoupon = (d: Doc): Coupon => ({
+/** Related products / categories as storefront ids (legacy id for migrated records), collections by their own id. */
+const ids = (v: unknown, storefront = true) => (Array.isArray(v) ? v : []).map((x) => (obj(x) ? (storefront ? storefrontId(obj(x)) : String(obj(x)!.id)) : String(x))).filter(Boolean);
+
+export const toCoupon = (d: Doc): Coupon => ({
+  id: String(d.id),
   code: str(d.code).toUpperCase(),
-  kind: d.kind === "fixed" ? "fixed" : "percent",
+  kind: d.kind === "fixed" ? "fixed" : d.kind === "free_shipping" ? "free_shipping" : "percent",
   value: num(d.value),
   minOrder: num(d.minOrder),
+  startsAt: opt(str(d.startsAt)) ?? null,
   expiresAt: opt(str(d.expiresAt)) ?? null,
   usageLimit: typeof d.usageLimit === "number" ? d.usageLimit : null,
+  perCustomerLimit: typeof d.perCustomerLimit === "number" && d.perCustomerLimit > 0 ? d.perCustomerLimit : null,
   used: num(d.used),
   active: d.active !== false,
+  automatic: d.automatic === true,
+  combinable: d.combinable === true,
+  appliesTo: (["products", "categories", "collections"].includes(str(d.appliesTo)) ? str(d.appliesTo) : "all") as Coupon["appliesTo"],
+  productIds: ids(d.products),
+  categoryIds: ids(d.categories),
+  collectionIds: ids(d.collections, false),
 });
 
-export async function findCouponCms(code: string): Promise<Coupon | null> {
-  const doc = await findOne(await payloadClient(), "discounts", { code: { equals: code.trim().toUpperCase() } });
+/** A discount code of this store. */
+export async function findCouponCms(code: string, storeId: number | null): Promise<Coupon | null> {
+  const doc = await findOne(await payloadClient(), "discounts", { and: [{ code: { equals: code.trim().toUpperCase() } }, inStore(storeId)] }, 1);
   return doc ? toCoupon(doc) : null;
 }
 
-export async function recordCouponUseCms(code: string) {
+/** This store's automatic discounts that are switched on (checked against the cart by lib/coupons.ts). */
+export async function automaticDiscountsCms(storeId: number | null): Promise<Coupon[]> {
   const payload = await payloadClient();
-  const doc = await findOne(payload, "discounts", { code: { equals: code.trim().toUpperCase() } });
-  if (doc) await payload.update({ collection: "discounts" as never, id: doc.id as Id, data: { used: num(doc.used) + 1 } as never, overrideAccess: true, depth: 0 });
+  const res = await payload.find({ collection: "discounts" as never, where: { and: [{ automatic: { equals: true } }, { active: { not_equals: false } }, inStore(storeId)] }, limit: 50, depth: 1, overrideAccess: true });
+  return (res.docs as Doc[]).map(toCoupon);
 }
 
-export async function activeFlashSaleCms(): Promise<FlashSale | null> {
+/** How many orders of this store a customer (email / phone) has placed with a code (cancelled ones don't count). */
+export async function couponUsesByCustomerCms(code: string, storeId: number | null, customer: { email?: string | null; phone?: string | null }): Promise<number> {
+  const who: Where[] = [];
+  if (customer.email) who.push({ "customer.email": { equals: customer.email.trim().toLowerCase() } });
+  if (customer.phone) who.push(...phoneWhere(customer.phone).map((w) => ({ "customer.phone": (w as { phone: unknown }).phone }) as Where));
+  if (!who.length) return 0;
+  const res = await (await payloadClient()).count({
+    collection: "orders" as never,
+    where: { and: [{ couponCode: { equals: code.trim().toUpperCase() } }, { status: { not_in: ["cancelled", "refused"] } }, inStore(storeId), { or: who }] },
+    overrideAccess: true,
+  });
+  return res.totalDocs;
+}
+
+export async function activeFlashSaleCms(storeId: number | null): Promise<FlashSale | null> {
   const payload = await payloadClient();
   const res = await payload.find({
     collection: "flash-sales" as never,
-    where: { and: [{ active: { equals: true } }, { endsAt: { greater_than: new Date().toISOString() } }] },
+    where: { and: [{ active: { equals: true } }, { endsAt: { greater_than: new Date().toISOString() } }, inStore(storeId)] },
     sort: "endsAt",
     limit: 1,
     depth: 1,
@@ -481,12 +558,14 @@ export const toInquiry = (d: Doc): WholesaleInquiry => ({
 
 export async function saveInquiryCms(input: Omit<WholesaleInquiry, "id" | "createdAt" | "status" | "adminNotes">): Promise<WholesaleInquiry> {
   const payload = await payloadClient();
-  const doc = (await payload.create({ collection: "wholesale-inquiries" as never, data: { ...input, status: "new", receivedAt: new Date().toISOString() } as never, overrideAccess: true, depth: 0 })) as Doc;
+  const store = await currentStoreId();
+  const doc = (await payload.create({ collection: "wholesale-inquiries" as never, data: { ...input, store, status: "new", receivedAt: new Date().toISOString() } as never, overrideAccess: true, depth: 0, context: { storefront: true } })) as Doc;
   return toInquiry(doc);
 }
 
 export async function saveContactMessageCms(input: { name: string; phone?: string | null; email?: string | null; subject?: string | null; message: string }) {
   const payload = await payloadClient();
-  return (await payload.create({ collection: "contact-messages" as never, data: { ...input, handled: false, receivedAt: new Date().toISOString() } as never, overrideAccess: true, depth: 0 })) as Doc;
+  const store = await currentStoreId();
+  return (await payload.create({ collection: "contact-messages" as never, data: { ...input, store, handled: false, receivedAt: new Date().toISOString() } as never, overrideAccess: true, depth: 0, context: { storefront: true } })) as Doc;
 }
 

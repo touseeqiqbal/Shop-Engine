@@ -48,17 +48,17 @@ export function useCartSync(enabled: boolean) {
   return notice;
 }
 
-type CouponState = { status: "idle" | "checking" | "applied" | "error"; discount: number; message: string };
+type CouponState = { status: "idle" | "checking" | "applied" | "error"; discount: number; freeShipping: boolean; message: string };
 
 /**
- * Keeps the coupon stored in the cart in sync with the server: re-validates whenever the cart changes
- * (min-order may stop being met) and exposes apply/remove helpers.
+ * Keeps the cart's discounts in sync with the server: the typed coupon (re-validated whenever the cart changes – a
+ * minimum order may stop being met) and the store's automatic discounts (checked even without a code).
  */
 export function useCartCoupon(enabled = true) {
   const lines = useCart((s) => s.lines);
   const couponCode = useCart((s) => s.couponCode);
   const setCoupon = useCart((s) => s.setCoupon);
-  const [state, setState] = useState<CouponState>({ status: "idle", discount: 0, message: "" });
+  const [state, setState] = useState<CouponState>({ status: "idle", discount: 0, freeShipping: false, message: "" });
   const reqId = useRef(0);
   const signature = useMemo(() => JSON.stringify(toRequestLines(lines)), [lines]);
 
@@ -70,14 +70,14 @@ export function useCartCoupon(enabled = true) {
         const res = await applyCoupon({ code, lines: JSON.parse(signature) });
         if (id !== reqId.current) return res;
         if (res.ok) {
-          setState({ status: "applied", discount: res.discount, message: res.message });
-          if (opts.persist) setCoupon(res.code);
+          setState({ status: res.discount > 0 || res.freeShipping ? "applied" : "idle", discount: res.discount, freeShipping: res.freeShipping, message: res.message });
+          if (opts.persist && res.code) setCoupon(res.code);
         } else {
-          setState({ status: "error", discount: 0, message: res.message });
+          setState({ status: "error", discount: 0, freeShipping: false, message: res.message });
         }
         return res;
       } catch {
-        if (id === reqId.current) setState({ status: "error", discount: 0, message: "Couldn't check the coupon – please try again." });
+        if (id === reqId.current) setState({ status: "error", discount: 0, freeShipping: false, message: "Couldn't check the coupon – please try again." });
         return null;
       }
     },
@@ -86,12 +86,13 @@ export function useCartCoupon(enabled = true) {
 
   useEffect(() => {
     if (!enabled) return;
-    if (!couponCode || lines.length === 0) {
+    if (lines.length === 0) {
       reqId.current++;
-      setState({ status: "idle", discount: 0, message: "" });
+      setState({ status: "idle", discount: 0, freeShipping: false, message: "" });
       return;
     }
-    const t = setTimeout(() => void validate(couponCode, { persist: false }), 250);
+    // no code: still ask – the store may have an automatic discount for this cart
+    const t = setTimeout(() => void validate(couponCode ?? "", { persist: false }), 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [couponCode, signature, enabled]);
@@ -99,12 +100,15 @@ export function useCartCoupon(enabled = true) {
   const remove = useCallback(() => {
     reqId.current++;
     setCoupon(null);
-    setState({ status: "idle", discount: 0, message: "" });
-  }, [setCoupon]);
+    setState({ status: "idle", discount: 0, freeShipping: false, message: "" });
+    // automatic discounts still apply without the code
+    void validate("", { persist: false });
+  }, [setCoupon, validate]);
 
   return {
     code: couponCode,
     discount: state.status === "applied" ? state.discount : 0,
+    freeShipping: state.status === "applied" && state.freeShipping,
     status: state.status,
     message: state.message,
     apply: (code: string) => validate(code, { persist: true }),

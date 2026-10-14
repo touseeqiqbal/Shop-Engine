@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useDocumentInfo } from "@payloadcms/ui";
 import { toast } from "../ui/toast";
+import { useStoreName } from "../ui/store-context";
 import { NEXT_STEP, ORDER_STATUS, PAYMENT_METHOD, PAYMENT_STATUS, intlPhone, rs, timeAgo } from "./status";
 import { PROCEED_STATUSES, amountToCollect, creditedAdvance, paymentBlocksShipping } from "@/lib/order-money";
 
@@ -21,18 +22,24 @@ type Order = {
   subtotal?: number;
   discount?: number;
   deliveryCharge?: number;
+  taxTotal?: number;
   total?: number;
   advancePaid?: number;
   couponCode?: string;
   paymentMethod?: string;
   paymentStatus?: string;
   paymentScreenshotKey?: string;
+  paymentReference?: string;
   courier?: string;
   trackingNumber?: string;
   history?: { status?: string; at?: string; note?: string }[];
   risk?: { score?: number; level?: string; reasons?: string };
   confirmation?: { token?: string; code?: string; expiresAt?: string; confirmedAt?: string; via?: string };
+  store?: number | { id?: number } | null;
+  shipments?: Shipment[];
 };
+
+type Shipment = { id?: string; items?: { line?: number; qty?: number; title?: string }[]; courier?: string; trackingNumber?: string; status?: string; shippedAt?: string; deliveredAt?: string };
 
 const inHours = (iso?: string) => {
   const ms = iso ? Date.parse(iso) - Date.now() : NaN;
@@ -42,7 +49,168 @@ const inHours = (iso?: string) => {
   return h >= 1 ? `in ${h} hour${h === 1 ? "" : "s"}` : `in ${Math.max(1, Math.round(ms / 60000))} min`;
 };
 
+type CardPayment = { id: number; kind: string; status: string; amount: number; refundedAmount: number; currency: string; at: string; failureReason?: string | null };
+
+/** Card payments of an order (paid through the payment provider) and refunds back to the card. */
+function CardPayments({ orderId, onDone }: { orderId: number; onDone: () => void }) {
+  const [rows, setRows] = useState<CardPayment[]>([]);
+  const [refundable, setRefundable] = useState(0);
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    const r = await fetch(`/cms-api/payments/order/${orderId}`, { credentials: "include" });
+    if (!r.ok) return;
+    const j = (await r.json()) as { payments: CardPayment[]; refundable: number };
+    setRows(j.payments);
+    setRefundable(j.refundable);
+  }, [orderId]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  async function refund() {
+    const value = Number(amount);
+    if (!(value > 0) || value > refundable) return toast(`Enter an amount up to ${rs(refundable)}.`, "error");
+    if (!window.confirm(`Refund ${rs(value)} to the customer's card? This can't be undone.`)) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/cms-api/payments/refund", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderId, amount: value, reason }) });
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) return toast(j.error ?? "The refund failed.", "error");
+      toast("Refund sent");
+      setAmount("");
+      setReason("");
+      await load();
+      onDone();
+    } finally {
+      setBusy(false);
+    }
+  }
+  if (!rows.length) return <p className="urko-opanel__help">No card payment yet.</p>;
+  return (
+    <div className="urko-opanel__verify">
+      <ul>
+        {rows.map((p) => (
+          <li key={p.id}>
+            {p.kind === "refund" ? "Refund" : "Payment"} {rs(p.amount)} · {p.status.replace(/_/g, " ")}
+            {p.refundedAmount > 0 && p.kind === "charge" ? ` (refunded ${rs(p.refundedAmount)})` : ""}
+            {p.failureReason ? ` – ${p.failureReason}` : ""}
+          </li>
+        ))}
+      </ul>
+      {refundable > 0 && (
+        <div className="urko-opanel__contact">
+          <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`Up to ${refundable}`} aria-label="Refund amount" />
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (optional)" aria-label="Refund reason" />
+          <button type="button" className="urko-btn" disabled={busy || !amount} onClick={refund}>
+            Refund to card
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const COURIERS = ["TCS", "Leopards", "M&P", "Trax", "PostEx", "Call Courier", "BlueEx", "Rider (own)"];
+
+const SHIPPABLE = new Set(["confirmed", "dispatched", "out-for-delivery"]);
+
+/** Parcels of this order: send some (or all remaining) items, then mark each parcel delivered – or cancel it. */
+function Shipments({ order, onDone }: { order: Order; onDone: () => void }) {
+  const items = order.items ?? [];
+  const shipments = order.shipments ?? [];
+  const sent = new Map<number, number>();
+  for (const s of shipments) if (s.status !== "cancelled") for (const it of s.items ?? []) sent.set(Number(it.line), (sent.get(Number(it.line)) ?? 0) + (Number(it.qty) || 0));
+  const left = items.map((it, i) => Math.max(0, (Number(it.qty) || 0) - (sent.get(i) ?? 0)));
+  const [qty, setQty] = useState<number[]>(left);
+  const [courier, setCourier] = useState("");
+  const [tracking, setTracking] = useState("");
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const canShip = SHIPPABLE.has(order.status) && left.some((n) => n > 0);
+  if (!shipments.length && !canShip) return null;
+
+  async function post(path: string, body: unknown, done: string) {
+    setBusy(true);
+    try {
+      const r = await fetch(path, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) return toast(j.error ?? "Couldn't save – please try again.", "error");
+      toast(done);
+      setOpen(false);
+      onDone();
+    } finally {
+      setBusy(false);
+    }
+  }
+  const ship = () => {
+    const lines = qty.map((q, line) => ({ line, qty: Math.min(q, left[line]) })).filter((l) => l.qty > 0);
+    if (!lines.length) return toast("Choose how many of each item go in this parcel.", "error");
+    void post("/cms-api/order-tools/ship", { orderId: order.id, lines, courier, trackingNumber: tracking }, "Parcel sent");
+  };
+
+  return (
+    <div className="urko-card">
+      <h3>Shipments</h3>
+      {shipments.length > 0 && (
+        <ul>
+          {shipments.map((s, i) => (
+            <li key={s.id ?? i}>
+              <strong>{(s.items ?? []).map((it) => `${it.title ?? "Item"} × ${it.qty}`).join(", ")}</strong>
+              <br />
+              <small>
+                {[s.courier, s.trackingNumber].filter(Boolean).join(" · ") || "No tracking"} · {s.status === "delivered" ? "Delivered" : s.status === "cancelled" ? "Cancelled" : "On the way"}
+              </small>
+              {s.status === "shipped" && (
+                <div className="urko-opanel__contact">
+                  <button type="button" className="urko-btn" disabled={busy} onClick={() => void post("/cms-api/order-tools/shipment", { orderId: order.id, index: i, status: "delivered" }, "Marked as delivered")}>
+                    Delivered
+                  </button>
+                  <button type="button" className="urko-btn urko-btn--ghost" disabled={busy} onClick={() => window.confirm("Cancel this parcel? Its items can be sent again.") && void post("/cms-api/order-tools/shipment", { orderId: order.id, index: i, status: "cancelled" }, "Parcel cancelled")}>
+                    Cancel parcel
+                  </button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {canShip && !open && (
+        <button type="button" className="urko-btn" onClick={() => (setQty(left), setOpen(true))}>
+          Ship items{shipments.length ? " (the rest)" : ""}
+        </button>
+      )}
+      {canShip && open && (
+        <div className="urko-opanel__ship">
+          {items.map((it, i) =>
+            left[i] > 0 ? (
+              <label key={i}>
+                {it.title} (up to {left[i]})
+                <input type="number" min={0} max={left[i]} value={qty[i] ?? 0} onChange={(e) => setQty((q) => q.map((v, k) => (k === i ? Math.max(0, Math.min(left[i], Number(e.target.value) || 0)) : v)))} />
+              </label>
+            ) : null,
+          )}
+          <label>
+            Courier
+            <select value={courier} onChange={(e) => setCourier(e.target.value)}>
+              <option value="">Choose…</option>
+              {COURIERS.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Tracking number
+            <input value={tracking} onChange={(e) => setTracking(e.target.value)} />
+          </label>
+          <button type="button" className="urko-btn urko-btn--primary" disabled={busy} onClick={ship}>
+            Send this parcel
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function OrderPanel() {
   const { id } = useDocumentInfo();
@@ -52,6 +220,8 @@ export function OrderPanel() {
   const [courier, setCourier] = useState("");
   const [tracking, setTracking] = useState("");
   const [note, setNote] = useState("");
+  // the order's own store, named in messages to the customer
+  const storeName = useStoreName(order?.store);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -98,7 +268,7 @@ export function OrderPanel() {
   const toCollect = amountToCollect(o);
   const unpaidOnline = paymentBlocksShipping(o);
   const phone = o.customer?.phone ?? "";
-  const wa = phone ? `https://wa.me/${intlPhone(phone)}?text=${encodeURIComponent(`Hi ${o.customer?.name?.split(" ")[0] ?? ""}! This is Urko Tech Store about your order ${o.orderNumber}.`)}` : "";
+  const wa = phone ? `https://wa.me/${intlPhone(phone)}?text=${encodeURIComponent(`Hi ${o.customer?.name?.split(" ")[0] ?? ""}! ${storeName ? `This is ${storeName} about` : "A message about"} your order ${o.orderNumber}.`)}` : "";
   const history = [...(o.history ?? [])].reverse();
 
   const waiting = o.status === "awaiting-confirmation";
@@ -106,7 +276,7 @@ export function OrderPanel() {
   const waConfirm =
     phone && confirmLink
       ? `https://wa.me/${intlPhone(phone)}?text=${encodeURIComponent(
-          `Assalam o Alaikum ${o.customer?.name?.split(" ")[0] ?? ""}! Please confirm your Urko Tech Store order ${o.orderNumber} (${rs(total)}, cash on delivery): ${confirmLink}  – or reply YES and we will confirm it for you. Code: ${o.confirmation?.code ?? ""}`
+          `Assalam o Alaikum ${o.customer?.name?.split(" ")[0] ?? ""}! Please confirm your ${storeName ? `${storeName} ` : ""}order ${o.orderNumber} (${rs(total)}, cash on delivery): ${confirmLink}  – or reply YES and we will confirm it for you. Code: ${o.confirmation?.code ?? ""}`
         )}`
       : "";
 
@@ -295,6 +465,12 @@ export function OrderPanel() {
               <dt>Delivery</dt>
               <dd>{(o.deliveryCharge ?? 0) > 0 ? rs(o.deliveryCharge ?? 0) : "Free"}</dd>
             </div>
+            {(o.taxTotal ?? 0) > 0 && (
+              <div>
+                <dt>Tax (included in total)</dt>
+                <dd>{rs(o.taxTotal ?? 0)}</dd>
+              </div>
+            )}
             <div className="is-total">
               <dt>Total</dt>
               <dd>{rs(total)}</dd>
@@ -329,6 +505,11 @@ export function OrderPanel() {
           {o.paymentStatus === "awaiting-verification" && (
             <div className="urko-opanel__verify">
               <p>Check the payment in your {PAYMENT_METHOD[o.paymentMethod ?? ""] ?? "account"} before approving.</p>
+              {o.paymentReference && (
+                <p>
+                  Transaction ID: <strong>{o.paymentReference}</strong>
+                </p>
+              )}
               <div className="urko-opanel__contact">
                 {o.paymentScreenshotKey && (
                   <a className="urko-btn" href={`/cms-proof/${o.id}`} target="_blank" rel="noreferrer">
@@ -353,12 +534,15 @@ export function OrderPanel() {
               </div>
             </div>
           )}
+          {o.paymentMethod === "card" && <CardPayments orderId={o.id} onDone={() => void load()} />}
           {o.trackingNumber && (
             <p className="urko-opanel__track">
               {o.courier} · {o.trackingNumber}
             </p>
           )}
         </div>
+
+        <Shipments order={o} onDone={() => void load()} />
 
         <div className="urko-card urko-opanel__timeline">
           <h3>Timeline</h3>

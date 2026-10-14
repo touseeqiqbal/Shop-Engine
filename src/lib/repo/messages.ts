@@ -4,7 +4,7 @@ import { isDatabaseConfigured } from "@/lib/db/config";
 import { prisma } from "@/lib/db/prisma";
 import { isCmsConfigured } from "@/lib/db/config";
 import { saveContactMessageCms } from "@/lib/cms/sales";
-import { notifyContactMessage } from "@/lib/notify";
+import { notifyFromStorefront } from "@/lib/notify";
 
 /**
  * Contact form messages.
@@ -39,20 +39,20 @@ export async function saveContactMessage(input: NewContactMessage): Promise<Cont
     subject: input.subject || null,
     message: input.message,
   };
-  // The team is emailed (/cms → Settings → Notifications) whichever store the message is saved in.
+  // The store's team is emailed (its /cms → Settings → Notifications).
   if (isCmsConfigured) {
     const doc = await saveContactMessageCms(data);
-    void notifyContactMessage(data);
+    await notifyFromStorefront("contact", { message: data });
     return { id: String(doc.id), ...data, handled: false, createdAt: String(doc.receivedAt ?? new Date().toISOString()) };
   }
   if (isDatabaseConfigured) {
     const row = await prisma.contactMessage.create({ data: { ...data, handled: false } });
-    void notifyContactMessage(data);
+    await notifyFromStorefront("contact", { message: data });
     return fromRow(row as Row);
   }
   const msg: ContactMessage = { id: randomUUID(), ...data, handled: false, createdAt: new Date().toISOString() };
   memory().unshift(msg);
-  void notifyContactMessage(data);
+  await notifyFromStorefront("contact", { message: data });
   if (memory().length > 500) memory().length = 500;
   return msg;
 }

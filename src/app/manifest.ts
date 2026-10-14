@@ -1,8 +1,31 @@
 import type { MetadataRoute } from "next";
 import { getSiteInfo } from "@/lib/repo/site-content";
+import { getCurrentStore } from "@/lib/tenant";
+import { getChrome } from "@/lib/cms/chrome";
 
+/** The installable-app details of the store on this address (the original shop keeps its own icons and shortcuts). */
 export default async function manifest(): Promise<MetadataRoute.Manifest> {
-  const site = await getSiteInfo();
+  const [site, store, chrome] = await Promise.all([getSiteInfo(), getCurrentStore().catch(() => null), getChrome().catch(() => null)]);
+  const original = !store || store.isDefault;
+  const favicon = chrome?.theme.favicon;
+  if (!original)
+    return {
+      id: "/",
+      name: site.name,
+      short_name: site.shortName || site.name,
+      description: site.description,
+      start_url: "/?source=pwa",
+      scope: "/",
+      display: "standalone",
+      background_color: "#0A0A0F",
+      theme_color: "#0A0A0F",
+      categories: ["shopping"],
+      icons: favicon ? [{ src: favicon, sizes: "any" }] : [{ src: "/brand/store-icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" }],
+      shortcuts: [
+        { name: "Shop", url: "/shop" },
+        { name: "Track order", url: "/track-order" },
+      ],
+    };
   return {
     id: "/",
     name: site.name,

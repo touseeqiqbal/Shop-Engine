@@ -1,25 +1,29 @@
 import { cancelExpiredUnconfirmed } from "@/lib/cms/confirm";
-import { notifyUnconfirmedCancelled } from "@/lib/notify";
 import { log } from "@/lib/log";
 import { cleanupOldEngagementData, sendCartReminders, sendStockAndPriceAlerts } from "@/lib/engagement-jobs";
 import { payloadClient } from "@/lib/cms/catalog-source";
+import { processOutbox } from "@/lib/outbox";
+import { reconcileCardPayments } from "@/lib/payments";
+import { runBillingLifecycle } from "@/lib/billing";
 
 let lastCleanup = 0;
-import { absoluteUrl } from "@/lib/site";
+let lastBilling = 0;
 
 /**
  * Background chores, run every few minutes by the server (instrumentation.ts) and on demand via /api/cron.
  * Each task is independent – one failing never stops the others.
+ *   - Deliver queued messages (the outbox) and retry failed ones.
  *   - Cancel cash-on-delivery orders the customer didn't confirm in time (stock goes back, customer is told).
- *   - Back-in-stock / price-drop alerts.
- *   - Abandoned-cart reminders.
+ *   - Settle card payments whose webhook never came (paid → order paid; expired → order cancelled).
+ *   - Back-in-stock / price-drop alerts and abandoned-cart reminders (each store's own settings).
+ *   - Plans: trials that ended unpaid, payment grace periods that ran out (hourly).
  *
  * Only one server runs it at a time: a Postgres advisory lock is held while it works, so with several instances (or
  * the timer and /api/cron at once) the others skip the round – no customer gets the same reminder twice.
  */
 
 let running = false;
-/** Any fixed number – the name of the lock in Postgres ("urkohk" in hex). */
+/** Any fixed number – the name of the lock in Postgres. */
 const LOCK_KEY = 0x75726b6f686b;
 
 interface PgClient {
@@ -60,10 +64,10 @@ export async function runHousekeeping(reason: string): Promise<Record<string, un
 async function chores(reason: string): Promise<Record<string, unknown>> {
   const started = Date.now();
   const report: Record<string, unknown> = {};
+  const payload = await payloadClient();
   try {
-    const cancelled = await cancelExpiredUnconfirmed();
-    report.autoCancelled = cancelled.map((o) => o.orderNumber);
-    for (const o of cancelled) await notifyUnconfirmedCancelled(o);
+    // (each cancellation queues its own message to the customer)
+    report.autoCancelled = (await cancelExpiredUnconfirmed()).map((o) => o.orderNumber);
   } catch (e) {
     report.autoCancelError = String((e as Error).message ?? e);
     log.error("housekeeping.auto_cancel", e);
@@ -75,10 +79,32 @@ async function chores(reason: string): Promise<Record<string, unknown>> {
     log.error("housekeeping.alerts", e);
   }
   try {
-    report.cartReminders = await sendCartReminders(absoluteUrl("").replace(/\/$/, ""));
+    report.cartReminders = await sendCartReminders();
   } catch (e) {
     report.cartError = String((e as Error).message ?? e);
     log.error("housekeeping.carts", e);
+  }
+  try {
+    const r = await reconcileCardPayments(payload);
+    if (r.paid || r.cancelled) report.cardPayments = r;
+  } catch (e) {
+    log.error("housekeeping.card_reconcile", e);
+  }
+  if (Date.now() - lastBilling > 3600e3) {
+    lastBilling = Date.now();
+    try {
+      const r = await runBillingLifecycle(payload);
+      if (r.pastDue || r.expired) report.plans = r;
+    } catch (e) {
+      log.error("housekeeping.billing", e);
+    }
+  }
+  try {
+    // last: everything queued above goes out now (and anything that failed earlier is retried)
+    const r = await processOutbox(payload, 100);
+    if (r.sent || r.failed || r.dead) report.outbox = r;
+  } catch (e) {
+    log.error("housekeeping.outbox", e);
   }
   // once an hour is plenty for clearing out old personal data
   if (Date.now() - lastCleanup > 3600e3) {

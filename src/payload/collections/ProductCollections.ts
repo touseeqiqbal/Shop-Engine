@@ -1,6 +1,6 @@
 import type { CollectionConfig } from "payload";
-import { isStaffUser, managers, staff } from "../access";
-import { dbName, legacyIdField, slugField } from "../fields";
+import { assignStore, createFor, publicOrStore, sameStore, storeField, writeFor } from "../tenancy";
+import { dbName, legacyIdField, perStoreUnique, slugField } from "../fields";
 import { revalidateCatalog } from "../revalidate";
 import { slugRedirect } from "../slug-redirects";
 
@@ -18,12 +18,14 @@ export const ProductCollections: CollectionConfig = {
     defaultColumns: ["title", "slug", "type", "published"],
     description: "Groups of products, e.g. “Laptops under Rs 60,000” or “Back to school”. Shown at /collections/<handle>.",
   },
-  access: { read: ({ req }) => (isStaffUser(req.user as never) ? true : { published: { equals: true } }), create: staff, update: staff, delete: managers },
-  hooks: { afterChange: [revalidateCatalog, slugRedirect("product-collections")], afterDelete: [revalidateCatalog] },
+  access: { read: publicOrStore("store_staff", { published: { equals: true } }), create: createFor("store_staff"), update: writeFor("store_staff"), delete: writeFor("store_manager") },
+  indexes: perStoreUnique("slug"),
+  hooks: { beforeValidate: [assignStore()], afterChange: [revalidateCatalog, slugRedirect("product-collections")], afterDelete: [revalidateCatalog] },
   fields: [
+    storeField(),
     { name: "title", type: "text", required: true },
     { name: "description", type: "textarea", admin: { description: "Shown under the heading. Plain text; **bold** works." } },
-    { name: "image", type: "upload", relationTo: "media" },
+    { name: "image", type: "upload", relationTo: "media", filterOptions: sameStore },
     {
       name: "type",
       type: "radio",
@@ -33,7 +35,7 @@ export const ProductCollections: CollectionConfig = {
         { label: "Automatic (rules)", value: "automatic" },
       ],
     },
-    { name: "products", type: "relationship", relationTo: "products", hasMany: true, admin: { condition: (_, s) => s?.type !== "automatic", description: "Drag to set the order." } },
+    { name: "products", type: "relationship", relationTo: "products", hasMany: true, filterOptions: sameStore, admin: { condition: (_, s) => s?.type !== "automatic", description: "Drag to set the order." } },
     {
       name: "match",
       type: "select",
@@ -64,8 +66,8 @@ export const ProductCollections: CollectionConfig = {
             { label: "Featured", value: "featured" },
             { label: "In stock", value: "inStock" },
           ] },
-          { name: "category", type: "relationship", relationTo: "categories", admin: { width: "60%", condition: (_, s) => s?.field === "category" } },
-          { name: "brand", type: "relationship", relationTo: "brands", admin: { width: "60%", condition: (_, s) => s?.field === "brand" } },
+          { name: "category", type: "relationship", relationTo: "categories", filterOptions: sameStore, admin: { width: "60%", condition: (_, s) => s?.field === "category" } },
+          { name: "brand", type: "relationship", relationTo: "brands", filterOptions: sameStore, admin: { width: "60%", condition: (_, s) => s?.field === "brand" } },
           { name: "value", type: "text", admin: { width: "60%", condition: (_, s) => ["condition", "tag", "priceMax", "priceMin"].includes(s?.field), description: "Tag text, price in Rs, or condition: new, used-a-plus, used-a, refurbished, open-box" } },
         ] },
       ],

@@ -1,10 +1,11 @@
 "use client";
 import { useEffect } from "react";
-import { site, waLink } from "@/lib/site";
+import Link from "next/link";
 
 /**
  * Last-resort error boundary (replaces the root layout, so it must render <html>/<body> and
- * cannot rely on globals.css). Kept dependency-free with inline styles.
+ * cannot rely on globals.css). Kept dependency-free with inline styles. It runs without the store's
+ * profile (the root layout is gone), so it names no store and shows no contact details.
  */
 export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => {
@@ -36,9 +37,9 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
             }}
             aria-hidden="true"
           />
-          <h1 style={{ fontSize: 28, margin: "24px 0 8px" }}>{site.name} is having a moment</h1>
+          <h1 style={{ fontSize: 28, margin: "24px 0 8px" }}>This shop is having a moment</h1>
           <p style={{ color: "#A1A8B8", lineHeight: 1.6, margin: 0 }}>
-            Something went wrong while loading the site. Please try again – or order directly on WhatsApp at {site.phones.map((p) => p.display).join(" / ")}.
+            Something went wrong while loading the site. Please try again in a moment.
           </p>
           {error.digest && <p style={{ color: "#6B7385", fontSize: 12, fontFamily: "monospace" }}>Error ref: {error.digest}</p>}
           <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginTop: 24 }}>
@@ -49,12 +50,12 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
             >
               Try again
             </button>
-            <a
-              href={waLink(site.phones[0].wa)}
-              style={{ borderRadius: 999, padding: "12px 22px", fontWeight: 600, fontSize: 15, color: "#fff", background: "#16A34A", textDecoration: "none" }}
+            <Link
+              href="/"
+              style={{ borderRadius: 999, padding: "12px 22px", fontWeight: 600, fontSize: 15, color: "#fff", background: "rgba(255,255,255,0.12)", textDecoration: "none" }}
             >
-              WhatsApp us
-            </a>
+              Home
+            </Link>
           </div>
         </main>
       </body>

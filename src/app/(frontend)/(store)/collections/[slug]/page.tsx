@@ -8,7 +8,7 @@ import { JsonLd } from "@/components/ui/json-ld";
 import { ProductGrid } from "@/components/product/product-grid";
 import { PageHero } from "@/components/shop/page-hero";
 import { EmptyState } from "@/components/shop/product-listing";
-import { site } from "@/lib/site";
+import { getSiteInfo } from "@/lib/repo/site-content";
 
 /** Product collections from /cms → Catalog → Collections. */
 
@@ -18,7 +18,7 @@ type Props = { params: Promise<{ slug: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const c = await getCollection(slug);
+  const [c, site] = await Promise.all([getCollection(slug), getSiteInfo()]);
   if (!c) return {};
   return pageMetadata({
     title: c.seoTitle || `${c.title} – Buy Online in Pakistan | ${site.name}`,
@@ -32,7 +32,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function CollectionPage({ params }: Props) {
   const { slug } = await params;
-  const c = await getCollection(slug);
+  const [c, site] = await Promise.all([getCollection(slug), getSiteInfo()]);
   if (!c) notFound();
   return (
     <div className="container-x pb-16">

@@ -1,7 +1,9 @@
 import "server-only";
 import { timingSafeEqual } from "node:crypto";
 import type { Where } from "payload";
-import { payloadClient } from "@/lib/cms/catalog-source";
+import { sql } from "@payloadcms/db-postgres";
+import { inStore, payloadClient } from "@/lib/cms/catalog-source";
+import { currentStoreId } from "@/lib/tenant";
 import { toOrder } from "@/lib/cms/sales";
 import type { Order } from "@/lib/types";
 import { log } from "@/lib/log";
@@ -29,7 +31,8 @@ const changedMeanwhile = (e: unknown) => /changed meanwhile/i.test(String((e as 
 /** Confirm by link (token) or by order number + code. Moves the order to "To ship" (confirmed). */
 export async function confirmOrder(args: { token: string } | { orderNumber: string; code: string }, via: string): Promise<ConfirmResult> {
   const payload = await payloadClient();
-  const where: Where = "token" in args ? { "confirmation.token": { equals: args.token } } : { orderNumber: { equals: args.orderNumber } };
+  // by code: only an order of the store the customer is on
+  const where: Where = "token" in args ? { "confirmation.token": { equals: args.token } } : { and: [{ orderNumber: { equals: args.orderNumber } }, inStore(await currentStoreId())] };
   const d = (await payload.find({ collection: "orders", where, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
   if (!d) return { ok: false, reason: "not-found" };
   const c = (d.confirmation ?? {}) as Doc;
@@ -37,10 +40,16 @@ export async function confirmOrder(args: { token: string } | { orderNumber: stri
     const tries = Number(c.failedAttempts) || 0;
     if (tries >= MAX_CODE_TRIES) return { ok: false, reason: "too-many" };
     if (!sameCode(String(c.code ?? ""), args.code.trim())) {
-      await payload
-        .update({ collection: "orders", id: Number(d.id), overrideAccess: true, depth: 0, context: { skipNotify: true, skipStock: true }, data: { confirmation: { ...c, failedAttempts: tries + 1 } } as never })
-        .catch((e) => log.error("order.confirm_attempt_save_failed", e));
-      return { ok: false, reason: tries + 1 >= MAX_CODE_TRIES ? "too-many" : "wrong-code" };
+      // counted in ONE statement – guesses sent at the same moment can't share a count
+      const db = (payload.db as unknown as { drizzle: { execute: (q: unknown) => Promise<{ rows: Record<string, unknown>[] }> } }).drizzle;
+      const r = await db
+        .execute(sql`UPDATE "payload"."cms_orders" SET "confirmation_failed_attempts" = COALESCE("confirmation_failed_attempts", 0) + 1 WHERE "id" = ${Number(d.id)} RETURNING "confirmation_failed_attempts" AS n`)
+        .catch((e) => {
+          log.error("order.confirm_attempt_save_failed", e);
+          return { rows: [{ n: tries + 1 }] };
+        });
+      const now = Number(r.rows[0]?.n ?? tries + 1);
+      return { ok: false, reason: now >= MAX_CODE_TRIES ? "too-many" : "wrong-code" };
     }
   }
   if (d.status !== "awaiting-confirmation") return d.status === "confirmed" || c.confirmedAt ? { ok: true, order: toOrder(d) } : { ok: false, reason: "not-waiting" };
@@ -91,7 +100,7 @@ export async function cancelByCustomer(token: string): Promise<boolean> {
   return true;
 }
 
-/** Housekeeping: cancel orders whose confirmation time ran out. Returns the cancelled orders. */
+/** Housekeeping: cancel orders whose confirmation time ran out (the customer is told). Returns the cancelled orders. */
 export async function cancelExpiredUnconfirmed(): Promise<Order[]> {
   const payload = await payloadClient();
   const res = await payload.find({
@@ -115,6 +124,8 @@ export async function cancelExpiredUnconfirmed(): Promise<Order[]> {
         data: { status: "cancelled", history: [{ status: "cancelled", at: now, note: "Not confirmed in time – cancelled automatically" }] } as never,
       })) as unknown as Doc;
       out.push(toOrder(u));
+      const { queueNotification } = await import("@/lib/notify");
+      await queueNotification(payload, "unconfirmed-cancelled", u.store && typeof u.store === "object" ? Number((u.store as Doc).id) : u.store == null ? null : Number(u.store), { orderId: Number(d.id) }, { dedupeKey: `unconfirmed-cancelled:${String(d.id)}` });
       log.info("order.auto_cancelled", { order: d.orderNumber });
     } catch (e) {
       if (changedMeanwhile(e)) continue; // the customer confirmed (or staff acted) at that very moment

@@ -1,4 +1,5 @@
 import type { Block, Field } from "payload";
+import { sameStore } from "./tenancy";
 
 /** Block table names: cms_pb_<name> (page builder) – keeps them clearly apart from every other table. */
 const pb = (name: string) => `cms_pb_${name}`;
@@ -16,7 +17,8 @@ type TextKey = "eyebrow" | "title" | "description" | "linkLabel" | "linkHref";
 const textFields = (type: HomeSectionType | null, keys: TextKey[] = ["eyebrow", "title", "description", "linkLabel", "linkHref"]): Field[] => {
   const d = (type ? SECTION_DEFAULTS[type] : {}) as Partial<Record<TextKey, string>>;
   const f = (name: TextKey, label: string, width: string, textarea = false): Field =>
-    ({ name, label, type: textarea ? "textarea" : "text", defaultValue: d[name] || undefined, admin: { width } }) as Field;
+    // an empty default is kept as "" (not left out) so the database's older default is never used instead
+    ({ name, label, type: textarea ? "textarea" : "text", defaultValue: d[name], admin: { width } }) as Field;
   const top: Field[] = [];
   const bottom: Field[] = [];
   if (keys.includes("eyebrow")) top.push(f("eyebrow", "Small heading", "35%"));
@@ -50,7 +52,7 @@ export const HeroBlock: Block = {
       type: "array",
       admin: { description: "Leave empty to use the hero banners (old admin → Marketing → Banners). The page heading (H1) is shown above the slider." },
       fields: [
-        { name: "image", type: "upload", relationTo: "media", admin: { description: "Upload an image, or use a built-in one below." } },
+        { name: "image", type: "upload", relationTo: "media", filterOptions: sameStore, admin: { description: "Upload an image, or use a built-in one below." } },
         { type: "row", fields: [
           { name: "imageUrl", type: "text", label: "…or built-in image path", admin: { width: "60%", description: "e.g. /images/hero/hero-gaming-laptops.svg" } },
           { name: "accent", type: "select", label: "Glow colour", defaultValue: "from-blue-500 to-violet-500", admin: { width: "40%" }, options: [
@@ -100,7 +102,7 @@ export const CategoriesBlock: Block = {
   admin: { group: "Store" },
   fields: [
     ...textFields("categories"),
-    { name: "categories", type: "relationship", relationTo: "categories", hasMany: true, admin: { description: "Pick and order categories. Empty = all top-level categories." } },
+    { name: "categories", type: "relationship", relationTo: "categories", hasMany: true, filterOptions: sameStore, admin: { description: "Pick and order categories. Empty = all top-level categories." } },
   ],
 };
 
@@ -115,7 +117,7 @@ export const DealsBlock: Block = {
       { label: "Automatic – running flash sale, otherwise products marked “Hot deal”", value: "auto" },
       { label: "Pick products", value: "manual" },
     ] },
-    { name: "products", type: "relationship", relationTo: "products", hasMany: true, admin: { condition: (_, s) => s?.source === "manual" } },
+    { name: "products", type: "relationship", relationTo: "products", hasMany: true, filterOptions: sameStore, admin: { condition: (_, s) => s?.source === "manual" } },
     productLimit,
   ],
 };
@@ -136,9 +138,9 @@ export const ProductsBlock: Block = {
       { label: "From a collection", value: "collection" },
       { label: "Pick products", value: "manual" },
     ] },
-    { name: "category", type: "relationship", relationTo: "categories", admin: { condition: (_, s) => s?.source === "category" } },
-    { name: "collection", type: "relationship", relationTo: "product-collections", admin: { condition: (_, s) => s?.source === "collection" } },
-    { name: "products", type: "relationship", relationTo: "products", hasMany: true, admin: { condition: (_, s) => s?.source === "manual" } },
+    { name: "category", type: "relationship", relationTo: "categories", filterOptions: sameStore, admin: { condition: (_, s) => s?.source === "category" } },
+    { name: "collection", type: "relationship", relationTo: "product-collections", filterOptions: sameStore, admin: { condition: (_, s) => s?.source === "collection" } },
+    { name: "products", type: "relationship", relationTo: "products", hasMany: true, filterOptions: sameStore, admin: { condition: (_, s) => s?.source === "manual" } },
     productLimit,
   ],
 };
@@ -179,7 +181,7 @@ export const ImageBannerBlock: Block = {
   labels: { singular: "Image banner", plural: "Image banners" },
   admin: { group: "Content" },
   fields: [
-    { name: "image", type: "upload", relationTo: "media", required: true },
+    { name: "image", type: "upload", relationTo: "media", filterOptions: sameStore, required: true },
     { type: "row", fields: [
       { name: "eyebrow", type: "text", label: "Small heading", admin: { width: "35%" } },
       { name: "heading", type: "text", admin: { width: "65%" } },
@@ -199,7 +201,7 @@ export const ImageTextBlock: Block = {
   labels: { singular: "Image with text", plural: "Image with text" },
   admin: { group: "Content" },
   fields: [
-    { name: "image", type: "upload", relationTo: "media", required: true },
+    { name: "image", type: "upload", relationTo: "media", filterOptions: sameStore, required: true },
     { type: "row", fields: [
       { name: "eyebrow", type: "text", label: "Small heading", admin: { width: "35%" } },
       { name: "heading", type: "text", admin: { width: "65%" } },

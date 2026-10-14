@@ -1,13 +1,13 @@
 import type { MetadataRoute } from "next";
-import { absoluteUrl, site } from "@/lib/site";
 import { getSeoSettings } from "@/lib/repo/site-content";
+import { currentAvailability, currentOrigin } from "@/lib/tenant";
 
 export const revalidate = 300;
 
 export default async function robots(): Promise<MetadataRoute.Robots> {
-  const seo = await getSeoSettings();
-  // Staging switch in /cms → Settings → Google & SEO: block every crawler.
-  if (seo.discourageIndexing || process.env.STAGING === "true") return { rules: [{ userAgent: "*", disallow: "/" }], host: site.url };
+  const [seo, origin, { availability }] = await Promise.all([getSeoSettings(), currentOrigin(), currentAvailability()]);
+  // Staging, the switch in /cms → Settings → Google & SEO, or a shop that isn't open: block every crawler.
+  if (seo.discourageIndexing || process.env.STAGING === "true" || !availability.open) return { rules: [{ userAgent: "*", disallow: "/" }], host: origin };
   return {
     rules: [
       {
@@ -39,7 +39,7 @@ export default async function robots(): Promise<MetadataRoute.Robots> {
         ],
       },
     ],
-    sitemap: absoluteUrl("/sitemap.xml"),
-    host: site.url,
+    sitemap: `${origin}/sitemap.xml`,
+    host: origin,
   };
 }

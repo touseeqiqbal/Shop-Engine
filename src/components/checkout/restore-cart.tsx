@@ -2,9 +2,10 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCart } from "@/store/cart";
+import { lineKey, useCart } from "@/store/cart";
+import type { UpgradeOption } from "@/lib/types";
 
-export type RestoreLine = { productId: string; name: string; qty: number; unitPrice: number; slug: string; url: string; image: string; brandName: string };
+export type RestoreLine = { productId: string; name: string; qty: number; unitPrice: number; slug: string; url: string; image: string; brandName: string; upgrades: UpgradeOption[] };
 
 /** Puts a saved (abandoned) cart back and goes to checkout. Prices and stock are checked again at checkout. */
 export function RestoreCart({ lines }: { lines: RestoreLine[] }) {
@@ -14,8 +15,10 @@ export function RestoreCart({ lines }: { lines: RestoreLine[] }) {
     const current = useCart.getState().lines;
     const merged = [...current];
     for (const l of lines) {
-      if (merged.some((m) => m.productId === l.productId && !m.upgrades?.length)) continue;
-      merged.push({ key: l.productId, productId: l.productId, slug: l.slug, name: l.name, image: l.image, url: l.url, brandName: l.brandName, basePrice: l.unitPrice, unitPrice: l.unitPrice, qty: l.qty, stock: 20, upgrades: [] });
+      const key = lineKey(l.productId, l.upgrades);
+      if (merged.some((m) => m.key === key)) continue;
+      const extra = l.upgrades.reduce((s, u) => s + u.price, 0);
+      merged.push({ key, productId: l.productId, slug: l.slug, name: l.name, image: l.image, url: l.url, brandName: l.brandName, basePrice: l.unitPrice - extra, unitPrice: l.unitPrice, qty: l.qty, stock: 20, upgrades: l.upgrades });
     }
     useCart.setState({ lines: merged });
     router.replace("/checkout");

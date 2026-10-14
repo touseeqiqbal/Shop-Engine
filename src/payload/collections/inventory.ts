@@ -1,5 +1,5 @@
 import type { CollectionBeforeChangeHook, CollectionConfig } from "payload";
-import { isOwnerUser, managers, nobody, ownerField, staff, storeWriteAccess } from "../access";
+import { assignStore, getTenant, hasStoreRole, readFor, sameStore, storeAccess, storeField, storeIdOf, storeRoleField } from "../tenancy";
 import { dbName } from "../fields";
 import { revalidate } from "../revalidate";
 import { userError } from "../errors";
@@ -19,11 +19,12 @@ export const Suppliers: CollectionConfig = {
   slug: "suppliers",
   dbName: dbName("suppliers"),
   admin: { useAsTitle: "name", group: "Catalog", defaultColumns: ["name", "phone", "city", "updatedAt"] },
-  access: { read: staff, create: storeWriteAccess, update: storeWriteAccess, delete: storeWriteAccess },
+  access: storeAccess("store_staff"),
+  hooks: { beforeValidate: [assignStore()] },
   fields: [
-    { name: "store", type: "relationship", relationTo: "stores", index: true, admin: { position: "sidebar", description: "Tenant store this supplier belongs to." } },
-    { name: "store", type: "relationship", relationTo: "stores", index: true, admin: { position: "sidebar", description: "Tenant store this stock count belongs to." } },
-    { name: "name", type: "text", required: true },    { type: "row", fields: [
+    storeField(),
+    { name: "name", type: "text", required: true },
+    { type: "row", fields: [
       { name: "contactPerson", type: "text", admin: { width: "34%" } },
       { name: "phone", type: "text", admin: { width: "33%" } },
       { name: "email", type: "text", admin: { width: "33%" } },
@@ -51,6 +52,12 @@ const receivePurchase: CollectionBeforeChangeHook = async ({ data, originalDoc, 
     return data;
   }
   if (data.status !== "received") return data;
+  // receiving twice at the same moment (two tabs, a double click) must not add the stock twice
+  if (operation === "update" && originalDoc?.id && req.transactionID) {
+    const { lockRowStatus } = await import("../stock");
+    if ((await lockRowStatus(req.payload, "cms_purchases", Number(originalDoc.id), req)) === "received") throw userError("This purchase was just received by someone else – reload the page.", 409);
+  }
+  const storeId = storeIdOf(data.store ?? originalDoc?.store);
 
   const { addStock, recountUnits, trackedProducts, setStockLog } = await import("../stock");
   setStockLog(req, { reason: "purchase", ref: String(data.invoiceNumber ?? originalDoc?.invoiceNumber ?? "") });
@@ -63,7 +70,7 @@ const receivePurchase: CollectionBeforeChangeHook = async ({ data, originalDoc, 
     if (tracked.has(pid)) {
       const serials = serialList(l.serials);
       if (serials.length !== Number(l.qty)) throw userError(`Enter ${l.qty} serial number(s) for each laptop line (one per line).`, 400);
-      const taken = await req.payload.find({ collection: "units", where: { serial: { in: serials } }, limit: 1, depth: 0, overrideAccess: true, req });
+      const taken = await req.payload.find({ collection: "units", where: { and: [{ serial: { in: serials } }, { store: { equals: storeId } }] }, limit: 1, depth: 0, overrideAccess: true, req });
       if (taken.docs.length) throw userError(`Serial ${(taken.docs[0] as { serial: string }).serial} is already in stock records.`, 400);
     }
   }
@@ -72,7 +79,7 @@ const receivePurchase: CollectionBeforeChangeHook = async ({ data, originalDoc, 
     const pid = Number(relId(l.product));
     if (tracked.has(pid)) {
       for (const serial of serialList(l.serials))
-        await req.payload.create({ collection: "units", data: { serial, product: pid, status: "in-stock", costPrice: Number(l.unitCost) || null, receivedAt: now, notes: originalDoc?.invoiceNumber ? `Purchase ${originalDoc.invoiceNumber}` : null } as never, overrideAccess: true, req, context: { skipUnitSync: true } });
+        await req.payload.create({ collection: "units", data: { store: storeId, serial, product: pid, status: "in-stock", costPrice: Number(l.unitCost) || null, receivedAt: now, notes: originalDoc?.invoiceNumber ? `Purchase ${originalDoc.invoiceNumber}` : null } as never, overrideAccess: true, req, context: { skipUnitSync: true } });
       await recountUnits(req.payload, pid, req);
     } else await addStock(req.payload, pid, Number(l.qty), req);
     // straight to the live product: an update through Payload would publish an editor's unfinished draft
@@ -97,12 +104,12 @@ export const Purchases: CollectionConfig = {
     defaultColumns: ["invoiceNumber", "supplier", "date", "total", "status"],
     description: "Stock you buy. Add the lines, then set Status to “Received” and save – stock goes up (laptops: one unit per serial number).",
   },
-  access: { read: staff, create: storeWriteAccess, update: storeWriteAccess, delete: storeWriteAccess },
-  hooks: { beforeChange: [receivePurchase] },
+  access: storeAccess("store_staff"),
+  hooks: { beforeValidate: [assignStore()], beforeChange: [receivePurchase] },
   fields: [
-    { name: "store", type: "relationship", relationTo: "stores", index: true, admin: { position: "sidebar", description: "Tenant store this purchase belongs to." } },
+    storeField(),
     { type: "row", fields: [
-      { name: "supplier", type: "relationship", relationTo: "suppliers", required: true, admin: { width: "40%" } },
+      { name: "supplier", type: "relationship", relationTo: "suppliers", required: true, filterOptions: sameStore, admin: { width: "40%" } },
       { name: "invoiceNumber", type: "text", label: "Supplier invoice / bill no.", admin: { width: "30%" } },
       { name: "date", type: "date", required: true, defaultValue: () => new Date().toISOString(), admin: { width: "30%", date: { pickerAppearance: "dayOnly" } } },
     ] },
@@ -113,9 +120,9 @@ export const Purchases: CollectionConfig = {
       minRows: 1,
       fields: [
         { type: "row", fields: [
-          { name: "product", type: "relationship", relationTo: "products", required: true, admin: { width: "50%" } },
+          { name: "product", type: "relationship", relationTo: "products", required: true, filterOptions: sameStore, admin: { width: "50%" } },
           { name: "qty", type: "number", required: true, min: 1, defaultValue: 1, label: "Quantity", admin: { width: "20%" } },
-          { name: "unitCost", type: "number", min: 0, label: "Cost each (Rs)", access: { read: ownerField, update: ownerField, create: ownerField }, admin: { width: "30%" } },
+          { name: "unitCost", type: "number", min: 0, label: "Cost each (Rs)", access: { read: storeRoleField("store_owner"), update: storeRoleField("store_owner"), create: storeRoleField("store_owner") }, admin: { width: "30%" } },
         ] },
         { name: "serials", type: "textarea", label: "Serial numbers (laptops tracked by serial – one per line)" },
       ],
@@ -125,8 +132,8 @@ export const Purchases: CollectionConfig = {
         { label: "Draft (not in stock yet)", value: "draft" },
         { label: "Received (adds to stock)", value: "received" },
       ], admin: { width: "34%" } },
-      { name: "total", type: "number", label: "Total (Rs)", access: { read: ownerField }, admin: { width: "33%", readOnly: true } },
-      { name: "updateCostPrice", type: "checkbox", label: "Update products' cost price", access: { read: ownerField, update: ownerField, create: ownerField }, admin: { width: "33%", style: { alignSelf: "center" } } },
+      { name: "total", type: "number", label: "Total (Rs)", access: { read: storeRoleField("store_owner") }, admin: { width: "33%", readOnly: true } },
+      { name: "updateCostPrice", type: "checkbox", label: "Update products' cost price", access: { read: storeRoleField("store_owner"), update: storeRoleField("store_owner"), create: storeRoleField("store_owner") }, admin: { width: "33%", style: { alignSelf: "center" } } },
     ] },
     { name: "notes", type: "textarea" },
     { name: "receivedAt", type: "date", admin: { position: "sidebar", readOnly: true, date: { pickerAppearance: "dayAndTime" } } },
@@ -144,17 +151,21 @@ export const StockCounts: CollectionConfig = {
     defaultColumns: ["name", "status", "itemsCounted", "variance", "updatedAt"],
     description: "Count the shelves from Products → Stock count. Finished counts keep their variance report here.",
   },
-  access: { read: staff, create: storeWriteAccess, update: storeWriteAccess, delete: storeWriteAccess },
+  // counts are made through Products → Stock count (endpoints); here they are read, renamed or deleted
+  access: { ...storeAccess("store_staff", "store_manager", "store_staff", "store_manager"), read: readFor("store_staff") },
   hooks: {
+    beforeValidate: [assignStore()],
     // cost prices are the owner's business: hidden from everyone else (the count endpoints read with keepCost)
     afterRead: [
-      ({ doc, req, context }) => {
-        if (context?.keepCost || isOwnerUser(req.user as never) || !Array.isArray(doc?.lines)) return doc;
+      async ({ doc, req, context }) => {
+        if (context?.keepCost || !Array.isArray(doc?.lines)) return doc;
+        if (req.user && hasStoreRole(await getTenant(req), storeIdOf(doc.store), "store_owner")) return doc;
         return { ...doc, lines: (doc.lines as Record<string, unknown>[]).map((l) => ({ ...l, unitCost: 0 })) };
       },
     ],
   },
   fields: [
+    storeField(),
     { name: "report", type: "ui", admin: { components: { Field: "/payload/admin/inventory/CountReport#CountReport" } } },
     { type: "row", fields: [
       { name: "name", type: "text", required: true, admin: { width: "40%" } },
@@ -163,7 +174,7 @@ export const StockCounts: CollectionConfig = {
         { label: "Finished (report only)", value: "finished" },
         { label: "Finished – stock corrected", value: "applied" },
       ], admin: { width: "30%" } },
-      { name: "category", type: "relationship", relationTo: "categories", label: "Only this category", admin: { width: "30%" } },
+      { name: "category", type: "relationship", relationTo: "categories", filterOptions: sameStore, label: "Only this category", admin: { width: "30%" } },
     ] },
     { name: "lines", type: "json", admin: { hidden: true } },
     { type: "row", fields: [

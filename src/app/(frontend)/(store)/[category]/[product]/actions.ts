@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getOne, upsert } from "@/lib/repo/db";
 import { isCmsConfigured } from "@/lib/db/config";
 import { submitReview as submitCmsReview } from "@/lib/cms/catalog-source";
+import { currentStoreId } from "@/lib/tenant";
 import { rateLimit } from "@/lib/rate-limit";
 import { BOT_MESSAGE, verifyTurnstile } from "@/lib/turnstile";
 import { randomUUID } from "node:crypto";
@@ -61,7 +62,7 @@ export async function submitReview(_prev: ReviewFormState, formData: FormData): 
       // Saved to /cms → Reviews, unapproved until staff approve it
       const photos = await storePhotos(formData.getAll("photos"), "reviews-pending", randomUUID().slice(0, 12), 3);
       if ("error" in photos) return { ok: false, message: photos.error };
-      const saved = await submitCmsReview(d.productId, { name: d.name, city: d.city || undefined, rating: d.rating, title: d.title || undefined, body: d.body, photoKeys: photos.keys });
+      const saved = await submitCmsReview(await currentStoreId(), d.productId, { name: d.name, city: d.city || undefined, rating: d.rating, title: d.title || undefined, body: d.body, photoKeys: photos.keys });
       if (!saved) return { ok: false, message: "This product is no longer available for reviews." };
       return { ok: true, message: "Thanks! Your review will appear after approval." };
     }

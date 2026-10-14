@@ -1,142 +1,110 @@
-import type { Access, FieldAccess, Where } from "payload";
+import type { Access, FieldAccess, PayloadRequest, Where } from "payload";
+import { getTenant, hasStoreRole, isAdminCapable, isPlatformAdminUser, storeIdOf, type StoreRole, type TenantUser } from "./tenancy";
 
 /**
- * Roles (stored on the `users` collection):
- *  - owner    – everything, incl. cost/profit, settings, staff management
- *  - manager  – everything except cost/profit fields and role changes
- *  - staff    – catalog + orders + customers; no settings, no cost/profit, no deletes of core data
- *  - customer – storefront account only; can read/update their own profile and see their own orders
+ * Roles.
+ *  - users.role (legacy, the original shop): owner = platform admin; manager / staff = the default store's team;
+ *    customer = everybody else (shoppers AND merchants – a merchant's authority comes from store memberships).
+ *  - users.platformRole: "platform_admin" = runs ShopEngine. Only a platform admin can set it.
+ *  - store-memberships: store_owner / store_manager / store_staff per store (see tenancy.ts).
  */
 export type Role = "owner" | "manager" | "staff" | "customer";
 export type PlatformRole = "platform_admin" | "merchant_owner" | "merchant_manager" | "merchant_staff" | "customer";
 export const STAFF_ROLES: Role[] = ["owner", "manager", "staff"];
-
-export type StoreMemberRole = "store_owner" | "store_manager" | "store_staff" | "customer";
-
-type StoreRef = string | number | { id?: string | number | null } | null | undefined;
-
-type AnyUser = {
-  id: string | number;
-  role?: Role | null;
-  platformRole?: PlatformRole | null;
-  currentStore?: StoreRef;
-  stores?: StoreRef[] | null;
-  collection?: string;
-  twoFactor?: { enabled?: boolean | null } | null;
-} | null | undefined;
-
-const normalizeStoreId = (value: StoreRef): string | number | null => {
-  if (typeof value === "string" || typeof value === "number") return value;
-  if (value && typeof value === "object" && "id" in value && (typeof value.id === "string" || typeof value.id === "number")) return value.id;
-  return null;
-};
-
-export const getUserStoreIds = (user: AnyUser): Array<string | number> => {
-  if (!user) return [];
-  const ids = [user.currentStore, ...(Array.isArray(user.stores) ? user.stores : [])].map(normalizeStoreId).filter((v): v is string | number => v !== null);
-  return [...new Set(ids)];
-};
+export type { StoreRole, Tenant } from "./tenancy";
 
 const RANK: Record<Role, number> = { customer: 0, staff: 1, manager: 2, owner: 3 };
 export const roleRank = (role: unknown) => RANK[role as Role] ?? 0;
 
-const merchantAdminRoles = new Set(["merchant_owner", "merchant_manager", "merchant_staff"]);
-
 /**
- * Owners and managers must have 2-step verification on (unless TWO_FACTOR_REQUIRED=false, emergencies only).
- * Until they do, the SERVER treats them as having no admin rights at all – they can only sign in and set it up
- * (/cms/security uses the /2fa endpoints, which check the role directly). The pop-up in /cms is just the guide.
+ * Owners, managers and platform admins must have 2-step verification on (unless TWO_FACTOR_REQUIRED=false, emergencies
+ * only). Until they do, their role grants nothing – they can only sign in and set it up (/cms/security).
  */
-export const needsTwoFactorSetup = (user: AnyUser) =>
-  !!user &&
-  ((user.role === "owner" || user.role === "manager") || merchantAdminRoles.has(user.platformRole ?? "")) &&
-  process.env.TWO_FACTOR_REQUIRED !== "false" &&
-  !user.twoFactor?.enabled;
+export const needsTwoFactorSetup = (user: TenantUser | null | undefined) =>
+  !!user && (user.role === "owner" || user.role === "manager" || user.platformRole === "platform_admin") && process.env.TWO_FACTOR_REQUIRED !== "false" && !user.twoFactor?.enabled;
 
-/** Universal SaaS role helpers for the platform and a merchant's store-level roles. */
-export const isPlatformAdmin = (user: AnyUser) => !!user && (user.role === "owner" || user.platformRole === "platform_admin");
-export const isStoreOwner = (user: AnyUser) => !!user && (user.role === "owner" || user.platformRole === "merchant_owner");
-export const isStoreManager = (user: AnyUser) => !!user && (user.role === "manager" || user.platformRole === "merchant_manager");
-export const isStoreStaff = (user: AnyUser) => !!user && (user.role === "staff" || user.platformRole === "merchant_staff");
+export const isPlatformAdmin = (user: TenantUser | null | undefined) => isPlatformAdminUser(user);
 
-/** May open /cms at all (incl. owners/managers who still have to set up 2-step). */
-export const canOpenAdmin = (user: AnyUser) => !!user && (STAFF_ROLES.includes(user.role as Role) || merchantAdminRoles.has(user.platformRole ?? ""));
-export const isStaffUser = (user: AnyUser) => canOpenAdmin(user) && !needsTwoFactorSetup(user);
-export const isManagerUser = (user: AnyUser) =>
-  isStaffUser(user) && ((user!.role === "owner" || user!.role === "manager") || user!.platformRole === "merchant_manager" || user!.platformRole === "merchant_owner");
-export const isOwnerUser = (user: AnyUser) => isStaffUser(user) && (user!.role === "owner" || user!.platformRole === "merchant_owner");
-
-export const storeScopedAccess =
-  (field = "store"): Access =>
-  ({ req }) => {
-    const u = req.user as AnyUser;
-    if (!u) return false;
-    if (isPlatformAdmin(u)) return true;
-    const allowedStoreIds = getUserStoreIds(u);
-    if (allowedStoreIds.length === 0) return STAFF_ROLES.includes(u.role as Role) ? true : false;
-    return { [field]: { in: allowedStoreIds } } satisfies Where;
-  };
-
-export const storeWriteAccess = storeScopedAccess("store");
+/** May open /cms at all (incl. people who still have to set up 2-step): checked against store memberships. */
+export const canOpenAdminReq = async (req: PayloadRequest) => {
+  const u = req.user as TenantUser | null;
+  if (!u) return false;
+  if (STAFF_ROLES.includes(u.role as Role) || u.platformRole === "platform_admin") return true;
+  return isAdminCapable(await getTenant(req));
+};
 
 // Collection access
 export const anyone: Access = () => true;
+/** Anyone who may open /cms (store teams and platform admins). */
+export const adminUsers: Access = ({ req }) => canOpenAdminReq(req);
 export const nobody: Access = () => false;
-export const staff: Access = ({ req }) => isStaffUser(req.user as AnyUser);
-export const managers: Access = ({ req }) => isManagerUser(req.user as AnyUser);
-export const owners: Access = ({ req }) => isOwnerUser(req.user as AnyUser);
+export const noField: FieldAccess = () => false;
 
-/** Staff see everything; everyone else only documents whose `status` is active. */
-export const activeOrStaff: Access = ({ req }) => {
-  if (isStaffUser(req.user as AnyUser)) return true;
-  // on the store AND published (a new product saved only as a draft stays out of sight)
-  const where: Where = { and: [{ status: { equals: "active" } }, { _status: { not_equals: "draft" } }] };
-  return where;
-};
-
-/** Staff see everything; a signed-in customer only their own documents (via the `user` relationship). */
-export const staffOrOwnDocs =
+/** A signed-in person's own documents only (via a `user` relationship); never anybody else's. */
+export const ownDocs =
   (field = "user"): Access =>
-  ({ req }) => {
-    const u = req.user as AnyUser;
-    if (isStaffUser(u)) return true;
-    if (u) return { [field]: { equals: u.id } } satisfies Where;
-    return false;
-  };
+  ({ req }) =>
+    req.user ? ({ [field]: { equals: req.user.id } } satisfies Where) : false;
 
-/** Users collection: staff read all, a customer only themselves. */
-export const staffOrSelf: Access = ({ req }) => {
-  const u = req.user as AnyUser;
-  if (isStaffUser(u)) return true;
-  if (u) return { id: { equals: u.id } } satisfies Where;
-  return false;
+/** Members of the store being worked in (for listing its team): ids from store-memberships. */
+async function teamUserIds(req: PayloadRequest, storeId: number): Promise<Array<number | string>> {
+  const res = await req.payload.find({ collection: "store-memberships" as never, where: { store: { equals: storeId } }, limit: 500, depth: 0, overrideAccess: true, req });
+  return (res.docs as { user?: unknown }[]).map((m) => storeIdOf(m.user)).filter((v): v is number => v != null);
+}
+
+/**
+ * Users collection – reading: platform admins everyone; a store's team the customers of the store they work in and its
+ * team; everybody else only themselves.
+ */
+export const usersRead: Access = async ({ req }) => {
+  const u = req.user as TenantUser | null;
+  if (!u) return false;
+  const t = await getTenant(req);
+  if (t.platformAdmin) return true;
+  const self: Where = { id: { equals: u.id } };
+  const store = t.activeStoreId;
+  if (store == null || !hasStoreRole(t, store, "store_staff")) return self;
+  const or: Where[] = [self, { customerOf: { in: [store] } }];
+  const team = await teamUserIds(req, store);
+  if (team.length) or.push({ id: { in: team } });
+  if (store === t.defaultStoreId) or.push({ role: { in: STAFF_ROLES } });
+  return { or };
 };
 
 /**
- * Users collection – who may CHANGE an account: yourself, or someone of a LOWER role.
- * Owner: everyone. Manager: staff and customers. Staff: customers. Customer: only themselves.
- * (So nobody can change the email or password of someone above them – no account takeover.)
+ * Users collection – changing an account. An account is shared by every store it shops at, so: platform admins anyone;
+ * the original shop's team (legacy roles) the accounts below their role that belong to that shop (rank rules and the
+ * email/password guard in Users.ts); everybody else – merchants included – only themselves.
  */
-export const editableUsers: Access = ({ req }) => {
-  const u = req.user as AnyUser;
+export const usersUpdate: Access = async ({ req }) => {
+  const u = req.user as TenantUser | null;
   if (!u) return false;
-  if (isOwnerUser(u)) return true;
-  const self = { id: { equals: u.id } };
-  if (isManagerUser(u)) return { or: [self, { role: { in: ["staff", "customer"] } }] } satisfies Where;
-  if (isStaffUser(u)) return { or: [self, { role: { equals: "customer" } }] } satisfies Where;
-  return self satisfies Where;
+  const t = await getTenant(req);
+  if (t.platformAdmin) return true;
+  const self: Where = { id: { equals: u.id } };
+  const home = t.defaultStoreId;
+  if (home == null || t.activeStoreId !== home || !STAFF_ROLES.includes(u.role as Role)) return self;
+  const customers: Where = { and: [{ role: { equals: "customer" } }, { customerOf: { in: [home] } }] };
+  if (u.role === "manager" && hasStoreRole(t, home, "store_manager")) return { or: [self, { role: { equals: "staff" } }, customers] };
+  if (hasStoreRole(t, home, "store_staff")) return { or: [self, customers] };
+  return self;
 };
 
-/** Users collection – deleting: managers may delete staff and customers; only an owner may delete a manager or owner. */
-export const deletableUsers: Access = ({ req }) => {
-  const u = req.user as AnyUser;
-  if (isOwnerUser(u)) return true;
-  if (isManagerUser(u)) return { role: { in: ["staff", "customer"] } } satisfies Where;
-  return false;
+/** Users collection – deleting an account (it may shop at other stores too): platform admins only. */
+export const usersDelete: Access = async ({ req }) => (await getTenant(req)).platformAdmin;
+
+/** Users collection – creating accounts in /cms: platform admins and the default store's managers (storefront sign-ups use the Local API). */
+export const usersCreate: Access = async ({ req }) => {
+  const t = await getTenant(req);
+  return t.platformAdmin || (t.activeStoreId === t.defaultStoreId && hasStoreRole(t, t.defaultStoreId, "store_manager"));
 };
 
-// Field access
-export const ownerField: FieldAccess = ({ req }) => isOwnerUser(req.user as AnyUser);
-export const staffField: FieldAccess = ({ req }) => isStaffUser(req.user as AnyUser);
-export const managerField: FieldAccess = ({ req }) => isManagerUser(req.user as AnyUser);
-export const noField: FieldAccess = () => false;
+/** Field access: the original shop's team (platform admins included) – for account-wide fields like tags, notes, blocked. */
+export const defaultStoreTeamField =
+  (min: StoreRole): FieldAccess =>
+  async ({ req }) => {
+    const t = await getTenant(req);
+    return t.platformAdmin || (t.activeStoreId === t.defaultStoreId && hasStoreRole(t, t.defaultStoreId, min));
+  };
+
+export { platformAdminField, platformAdmins, storeRoleField, readFor, writeFor, createFor, storeAccess, defaultStoreAccess, getTenant } from "./tenancy";

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { PackageSearch, SlidersHorizontal } from "lucide-react";
 import type { ProductQuery } from "@/lib/types";
 import { getBrands, getCategoryAttributes, getCategoryBySlug, queryProducts } from "@/lib/repo/catalog";
+import { getSiteInfo } from "@/lib/repo/site-content";
 import { itemListJsonLd } from "@/lib/seo";
 import { WhatsAppLink } from "@/components/content/whatsapp-link";
 import { JsonLd } from "@/components/ui/json-ld";
@@ -141,7 +142,8 @@ export async function ProductListing({
   );
 }
 
-export function EmptyState({ filtered, clearHref, query, didYouMean, suggestion }: { filtered: boolean; clearHref: string; query?: string; didYouMean?: string; suggestion?: string }) {
+export async function EmptyState({ filtered, clearHref, query, didYouMean, suggestion }: { filtered: boolean; clearHref: string; query?: string; didYouMean?: string; suggestion?: string }) {
+  const { address } = await getSiteInfo(); // where the store is (Settings → Store details)
   const ask = query ? `Hi! I'm looking for "${query}". Do you have it in stock?` : "Hi! I couldn't find the product I need on your website. Can you help?";
   return (
     <div className="card relative overflow-hidden px-6 py-14 text-center sm:py-20">
@@ -162,7 +164,7 @@ export function EmptyState({ filtered, clearHref, query, didYouMean, suggestion 
         </p>
       )}
       <p className="relative mx-auto mt-2 max-w-md text-sm text-muted sm:text-base">
-        New stock lands every week at our Saddar store – and much of it sells before it&apos;s listed. Message us on WhatsApp and we&apos;ll check
+        New stock lands every week at our {address.area ? `${address.area} ` : ""}store – and much of it sells before it&apos;s listed. Message us on WhatsApp and we&apos;ll check
         availability for you.
       </p>
       <div className="relative mt-6 flex flex-wrap justify-center gap-3">

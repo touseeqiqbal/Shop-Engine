@@ -1,7 +1,8 @@
 import "server-only";
 import { randomBytes, randomInt } from "node:crypto";
 import { unstable_cache } from "next/cache";
-import { payloadClient } from "@/lib/cms/catalog-source";
+import { inStore, payloadClient } from "@/lib/cms/catalog-source";
+import { currentStoreId } from "@/lib/tenant";
 import { isCmsConfigured } from "@/lib/db/config";
 import type { OrderConfirmation, OrderRisk } from "@/lib/types";
 
@@ -49,12 +50,13 @@ const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite
 const list = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : []);
 const lower = (s: string) => s.trim().toLowerCase();
 
-export const getProtectionSettings = unstable_cache(
-  async (): Promise<ProtectionSettings> => {
+const protectionCached = unstable_cache(
+  async (storeId: number | null): Promise<ProtectionSettings> => {
     if (!isCmsConfigured) return DEFAULT_PROTECTION;
     try {
       const payload = await payloadClient();
-      const g = (await payload.findGlobal({ slug: "order-protection", depth: 0, overrideAccess: true })) as unknown as Doc;
+      const { getStoreSettings } = await import("@/payload/store-settings");
+      const g = await getStoreSettings<Doc>(payload, "order-protection", storeId);
       if (!g.updatedAt) return DEFAULT_PROTECTION;
       const d = DEFAULT_PROTECTION;
       return {
@@ -77,36 +79,38 @@ export const getProtectionSettings = unstable_cache(
       return DEFAULT_PROTECTION;
     }
   },
-  ["order-protection-v1"],
+  ["order-protection-v2"],
   { tags: ["settings"], revalidate: 60 }
 );
+/** A store's fake-order protection settings (the current store's when not given). */
+export const getProtectionSettings = async (storeId?: number | null) => protectionCached(storeId === undefined ? await currentStoreId() : storeId);
 
 /** 03001234567 form, whatever the input looked like */
 export const phoneKey = (phone: string) => phone.replace(/\D/g, "").replace(/^92/, "0");
 
 /** Is this number on the blocked list (block completely)? A small lookup used when the full risk check fails. */
-export async function isBlockedPhone(phone: string): Promise<boolean> {
+export async function isBlockedPhone(phone: string, storeId: number | null): Promise<boolean> {
   const payload = await payloadClient();
-  const r = await payload.find({ collection: "blocked-phones", where: { and: [{ phone: { equals: phoneKey(phone) } }, { action: { not_equals: "advance" } }] }, limit: 1, depth: 0, overrideAccess: true });
+  const r = await payload.find({ collection: "blocked-phones", where: { and: [{ phone: { equals: phoneKey(phone) } }, { action: { not_equals: "advance" } }, inStore(storeId)] }, limit: 1, depth: 0, overrideAccess: true });
   return r.docs.length > 0;
 }
 
-/** Score a phone number from its order history. `excludeOrderId` leaves the order being scored out. */
-export async function riskFor(phone: string, s: ProtectionSettings, excludeOrderId?: number | string): Promise<OrderRisk & { blocked: null | { action: "block" | "advance"; reason: string } }> {
+/** Score a phone number from its order history at this store. `excludeOrderId` leaves the order being scored out. */
+export async function riskFor(phone: string, s: ProtectionSettings, storeId: number | null, excludeOrderId?: number | string): Promise<OrderRisk & { blocked: null | { action: "block" | "advance"; reason: string } }> {
   const payload = await payloadClient();
   const key = phoneKey(phone);
   const formatted = key.length === 11 ? `${key.slice(0, 4)}-${key.slice(4)}` : phone;
   const [orders, blockedRes] = await Promise.all([
     payload.find({
       collection: "orders",
-      where: { or: [{ "customer.phone": { equals: formatted } }, { "customer.phone": { equals: key } }] },
+      where: { and: [{ or: [{ "customer.phone": { equals: formatted } }, { "customer.phone": { equals: key } }] }, inStore(storeId)] },
       limit: 200,
       pagination: false,
       depth: 0,
       overrideAccess: true,
       select: { status: true } as never,
     }),
-    payload.find({ collection: "blocked-phones", where: { phone: { equals: key } }, limit: 1, depth: 0, overrideAccess: true }),
+    payload.find({ collection: "blocked-phones", where: { and: [{ phone: { equals: key } }, inStore(storeId)] }, limit: 1, depth: 0, overrideAccess: true }),
   ]);
   const docs = (orders.docs as unknown as Doc[]).filter((o) => excludeOrderId == null || String(o.id) !== String(excludeOrderId));
   const count = (st: string) => docs.filter((o) => o.status === st).length;

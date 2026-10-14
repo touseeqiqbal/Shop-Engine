@@ -1,9 +1,13 @@
 import "server-only";
 import { unstable_cache } from "next/cache";
-import { payloadClient } from "@/lib/cms/catalog-source";
+import { inStore, payloadClient } from "@/lib/cms/catalog-source";
 import { isCmsConfigured } from "@/lib/db/config";
+import { currentStoreId } from "@/lib/tenant";
 
-/** Returns & warranty for the storefront: the rules (Settings → Returns & warranty rules) and creating requests. */
+/**
+ * Returns & warranty for the storefront – of the store the customer is on: its rules (Settings → Returns & warranty
+ * rules), its orders and shop receipts, and requests saved to it.
+ */
 
 type Doc = Record<string, unknown>;
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -42,6 +46,13 @@ export const DEFAULT_RETURNS_POLICY: ReturnsPolicy = {
   ],
 };
 
+/** A new store's starting rules (until it saves its own): nothing that names another shop. */
+export const GENERIC_RETURNS_POLICY: ReturnsPolicy = {
+  ...DEFAULT_RETURNS_POLICY,
+  returnDays: 7,
+  warrantyTable: [{ type: "All products", text: "As stated on the product page", where: "Contact the store" }],
+};
+
 const lines = (v: unknown, d: string[]) => {
   const out = str(v)
     .split("\n")
@@ -50,14 +61,16 @@ const lines = (v: unknown, d: string[]) => {
   return out.length ? out : d;
 };
 
-export const getReturnsPolicy = unstable_cache(
-  async (): Promise<ReturnsPolicy> => {
+const policyCached = unstable_cache(
+  async (storeId: number | null): Promise<ReturnsPolicy> => {
     if (!isCmsConfigured) return DEFAULT_RETURNS_POLICY;
     try {
       const payload = await payloadClient();
-      const g = (await payload.findGlobal({ slug: "returns-policy", depth: 0, overrideAccess: true })) as unknown as Doc;
-      if (!g.updatedAt) return DEFAULT_RETURNS_POLICY;
-      const d = DEFAULT_RETURNS_POLICY;
+      const { getStoreSettings } = await import("@/payload/store-settings");
+      const g = await getStoreSettings<Doc>(payload, "returns-policy", storeId);
+      const { getDefaultStoreId } = await import("@/payload/tenancy");
+      const d = storeId == null || storeId === (await getDefaultStoreId(payload)) ? DEFAULT_RETURNS_POLICY : GENERIC_RETURNS_POLICY;
+      if (!g.updatedAt) return d;
       const reasons = ((g.reasons as Doc[] | undefined) ?? []).map((r) => ({ label: str(r.label), changeOfMind: r.changeOfMind === true })).filter((r) => r.label);
       const table = ((g.warrantyByCondition as Doc[] | undefined) ?? []).map((r) => ({ type: str(r.type), text: str(r.text), where: str(r.where) })).filter((r) => r.type);
       return {
@@ -74,9 +87,11 @@ export const getReturnsPolicy = unstable_cache(
       return DEFAULT_RETURNS_POLICY;
     }
   },
-  ["returns-policy-v1"],
+  ["returns-policy-v2"],
   { tags: ["settings"], revalidate: 300 }
 );
+
+export const getReturnsPolicy = async (storeId?: number | null) => policyCached(storeId === undefined ? await currentStoreId() : storeId);
 
 export type ReturnableOrder = {
   id: number;
@@ -92,9 +107,10 @@ export type ReturnableOrder = {
 /** Order (or shop receipt) by its number + the phone used, with the serials sold on it. Null if they don't match. */
 export async function findOrderForAftersales(number: string, phone: string, returnDays: number): Promise<ReturnableOrder | null> {
   const payload = await payloadClient();
+  const store = inStore(await currentStoreId());
   const n = number.trim().toUpperCase();
   if (n.startsWith("POS-")) {
-    const sale = (await payload.find({ collection: "pos-sales", where: { receiptNumber: { equals: n } }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
+    const sale = (await payload.find({ collection: "pos-sales", where: { and: [{ receiptNumber: { equals: n } }, store] }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
     if (!sale || sale.status === "voided" || digits(str(sale.customerPhone)) !== digits(phone)) return null;
     const days = Math.floor((Date.now() - Date.parse(str(sale.createdAt))) / 864e5);
     return {
@@ -108,7 +124,7 @@ export async function findOrderForAftersales(number: string, phone: string, retu
       items: ((sale.items as Doc[]) ?? []).map((i, index) => ({ index, productId: Number((i.product as Doc)?.id ?? i.product) || null, title: str(i.title), qty: Number(i.qty) || 1, unitPrice: Number(i.unitPrice) || 0, serials: str(i.serial) ? [str(i.serial)] : [] })),
     };
   }
-  const o = (await payload.find({ collection: "orders", where: { orderNumber: { equals: n } }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
+  const o = (await payload.find({ collection: "orders", where: { and: [{ orderNumber: { equals: n } }, store] }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
   if (!o || digits(str((o.customer as Doc)?.phone)) !== digits(phone)) return null;
   const delivered = ((o.history as Doc[] | undefined) ?? []).filter((h) => h.status === "delivered").pop();
   const deliveredAt = o.status === "delivered" || o.status === "returned" ? str(delivered?.at) || str(o.updatedAt) : null;
@@ -130,12 +146,14 @@ export async function findOrderForAftersales(number: string, phone: string, retu
 
 export async function createReturnRequest(data: Doc): Promise<string> {
   const payload = await payloadClient();
-  const doc = (await payload.create({ collection: "return-requests", data: data as never, overrideAccess: true, depth: 0 })) as unknown as Doc;
+  const store = await currentStoreId();
+  const doc = (await payload.create({ collection: "return-requests", data: { ...data, store } as never, overrideAccess: true, depth: 0, context: { storefront: true, storeId: store } })) as unknown as Doc;
   return str(doc.requestNumber);
 }
 
 export async function createWarrantyClaim(data: Doc): Promise<{ claimNumber: string; inWarranty: string; warrantyEndsAt: string | null }> {
   const payload = await payloadClient();
-  const doc = (await payload.create({ collection: "warranty-claims", data: data as never, overrideAccess: true, depth: 0 })) as unknown as Doc;
+  const store = await currentStoreId();
+  const doc = (await payload.create({ collection: "warranty-claims", data: { ...data, store } as never, overrideAccess: true, depth: 0, context: { storefront: true, storeId: store } })) as unknown as Doc;
   return { claimNumber: str(doc.claimNumber), inWarranty: str(doc.inWarranty), warrantyEndsAt: str(doc.warrantyEndsAt) || null };
 }

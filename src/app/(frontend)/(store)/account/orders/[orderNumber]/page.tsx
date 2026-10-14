@@ -11,8 +11,10 @@ import { ORDER_FLOW, ORDER_STATUS_LABEL, PAYMENT_LABEL, PAYMENT_STATUS_LABEL } f
 import { amountToCollect, creditedAdvance } from "@/lib/order-money";
 import { ORDER_NUMBER_RE } from "@/lib/order-number";
 import { getProductsByIds } from "@/lib/repo/catalog";
+import { getSiteInfo } from "@/lib/repo/site-content";
 import { pageMetadata } from "@/lib/seo";
 import { waLink } from "@/lib/site";
+import { primaryPhone } from "@/lib/site-info";
 import { cn, formatDate, formatPKR } from "@/lib/utils";
 import { loadViewableOrder } from "../load";
 
@@ -21,8 +23,8 @@ export const dynamic = "force-dynamic";
 type Props = { params: Promise<{ orderNumber: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { orderNumber } = await params;
-  return pageMetadata({ title: `Order ${decodeURIComponent(orderNumber).toUpperCase()} | Urko Tech Store`, description: "Your order details, delivery status and invoice.", path: "/account/orders", noindex: true });
+  const [{ orderNumber }, { name }] = await Promise.all([params, getSiteInfo()]);
+  return pageMetadata({ title: `Order ${decodeURIComponent(orderNumber).toUpperCase()} | ${name}`, description: "Your order details, delivery status and invoice.", path: "/account/orders", noindex: true });
 }
 
 const STOPPED = new Set(["cancelled", "refused", "returned"]);
@@ -45,7 +47,8 @@ export default async function OrderDetailPage({ params }: Props) {
   const { order, signedIn } = found;
 
   // "Buy again": the same items at today's price – only what is still for sale
-  const current = new Map((await getProductsByIds(order.items.map((i) => i.productId))).map((p) => [p.id, p]));
+  const [products, site] = await Promise.all([getProductsByIds(order.items.map((i) => i.productId)), getSiteInfo()]);
+  const current = new Map(products.map((p) => [p.id, p]));
   const lines = order.items.flatMap((i) => {
     const p = current.get(i.productId);
     if (!p || p.priceOnRequest || p.stock <= 0) return [];
@@ -202,7 +205,7 @@ export default async function OrderDetailPage({ params }: Props) {
           </section>
 
           <section className="card space-y-2 p-5 text-sm" aria-label="Help">
-            <a href={waLink(undefined, `Hi! I have a question about my order ${order.orderNumber}.`)} target="_blank" rel="noopener noreferrer" className="btn btn-whatsapp w-full">
+            <a href={waLink(primaryPhone(site).wa, `Hi! I have a question about my order ${order.orderNumber}.`)} target="_blank" rel="noopener noreferrer" className="btn btn-whatsapp w-full">
               <MessageCircle className="size-4" aria-hidden="true" /> Ask about this order
             </a>
             {order.status === "delivered" && (

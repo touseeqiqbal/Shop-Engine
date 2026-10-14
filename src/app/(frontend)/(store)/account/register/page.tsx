@@ -5,16 +5,20 @@ import { RegisterForm } from "@/components/account/auth-forms";
 import { getSessionUser } from "@/lib/auth";
 import { isDatabaseConfigured } from "@/lib/db/config";
 import { pageMetadata } from "@/lib/seo";
+import { getSiteInfo } from "@/lib/repo/site-content";
 import { safePath } from "@/lib/safe-path";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = pageMetadata({
-  title: "Create Account | Urko Tech Store",
-  description: "Create a free Urko Tech Store account for order history, saved addresses and a synced wishlist.",
-  path: "/account/register",
-  noindex: true,
-});
+export async function generateMetadata(): Promise<Metadata> {
+  const { name } = await getSiteInfo(); // the current store's own name
+  return pageMetadata({
+    title: `Create Account | ${name}`,
+    description: `Create a free ${name} account for order history, saved addresses and a synced wishlist.`,
+    path: "/account/register",
+    noindex: true,
+  });
+}
 
 const safe = (n?: string) => (n ? safePath(n, "") || undefined : undefined);
 

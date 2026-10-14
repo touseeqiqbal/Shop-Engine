@@ -1,5 +1,6 @@
 "use client";
-import { useAuth, useFormFields } from "@payloadcms/ui";
+import { useFormFields } from "@payloadcms/ui";
+import { useStoreRole } from "../ui/store-context";
 
 /** Variance report on a finished stock count: what's short / over, missing or unexpected serials, and the value. */
 
@@ -9,8 +10,7 @@ const rs = (n: number) => `Rs ${Math.round(n).toLocaleString("en-PK")}`;
 export function CountReport() {
   const lines = useFormFields(([f]) => f.lines?.value) as Line[] | undefined;
   const status = useFormFields(([f]) => f.status?.value) as string | undefined;
-  const { user } = useAuth();
-  const isOwner = (user as { role?: string } | null)?.role === "owner";
+  const { isOwner } = useStoreRole();
   if (!Array.isArray(lines)) return null;
   const counted = lines.filter((l) => l.touched);
   const diff = counted.filter((l) => l.counted !== l.expected || (l.tracked && l.expectedSerials.some((s) => !l.scannedSerials.includes(s))));

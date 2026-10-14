@@ -1,13 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getRedirectMap } from "@/lib/repo/redirects";
+import { getRedirectMap, storeIdForHost } from "@/lib/repo/redirects";
 import { isStaging, stagingAuthorized } from "@/lib/staging";
 import { ipFromHeaders } from "@/lib/client-ip";
 
 /**
  * Next.js 16 Proxy (formerly Middleware) – runs on the Node.js runtime before every matched request.
  *
- * 1. Redirect manager: looks up the pathname in /cms → Settings → Redirects (cached 60s by
- *    `getRedirectMap()`) and answers with 301 (permanent) or 307 (temporary).
+ * 1. Redirect manager: looks up the pathname in the redirects of the store this host belongs to (/cms → Settings →
+ *    Redirects, cached 60s by `getRedirectMap()`) and answers with 301 (permanent) or 307 (temporary).
  * 2. The old admin was retired: `/admin` and everything under it goes to the store admin at `/cms`.
  */
 
@@ -32,6 +32,47 @@ const AUTH_LIMITS: [RegExp, number, number][] = [
   [/^\/cms-api\/users\/reset-password$/, 10, 30 * 60_000],
   [/^\/(?:cms-api\/users\/login|cms-api\/2fa\/login|api\/auth\/callback\/credentials)$/, 20, 10 * 60_000],
 ];
+const SIGN_IN = /^\/(?:cms-api\/users\/login|cms-api\/2fa\/login|api\/auth\/callback\/credentials)$/;
+
+/** The email a sign-in request is for (JSON or form body) – to limit guesses per account and network. */
+async function signInEmail(request: NextRequest): Promise<string> {
+  try {
+    const type = request.headers.get("content-type") ?? "";
+    const body = await request.clone().text();
+    if (body.length > 20_000) return "";
+    const email = type.includes("json") ? (JSON.parse(body) as { email?: unknown }).email : new URLSearchParams(body).get("email");
+    return typeof email === "string" ? email.trim().toLowerCase().slice(0, 200) : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * /cms-api calls that change something must come from the platform's own pages: a store's storefront on a platform
+ * sub-domain is "same-site" for the browser (its cookies would be sent), so the Origin is checked here as well.
+ */
+const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+function foreignOrigin(request: NextRequest): boolean {
+  const origin = request.headers.get("origin");
+  if (!origin || !request.cookies.has("payload-token")) return false;
+  try {
+    const host = new URL(origin).host;
+    if (host === request.headers.get("host")) return false;
+    const allowed = [process.env.NEXT_PUBLIC_SITE_URL, process.env.RAILWAY_PUBLIC_DOMAIN, ...(process.env.PAYLOAD_CSRF_ORIGINS ?? "").split(",")]
+      .map((u) => (u ?? "").trim())
+      .filter(Boolean)
+      .map((u) => {
+        try {
+          return new URL(u.includes("://") ? u : `https://${u}`).host;
+        } catch {
+          return "";
+        }
+      });
+    return !allowed.includes(host);
+  } catch {
+    return true;
+  }
+}
 const hits = new Map<string, { n: number; reset: number }>();
 function limited(key: string, max: number, windowMs: number) {
   const now = Date.now();
@@ -60,13 +101,22 @@ export async function proxy(request: NextRequest) {
   if (isStaging && pathname !== "/api/health" && !isOwnCronCall(request) && !stagingAuthorized(request.headers.get("authorization"))) {
     return new NextResponse("Staging – authentication required", {
       status: 401,
-      headers: { "WWW-Authenticate": 'Basic realm="Urko staging", charset="UTF-8"', "X-Robots-Tag": "noindex, nofollow" },
+      headers: { "WWW-Authenticate": 'Basic realm="ShopEngine staging", charset="UTF-8"', "X-Robots-Tag": "noindex, nofollow" },
     });
   }
+  if (UNSAFE.has(request.method) && pathname.startsWith("/cms-api/") && foreignOrigin(request))
+    return NextResponse.json({ errors: [{ message: "This request must come from the admin itself." }] }, { status: 403 });
   if (request.method === "POST") {
+    const ip = ipFromHeaders(request.headers);
     const rule = AUTH_LIMITS.find(([re]) => re.test(pathname));
-    if (rule && limited(`${pathname}:${ipFromHeaders(request.headers)}`, rule[1], rule[2]))
+    if (rule && limited(`${pathname}:${ip}`, rule[1], rule[2]))
       return NextResponse.json({ errors: [{ message: "Too many attempts – please wait a few minutes and try again." }] }, { status: 429 });
+    // wrong passwords for one account from one network: 8 per 15 minutes (other networks – the owner – are not affected)
+    if (SIGN_IN.test(pathname)) {
+      const email = await signInEmail(request);
+      if (email && limited(`signin:${email}:${ip}`, 8, 15 * 60_000))
+        return NextResponse.json({ errors: [{ message: "Too many sign-in attempts for this account – please wait 15 minutes." }] }, { status: 429 });
+    }
   }
   if (pathname.startsWith("/api/") || pathname.startsWith("/cms-api/")) return NextResponse.next();
 
@@ -81,7 +131,10 @@ export async function proxy(request: NextRequest) {
   // ── Redirect manager (storefront only) ──
   if (request.method === "GET" || request.method === "HEAD") {
     try {
-      const map = await getRedirectMap();
+      // the Host header only (as the pages do); a host no store answers on has no redirects
+      const storeId = await storeIdForHost(request.headers.get("host"));
+      if (storeId === undefined) return NextResponse.next();
+      const map = await getRedirectMap(storeId);
       const hit = map.get(normalize(pathname)) ?? map.get(pathname);
       if (hit && hit.toPath && hit.toPath !== pathname) {
         // Only pages of this site (a redirect to another website would be an "open redirect" for phishing)

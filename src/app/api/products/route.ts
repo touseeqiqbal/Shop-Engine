@@ -19,8 +19,11 @@ export async function GET(req: NextRequest) {
   if (!ids.length) return NextResponse.json([]);
 
   const products = await getProductsByIds([...new Set(ids)]);
+  // the store's own products only (getProductsByIds reads the current store); exact stock and sales counts stay private
   const slim: CompareProduct[] = products.map(({ description: _d, boughtTogether: _b, upgrades: _u, video: _v, ...p }) => ({
     ...p,
+    stock: Math.min(Math.max(0, p.stock), 10),
+    soldCount: 0,
     description: "",
     boughtTogether: [],
     upgrades: [],

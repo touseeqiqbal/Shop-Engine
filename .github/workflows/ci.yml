@@ -4,7 +4,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main, master]
   pull_request:
 
 concurrency:
@@ -33,7 +33,7 @@ jobs:
       NEXT_PUBLIC_SITE_URL: http://localhost:3000
       AUTH_TRUST_HOST: "true"
       # production build without S3 storage / email (only allowed outside Railway)
-      LOCAL_PRODUCTION_TEST: "1"
+      LOCAL_PRODUCTION_TEST: "true"
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +68,22 @@ jobs:
         run: npx payload migrate
         env:
           NODE_ENV: production
+
+      # two stores, their teams and a shopper against the real database: nobody reaches another store's records
+      - name: Tenant isolation
+        run: npm run test:tenants
+
+      # trials ending, grace periods, expiry – the default store is never taken offline
+      - name: Plan lifecycle
+        run: npm run test:billing
+
+      # part of an order first, the rest later; never more than ordered; another store can't ship it
+      - name: Partial shipments
+        run: npm run test:shipments
+
+      # checkout's transaction, status messages queued once, stock and coupon given back exactly once on cancel
+      - name: Order lifecycle
+        run: npm run test:orders
 
       - name: Production build
         run: npm run build

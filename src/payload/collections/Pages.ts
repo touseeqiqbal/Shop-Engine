@@ -1,6 +1,6 @@
 import type { CollectionAfterChangeHook, CollectionAfterDeleteHook, CollectionConfig, PayloadRequest } from "payload";
-import { isStaffUser, managers, staff } from "../access";
-import { dbName, legacyIdField, slugField } from "../fields";
+import { assignStore, createFor, publicOrStore, readFor, storeField, writeFor } from "../tenancy";
+import { dbName, legacyIdField, perStoreUnique, slugField } from "../fields";
 import { PAGE_BLOCKS } from "../blocks";
 import { PAGES_TAG, revalidate } from "../revalidate";
 import { slugRedirect } from "../slug-redirects";
@@ -54,15 +54,17 @@ export const Pages: CollectionConfig = {
     preview: (data, { req }) => previewUrl({ data: data as Record<string, unknown>, req }),
   },
   access: {
-    read: ({ req }) => (isStaffUser(req.user as never) ? true : { _status: { equals: "published" } }),
-    readVersions: staff,
-    create: staff,
-    update: staff,
-    delete: managers,
+    read: publicOrStore("store_staff", { _status: { equals: "published" } }),
+    readVersions: readFor("store_staff"),
+    create: createFor("store_staff"),
+    update: writeFor("store_staff"),
+    delete: writeFor("store_manager"),
   },
+  indexes: perStoreUnique("slug"),
   versions: { drafts: { autosave: { interval: 800 }, schedulePublish: true }, maxPerDoc: 50 },
-  hooks: { afterChange: [afterChange, slugRedirect("pages")], afterDelete: [afterDelete] },
+  hooks: { beforeValidate: [assignStore()], afterChange: [afterChange, slugRedirect("pages")], afterDelete: [afterDelete] },
   fields: [
+    storeField(),
     { name: "title", type: "text", required: true },
     {
       type: "tabs",

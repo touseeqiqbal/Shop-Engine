@@ -1,5 +1,5 @@
 import type { GlobalConfig } from "payload";
-import { anyone, managers } from "../access";
+import { anyone, platformAdmins } from "../access";
 import { dbName } from "../fields";
 import { revalidate } from "../revalidate";
 
@@ -9,7 +9,7 @@ export const CookieNotice: GlobalConfig = {
   dbName: dbName("cookie-notice"),
   label: "Cookie notice",
   admin: { group: "Settings", description: "Google Analytics and the Meta Pixel only set cookies after the visitor presses Accept." },
-  access: { read: anyone, update: managers },
+  access: { read: anyone, update: platformAdmins },
   hooks: { afterChange: [({ doc }) => (revalidate(["settings"], ["/"]), doc)] },
   fields: [
     { name: "enabled", type: "checkbox", defaultValue: true, label: "Ask visitors before using analytics cookies" },

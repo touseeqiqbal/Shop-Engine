@@ -1,6 +1,4 @@
-import { getPayload } from "payload";
-import config from "@payload-config";
-import { isStaffUser } from "@/payload/access";
+import { adminRequest, canSeeStore } from "@/payload/route-access";
 import { getObject } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
@@ -8,13 +6,13 @@ export const dynamic = "force-dynamic";
 /** GET /cms-proof/<orderId> – streams an order's private payment screenshot to signed-in staff (/cms session). */
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const payload = await getPayload({ config });
-  const { user } = await payload.auth({ headers: req.headers });
-  // full staff rights only (owners/managers must have 2-step on – same rule as the rest of /cms)
-  if (!isStaffUser(user as never)) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  // the store's team only (owners/managers must have 2-step on – same rule as the rest of /cms)
+  const { payload, t } = await adminRequest(req);
+  if (!t.platformAdmin && !t.roles.size) return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (!/^\d+$/.test(id)) return Response.json({ error: "Invalid id" }, { status: 400 });
 
-  const order = (await payload.findByID({ collection: "orders" as never, id: Number(id), depth: 0, overrideAccess: true }).catch(() => null)) as { paymentScreenshotKey?: string } | null;
+  const order = (await payload.findByID({ collection: "orders" as never, id: Number(id), depth: 0, overrideAccess: true }).catch(() => null)) as { paymentScreenshotKey?: string; store?: unknown } | null;
+  if (!order || !canSeeStore(t, order.store)) return Response.json({ error: "No screenshot" }, { status: 404 });
   const raw = order?.paymentScreenshotKey ?? "";
   // Older orders stored the admin URL (…?key=payments/…); new ones store the key itself.
   const key = raw.includes("key=") ? decodeURIComponent(raw.split("key=")[1].split("&")[0]) : raw;

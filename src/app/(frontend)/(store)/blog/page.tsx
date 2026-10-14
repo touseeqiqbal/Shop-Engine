@@ -36,7 +36,7 @@ export default async function BlogIndexPage() {
       />
       <PageHero
         crumbs={[{ name: "Blog", href: "/blog" }]}
-        eyebrow="Urko Tech Blog"
+        eyebrow={`${site.shortName} Blog`}
         title={
           <>
             Laptop buying guides & <span className="gradient-text">tech tips</span> for Pakistan

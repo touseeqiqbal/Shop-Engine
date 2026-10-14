@@ -1,5 +1,5 @@
 import type { Field, GlobalConfig } from "payload";
-import { anyone, managers } from "../access";
+import { anyone, platformAdmins } from "../access";
 import { dbName } from "../fields";
 import { revalidate } from "../revalidate";
 import { PAKISTAN_CITIES } from "../../lib/cities";
@@ -20,7 +20,7 @@ export const ShippingSettings: GlobalConfig = {
   dbName: dbName("shipping"),
   label: "Shipping & delivery",
   admin: { group: "Settings", description: "Delivery charges by city, free-delivery threshold and delivery times. Use the fee tester below to check any city and cart total." },
-  access: { read: anyone, update: managers },
+  access: { read: anyone, update: platformAdmins },
   hooks: { afterChange },
   fields: [
     {
@@ -70,7 +70,7 @@ export const PaymentSettings: GlobalConfig = {
   dbName: dbName("payments"),
   label: "Payments",
   admin: { group: "Settings", description: "Which payment methods shoppers can choose, account details and rules for large Cash-on-Delivery orders." },
-  access: { read: anyone, update: managers },
+  access: { read: anyone, update: platformAdmins },
   hooks: { afterChange },
   fields: [
     method("cod", "Cash on Delivery", true, [
@@ -83,26 +83,43 @@ export const PaymentSettings: GlobalConfig = {
     ]),
     method("jazzcash", "JazzCash", true, [
       { type: "row", fields: [
-        { name: "title", type: "text", defaultValue: "Urko Tech Store", label: "Account title", admin: { width: "50%" } },
-        { name: "number", type: "text", defaultValue: "0342-6693115", label: "Mobile account number", admin: { width: "50%" } },
+        { name: "title", type: "text", label: "Account title", admin: { width: "50%" } },
+        { name: "number", type: "text", label: "Mobile account number", admin: { width: "50%", description: "Empty = JazzCash isn't offered at checkout." } },
       ] },
     ]),
     method("easypaisa", "EasyPaisa", true, [
       { type: "row", fields: [
-        { name: "title", type: "text", defaultValue: "Urko Tech Store", label: "Account title", admin: { width: "50%" } },
-        { name: "number", type: "text", defaultValue: "0343-5867409", label: "Mobile account number", admin: { width: "50%" } },
+        { name: "title", type: "text", label: "Account title", admin: { width: "50%" } },
+        { name: "number", type: "text", label: "Mobile account number", admin: { width: "50%", description: "Empty = EasyPaisa isn't offered at checkout." } },
       ] },
     ]),
     method("bank", "Bank transfer", true, [
       { type: "row", fields: [
-        { name: "bankName", type: "text", defaultValue: "Meezan Bank", admin: { width: "50%" } },
-        { name: "accountTitle", type: "text", defaultValue: "Urko Tech Store", admin: { width: "50%" } },
+        { name: "bankName", type: "text", admin: { width: "50%" } },
+        { name: "accountTitle", type: "text", admin: { width: "50%" } },
       ] },
       { type: "row", fields: [
         { name: "accountNumber", type: "text", admin: { width: "50%" } },
         { name: "iban", type: "text", label: "IBAN", admin: { width: "50%" } },
       ] },
     ]),
-    { name: "cardInfo", type: "ui", admin: { components: { Field: { path: "/payload/admin/BlockNote#BlockNote", clientProps: { text: "Debit / credit cards: shown as “Coming soon” at checkout until a payment gateway (e.g. PayFast, Safepay) is connected." } } } } },
+    method("card", "Debit / credit card (online)", false, [
+      { name: "cardInfo", type: "ui", admin: { components: { Field: { path: "/payload/admin/BlockNote#BlockNote", clientProps: { text: "Cards are taken on the payment provider's secure page (Stripe). The store's owner connects the payment account in Account → Stores → Online payments; until then cards stay hidden at checkout." } } } } },
+    ]),
+    {
+      name: "tax",
+      type: "group",
+      label: "Tax",
+      admin: { description: "Sales tax / VAT on orders. Shown on the order, invoice and reports." },
+      fields: [
+        { type: "row", fields: [
+          { name: "enabled", type: "checkbox", defaultValue: false, label: "Charge tax", admin: { width: "25%", style: { alignSelf: "center" } } },
+          { name: "rate", type: "number", min: 0, max: 50, defaultValue: 0, label: "Rate (%)", admin: { width: "25%" } },
+          { name: "inclusive", type: "checkbox", defaultValue: true, label: "Prices already include tax", admin: { width: "25%", style: { alignSelf: "center" }, description: "Off = tax is added on top at checkout." } },
+          { name: "label", type: "text", defaultValue: "Sales tax", admin: { width: "25%" } },
+        ] },
+        { name: "taxDelivery", type: "checkbox", defaultValue: false, label: "Delivery charges are taxed too" },
+      ],
+    },
   ],
 };

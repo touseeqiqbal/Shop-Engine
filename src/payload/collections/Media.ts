@@ -1,9 +1,10 @@
 import path from "node:path";
 import type { CollectionConfig } from "payload";
-import { anyone, managers, staff } from "../access";
+import { assignStore, createFor, publicOrStore, storeField, writeFor } from "../tenancy";
 import { dbName } from "../fields";
 import { CATALOG_TAG, CHROME_TAG, PAGES_TAG, revalidate } from "../revalidate";
 import { userError } from "../errors";
+import { storageLimit } from "../entitlements";
 import { cleanFileName } from "@/lib/media";
 import { isStorageEnvSet, strictProduction } from "@/lib/db/config";
 
@@ -21,13 +22,16 @@ export const Media: CollectionConfig = {
   slug: "media",
   dbName: dbName("media"),
   admin: { group: "Content", defaultColumns: ["filename", "alt", "folder", "updatedAt"] },
-  access: { read: anyone, create: staff, update: staff, delete: managers },
+  // files are public (the store shows them); in /cms each store sees and manages only its own
+  access: { read: publicOrStore("store_staff"), create: createFor("store_staff"), update: writeFor("store_staff"), delete: writeFor("store_manager") },
   folders: true,
   hooks: {
+    beforeValidate: [assignStore()],
+    beforeChange: [storageLimit],
     // Refuse to delete a photo that is still shown somewhere (it would leave broken pictures on the shop)
     beforeDelete: [
       async ({ id, req }) => {
-        const uses: [string, string, string][] = [["products", "images", "product"], ["categories", "image", "category"], ["brands", "logo", "brand"], ["posts", "cover", "blog post"]];
+        const uses: [string, string, string][] = [["products", "images", "product"], ["categories", "image", "category"], ["brands", "logo", "brand"], ["posts", "cover", "blog post"], ["product-collections", "image", "collection"], ["store-theme-settings", "logoDark", "theme"], ["store-theme-settings", "logoLight", "theme"], ["store-theme-settings", "favicon", "theme"]];
         const found: string[] = [];
         for (const [collection, field, label] of uses) {
           const r = await req.payload.find({ collection: collection as never, where: { [field]: { in: [id] } } as never, limit: 3, depth: 0, overrideAccess: true, req }).catch(() => null);
@@ -75,6 +79,7 @@ export const Media: CollectionConfig = {
     adminThumbnail: "thumbnail",
   },
   fields: [
+    storeField(),
     {
       name: "alt",
       type: "text",

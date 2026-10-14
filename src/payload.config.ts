@@ -22,8 +22,11 @@ import { NotificationSettings } from "./payload/globals/notifications";
 import { FaqsGlobal, PageTexts, SeoSettingsGlobal, StoreInfo, TestimonialsGlobal } from "./payload/globals/site";
 import { Discounts, FlashSales } from "./payload/collections/sales";
 import { AnnouncementBar, FooterSettings, HeaderSettings, ThemeSettings, WhatsAppSettings } from "./payload/globals/online-store";
-import { isStaffUser, managers, staff } from "./payload/access";
-import { dbName, legacyIdField } from "./payload/fields";
+import { adminUsers, canOpenAdminReq } from "./payload/access";
+import { assignStore, createFor, platformAdmins, readFor, storeField, writeFor } from "./payload/tenancy";
+import { toStoreSettingsCollection, STORE_SETTING_ROLES } from "./payload/store-settings";
+import { platformEndpoints } from "./payload/endpoints/platform";
+import { dbName, legacyIdField, perStoreUnique } from "./payload/fields";
 import { migrations } from "./migrations";
 import { mailerAdapter } from "./payload/email";
 import { reportsEndpoint } from "./payload/endpoints/reports";
@@ -41,12 +44,22 @@ import { CookieNotice } from "./payload/globals/cookie-notice";
 import { SalesChannels } from "./payload/globals/sales-channels";
 import { AbandonedCarts, ConversionSettings, ProductQuestions, StockAlerts, TradeIns } from "./payload/collections/engagement";
 import { Purchases, StockCounts, Suppliers } from "./payload/collections/inventory";
-import { ActivityLog, LOGGED_COLLECTIONS, StockMovements, withActivityLog, withGlobalActivityLog } from "./payload/collections/history";
+import { ActivityLog, isLoggedCollection, StockMovements, withActivityLog, withGlobalActivityLog } from "./payload/collections/history";
 import { StaffGuide } from "./payload/globals/staff-guide";
 import { inventoryEndpoints } from "./payload/endpoints/inventory";
+import { paymentEndpoints } from "./payload/endpoints/payments";
+import { marketingEndpoints } from "./payload/endpoints/marketing";
+import { OutboxEvents } from "./payload/collections/outbox";
+import { WebhookEndpoints } from "./payload/collections/webhooks";
+import { CustomerCarts } from "./payload/collections/customer-carts";
+import { PaymentEvents, Payments } from "./payload/collections/payments";
 import { StoreInvoices, StoreSubscriptions, SubscriptionPlans } from "./payload/collections/billing";
 
 import { dbPoolMax } from "./lib/db/config";
+
+/** Settings pages that every store has its own copy of (staff-guide stays platform-wide). */
+const STORE_SETTINGS_GLOBALS = [ThemeSettings, AnnouncementBar, HeaderSettings, FooterSettings, WhatsAppSettings, ShippingSettings, PaymentSettings, NotificationSettings, StoreInfo, SeoSettingsGlobal, PageTexts, TestimonialsGlobal, FaqsGlobal, OrderProtection, ReturnsPolicy, CookieNotice, SalesChannels, ConversionSettings];
+if (STORE_SETTINGS_GLOBALS.some((g) => !(g.slug in STORE_SETTING_ROLES))) throw new Error("store-settings: a settings global has no store role (src/payload/store-settings.ts)");
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -96,7 +109,7 @@ export default buildConfig({
   i18n: { translations: { en: { general: { true: "Yes", false: "No", noLabel: "—" } } } },
   admin: {
     user: Users.slug,
-    meta: { titleSuffix: " · ShopEngine", icons: [{ rel: "icon", type: "image/svg+xml", url: "/icon.svg" }] },
+    meta: { titleSuffix: " · ShopEngine", icons: [{ rel: "icon", type: "image/svg+xml", url: "/brand/shopengine-icon.svg" }] },
     components: {
       graphics: { Logo: "/payload/admin/Brand#Logo", Icon: "/payload/admin/Brand#Icon" },
       Nav: "/payload/admin/nav/UrkoNav#UrkoNav",
@@ -112,33 +125,47 @@ export default buildConfig({
         privacy: { Component: "/payload/admin/privacy/PrivacyView#PrivacyView", path: "/privacy", exact: true, meta: { title: "Customer data requests" } },
         stockCount: { Component: "/payload/admin/inventory/StockCountView#StockCountView", path: "/stock-count", exact: true, meta: { title: "Stock count" } },
         help: { Component: "/payload/admin/help/HelpView#HelpView", path: "/help", exact: true, meta: { title: "Help" } },
+        // the store's own settings page (theme, shipping, payments …): opens – or creates – the document of the store being worked in
+        storeSettings: { Component: "/payload/admin/settings/StoreSettingsView#StoreSettingsView", path: "/settings/:page", meta: { title: "Store settings" } },
+        platform: { Component: "/payload/admin/platform/PlatformView#PlatformView", path: "/platform", exact: true, meta: { title: "ShopEngine platform" } },
       },
     },
     importMap: { baseDir: path.resolve(dirname) },
   },
-  endpoints: [reportsEndpoint, salesReportEndpoint, configExportEndpoint, configImportEndpoint, ...posEndpoints, ...orderToolEndpoints, ...twoFactorEndpoints, ...privacyEndpoints, ...inventoryEndpoints],
+  endpoints: [reportsEndpoint, salesReportEndpoint, configExportEndpoint, configImportEndpoint, ...posEndpoints, ...orderToolEndpoints, ...twoFactorEndpoints, ...privacyEndpoints, ...inventoryEndpoints, ...platformEndpoints, ...paymentEndpoints, ...marketingEndpoints],
   // Security: GraphQL isn't used by the store – switch it off (smaller attack surface).
   graphQL: { disable: true },
-  // Background jobs (scheduled publishing of pages and blog posts): run every minute; only staff may queue/run them.
+  // Background jobs (scheduled publishing of pages and blog posts): run every minute; only platform admins may queue/run them by hand.
   jobs: {
-    access: { run: ({ req }) => isStaffUser(req.user as never), queue: ({ req }) => isStaffUser(req.user as never), cancel: ({ req }) => isStaffUser(req.user as never) },
+    access: { run: async ({ req }) => Boolean(await platformAdmins({ req } as never)), queue: async ({ req }) => Boolean(await canOpenAdminReq(req)), cancel: async ({ req }) => Boolean(await platformAdmins({ req } as never)) },
     autoRun: process.env.HOUSEKEEPING === "off" ? [] : [{ cron: "* * * * *", queue: "default", limit: 20 }],
     shouldAutoRun: () => process.env.HOUSEKEEPING !== "off" && process.env.NEXT_PHASE !== "phase-production-build",
   },
-  // Photo folders: staff only (Payload's default lets any signed-in account – even a customer – create folders).
+  // Photo folders: per store, its team only (Payload's default lets any signed-in account – even a customer – create folders).
   folders: {
-    collectionOverrides: [({ collection }) => ({ ...collection, access: { ...collection.access, read: staff, create: staff, update: staff, delete: managers } })],
+    collectionOverrides: [
+      ({ collection }) => ({
+        ...collection,
+        fields: [...collection.fields, storeField()],
+        hooks: { ...collection.hooks, beforeValidate: [...(collection.hooks?.beforeValidate ?? []), assignStore()] },
+        access: { ...collection.access, read: readFor("store_staff"), create: createFor("store_staff"), update: writeFor("store_staff"), delete: writeFor("store_manager") },
+      }),
+    ],
   },
-  // Payload's "someone is editing this" records: staff only (default: any signed-in account).
+  // Payload's "someone is editing this" records: people who may open /cms only (default: any signed-in account).
   onInit: async (payload) => {
     const locks = payload.collections["payload-locked-documents" as never] as unknown as { config: { access: Record<string, unknown> } } | undefined;
-    if (locks) locks.config.access = { ...locks.config.access, read: staff, create: staff, update: staff, delete: staff };
+    if (locks) locks.config.access = { ...locks.config.access, read: adminUsers, create: adminUsers, update: adminUsers, delete: adminUsers };
   },
   // Staff changes to the business collections and every settings page go to the Activity log (collections/history.ts)
   collections: [Stores, StoreMemberships, SubscriptionPlans, StoreSubscriptions, StoreInvoices, Users, Media, Products, ProductCollections, Categories, Brands, LaptopModels, Reviews, Posts, Orders, ReturnRequests, WarrantyClaims, PosSales, CashUps, Units, Discounts, FlashSales, WholesaleInquiries, ContactMessages, Pages, Menus, BlockedPhones, TradeIns, ProductQuestions, StockAlerts, AbandonedCarts, Suppliers, Purchases, StockCounts]
-    .map((c) => (LOGGED_COLLECTIONS.has(c.slug) ? withActivityLog(c) : c))
+    // every settings page also exists per store (one document each) – see src/payload/store-settings.ts
+    .concat(STORE_SETTINGS_GLOBALS.map(toStoreSettingsCollection))
+    .concat([OutboxEvents, Payments, PaymentEvents, WebhookEndpoints, CustomerCarts])
+    .map((c) => (isLoggedCollection(c.slug) ? withActivityLog(c) : c))
     .concat([StockMovements, ActivityLog]),
-  globals: [ThemeSettings, AnnouncementBar, HeaderSettings, FooterSettings, WhatsAppSettings, ShippingSettings, PaymentSettings, NotificationSettings, StoreInfo, SeoSettingsGlobal, PageTexts, TestimonialsGlobal, FaqsGlobal, OrderProtection, ReturnsPolicy, CookieNotice, SalesChannels, ConversionSettings, StaffGuide].map(withGlobalActivityLog),
+  // The original globals: ShopEngine's defaults and the default store's fallback – edited by platform admins only.
+  globals: [...STORE_SETTINGS_GLOBALS, StaffGuide].map((g) => withGlobalActivityLog({ ...g, admin: { ...g.admin, group: "Platform defaults" } })),
   editor: lexicalEditor(),
   // Uploads in /cms (photos, short videos): at most 20 MB each
   upload: { limits: { fileSize: 20 * 1024 * 1024 } },
@@ -171,9 +198,25 @@ export default buildConfig({
         { slug: "wholesale-inquiries", import: false, export: NOW },
         { slug: "contact-messages", import: false, export: NOW },
       ],
-      // Export files can contain cost prices (owner) and customer lists – owners and managers only.
-      overrideExportCollection: ({ collection }) => ({ ...collection, dbName: dbName("exports"), admin: { ...collection.admin, group: "Catalog" }, access: { ...collection.access, read: managers, create: managers, update: managers, delete: managers } }),
-      overrideImportCollection: ({ collection }) => ({ ...collection, dbName: dbName("imports"), admin: { ...collection.admin, group: "Catalog" }, access: { ...collection.access, read: staff, create: staff, update: staff, delete: managers } }),
+      // Export files can contain cost prices (owner) and customer lists – a store's owners and managers, of their store only.
+      // (The export itself runs with the person's own access, so it only ever contains their store's records.)
+      overrideExportCollection: ({ collection }) => ({
+        ...collection,
+        dbName: dbName("exports"),
+        admin: { ...collection.admin, group: "Catalog" },
+        fields: [...collection.fields, storeField()],
+        hooks: { ...collection.hooks, beforeValidate: [...(collection.hooks?.beforeValidate ?? []), assignStore()] },
+        access: { ...collection.access, read: readFor("store_manager"), create: createFor("store_manager"), update: writeFor("store_manager"), delete: writeFor("store_manager") },
+      }),
+      overrideImportCollection: ({ collection }) => ({
+        ...collection,
+        dbName: dbName("imports"),
+        admin: { ...collection.admin, group: "Catalog" },
+        fields: [...collection.fields, storeField()],
+        hooks: { ...collection.hooks, beforeValidate: [...(collection.hooks?.beforeValidate ?? []), assignStore()] },
+        // CSV imports parse untrusted files (csv-parse advisory GHSA-8cw4-87c7-c6xx): managers only
+        access: { ...collection.access, read: readFor("store_manager"), create: createFor("store_manager"), update: writeFor("store_manager"), delete: writeFor("store_manager") },
+      }),
     }),
     s3Storage({
       enabled: s3Configured,
@@ -234,9 +277,11 @@ export default buildConfig({
       overrides: {
         dbName: dbName("redirects"),
         admin: { group: "Settings" },
-        access: { read: () => true, create: staff, update: staff, delete: managers },
-        fields: ({ defaultFields }) => [...defaultFields, legacyIdField],
-        hooks: { afterChange: [({ doc }) => (clearRedirectCache(), doc)], afterDelete: [({ doc }) => (clearRedirectCache(), doc)] },
+        // per store: two stores may both redirect /old-page
+        access: { read: () => true, create: createFor("store_staff"), update: writeFor("store_staff"), delete: writeFor("store_manager") },
+        indexes: perStoreUnique("from"),
+        fields: ({ defaultFields }) => [storeField(), ...defaultFields.map((f) => ("name" in f && f.name === "from" ? { ...f, unique: false, index: true } : f)), legacyIdField] as never,
+        hooks: { beforeValidate: [assignStore()], afterChange: [({ doc }) => (clearRedirectCache(), doc)], afterDelete: [({ doc }) => (clearRedirectCache(), doc)] },
       },
     }),
   ],

@@ -8,8 +8,7 @@ FROM postgres:${PG_MAJOR}-alpine
 RUN apk add --no-cache bash aws-cli coreutils curl openssl tar
 
 COPY scripts/backup/backup.sh /usr/local/bin/backup.sh
-RUN sed -i 's/
-$//' /usr/local/bin/backup.sh && chmod +x /usr/local/bin/backup.sh
+RUN sed -i 's/\r$//' /usr/local/bin/backup.sh && chmod +x /usr/local/bin/backup.sh
 
 # Override the postgres image entrypoint – this container only runs the backup and exits.
 ENTRYPOINT []

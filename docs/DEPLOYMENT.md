@@ -15,7 +15,7 @@ This guide is for the shop owner. You don't need to write code; you need access 
 | **Uptime monitor** (Railway, optional) | Checks the site every minute and emails / texts you if it's down. | Railway → uptime service |
 | **Cloudflare** | Your domain name, HTTPS, and caching of photos. | Cloudflare dashboard |
 
-When you (or your developer) **push to the `master` branch on GitHub**, Railway builds a new version, checks it is healthy, and only then switches visitors to it. If the new version is not healthy, the old one keeps running.
+When you (or your developer) **push to the `main` branch on GitHub**, Railway builds a new version, checks it is healthy, and only then switches visitors to it. If the new version is not healthy, the old one keeps running.
 
 ---
 
@@ -42,7 +42,7 @@ If `DATABASE_URL`, `PAYLOAD_SECRET`, `AUTH_SECRET` or the `S3_*` bucket variable
 |---|---|
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE` | Send email through your mailbox (Gmail / Google Workspace, Zoho, Hostinger…). Used first if set. |
 | `RESEND_API_KEY` | Send email through Resend instead. |
-| `EMAIL_FROM` | The sender customers see, e.g. `Urko Tech Store <info@urkotechstore.com>`. |
+| `EMAIL_FROM` | The sender customers see, e.g. `Urko Tech Store <info@urkotechstore.com>`. Not set → `ShopEngine <no-reply@<site domain>>`, so set it. |
 | `ADMIN_ALERT_EMAIL` | Inbox for new-order alerts if none is set in **Settings → Notifications**. |
 
 ### Optional
@@ -58,6 +58,19 @@ If `DATABASE_URL`, `PAYLOAD_SECRET`, `AUTH_SECRET` or the `S3_*` bucket variable
 | `HOUSEKEEPING`, `HOUSEKEEPING_MINUTES` | Background jobs (auto-cancel unconfirmed orders, reminders). Leave unset. With several copies of the site only one runs them at a time (database lock); `HOUSEKEEPING=off` turns them off on a copy completely. |
 | `TWO_FACTOR_REQUIRED` | Leave unset. `false` turns off forced 2-step verification – emergencies only. |
 | `PAYLOAD_CSRF_ORIGINS`, `DB_POOL_MAX`, `SKIP_MIGRATIONS` | Advanced – leave unset. |
+
+### Multi-store (ShopEngine)
+| Name | What it is for |
+|---|---|
+| `PLATFORM_ROOT_DOMAIN` | The domain merchants' shops live under, e.g. `shopengine.app` → `myshop.shopengine.app`. Needs a wildcard DNS record and certificate for `*.shopengine.app`. Without it every address shows the original (default) store. |
+| `DEFAULT_STORE_NAME`, `DEFAULT_STORE_SLUG`, `DEFAULT_STORE_ORDER_PREFIX` | Only read once, by the first multi-store migration, to name the original shop's store (defaults: the shop's Store details name, `main`, `UTS`). |
+| `STRIPE_SECRET_KEY` | Card payments (customers pay each shop's own Stripe account) and ShopEngine's own plan billing. |
+| `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET` | Signing secrets of the two Stripe webhook endpoints, both pointing at `/api/webhooks/stripe` – one for the platform account, one for connected accounts. Orders are only marked paid from these. |
+| `PLATFORM_FEE_PERCENT` | Optional commission ShopEngine keeps on each card order (e.g. `1.5`). |
+| `BILLING_GRACE_DAYS` | Days a shop stays open after a failed plan payment (default 7). |
+| `MAX_STORES_PER_USER` | How many stores one account may own (default 3). |
+
+After setting up Stripe, open `/cms` → Plans and enter each paid plan's Stripe price ids; check the starter plans' prices.
 
 ### Staging only
 | Name | What it is for |
@@ -80,7 +93,7 @@ If `DATABASE_URL`, `PAYLOAD_SECRET`, `AUTH_SECRET` or the `S3_*` bucket variable
 ## 3. Deploying an update
 
 1. Make sure the change was tested on **staging** first (section 6).
-2. Your developer pushes the change to the `master` branch on GitHub.
+2. Your developer pushes the change to the `main` branch on GitHub.
 3. Open **Railway → web service → Deployments**. A new deployment appears: *Building* → *Deploying* → *Active*. This usually takes 5–10 minutes.
 4. When it says **Active**, check the site (section 5).
 5. If the deployment shows **Failed**, nothing changed for customers – the previous version is still running. Send the build log to your developer.
@@ -156,7 +169,7 @@ Do this once, at a quiet time (for example 3–4 am). Allow about 30 minutes. Yo
 1. **Freeze:** tell staff not to change products or settings during the cutover. Note the time.
 2. **Backup:** make a fresh backup of the production database ([BACKUP-RESTORE.md](BACKUP-RESTORE.md)).
 3. **Variables:** check every "Must have" variable in section 2 is set on the **production** web service, with the real `NEXT_PUBLIC_SITE_URL`. `STAGING` must **not** be set on production.
-4. **Deploy** the tested version to production (push to `master`, or "Redeploy" the tested build).
+4. **Deploy** the tested version to production (push to `main`, or "Redeploy" the tested build).
 5. **Wait** for **Active**, then open `/api/health` (section 5).
 6. **Data:** if old data must be copied into the new admin, your developer runs `node migrate-data.mjs` in the Railway console and checks it ends with "All checks passed".
 7. **Check:** sign in to `/cms` (set up 2-step verification when asked), open a few products and orders, and place **one real COD test order**, then cancel it in **Orders**.

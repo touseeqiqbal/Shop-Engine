@@ -5,6 +5,7 @@ import {
 import type { Brand, CatalogProduct, LaptopModel, SpecRow } from "@/lib/types";
 import { cn, conditionMeta } from "@/lib/utils";
 import type { DeliveryInfo } from "@/lib/cities";
+import { getSiteInfo } from "@/lib/repo/site-content";
 import { WhatsAppLink } from "@/components/content/whatsapp-link";
 import { ConditionBadge } from "@/components/ui/condition-badge";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
@@ -60,7 +61,7 @@ export function TrustStrip({ className, returnDays, cod }: { className?: string;
     { icon: RotateCcw, title: "Easy returns", text: `Within ${days(returnDays)}`, tone: "text-rose-400" },
   ];
   return (
-    <ul className={cn("grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5", className)} aria-label="Why buy from Urko Tech Store">
+    <ul className={cn("grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5", className)} aria-label="Why buy from us">
       {TRUST.map((t, i) => (
         <li key={t.title} className={cn("flex items-center gap-3 rounded-2xl border border-border bg-surface p-3", i === 4 && "col-span-2 sm:col-span-1")}>
           <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-surface-strong">
@@ -159,9 +160,10 @@ function deliveryText(delivery: DeliveryInfo) {
   return zones.map((z) => `${z.rest ? "Other cities" : z.name}: ${z.estimate!.trim()}`).join(". ") + ".";
 }
 
-export function WarrantyDelivery({ product, returnDays, delivery }: { product: CatalogProduct; returnDays: number; delivery: DeliveryInfo }) {
+export async function WarrantyDelivery({ product, returnDays, delivery }: { product: CatalogProduct; returnDays: number; delivery: DeliveryInfo }) {
+  const { address } = await getSiteInfo(); // where the store is (Settings → Store details)
   const rows = [
-    { icon: ShieldCheck, title: "Warranty", text: `${product.warranty}. Keep the box and invoice – warranty claims are handled at our Saddar store or via courier.` },
+    { icon: ShieldCheck, title: "Warranty", text: `${product.warranty}. Keep the box and invoice – warranty claims are handled at our ${address.area ? `${address.area} ` : ""}store or via courier.` },
     { icon: PackageCheck, title: "Checked before dispatch", text: "Every item is tested and packed with bubble wrap and a sealed box. We share a video/photo before dispatch on request." },
     { icon: Truck, title: "Delivery all over Pakistan", text: deliveryText(delivery) },
     delivery.cod.enabled

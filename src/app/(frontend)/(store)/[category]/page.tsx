@@ -20,12 +20,14 @@ import { primaryPhone } from "@/lib/site-info";
 import { faqJsonLd, itemListJsonLd } from "@/lib/seo";
 import { getPageMeta } from "@/lib/page-seo";
 import { getSiteInfo } from "@/lib/repo/site-content";
+import { getCurrentStore } from "@/lib/tenant";
 import { formatPKR } from "@/lib/utils";
 
 /**
  * Single-segment storefront URLs. Handles the nationwide SEO landing pages `/laptops-in-{city}`.
  * (The segment is named `[category]` because it shares its level with `[category]/[product]`.)
  * Any other single segment that matches a category slug permanently redirects to `/category/{slug}`.
+ * The city pages are written around the original shop's Karachi store, so only that store has them.
  */
 
 export const revalidate = 300;
@@ -34,6 +36,11 @@ type Props = { params: Promise<{ category: string }> };
 
 const PREFIX = "laptops-in-";
 const cityOf = (segment: string) => (segment.startsWith(PREFIX) ? cityFromSlug(segment.slice(PREFIX.length)) : null);
+/** The original (default) store – or demo mode, which is that store. */
+const isOriginalStore = async () => {
+  const store = await getCurrentStore();
+  return !store || store.isDefault;
+};
 
 export function generateStaticParams() {
   return LANDING_CITIES.map((c) => ({ category: `${PREFIX}${citySlug(c)}` }));
@@ -42,18 +49,19 @@ export function generateStaticParams() {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { category } = await params;
   const city = cityOf(category);
-  if (!city) return {};
+  if (!city || !(await isOriginalStore())) return {};
+  const { name } = await getSiteInfo();
   const est = deliveryEstimate(city);
   const karachi = city === "Karachi";
   // /cms → Online store → Page texts → "City landing pages" can override these with a {city} template.
   return getPageMeta("/laptops-in-{city}", {
     vars: { city },
     title: karachi
-      ? "Laptops in Karachi – Laptop Shop in Saddar with Same-Day Delivery | Urko Tech Store"
-      : `Laptops in ${city} – Price in Pakistan with Cash on Delivery | Urko Tech Store`,
+      ? `Laptops in Karachi – Laptop Shop in Saddar with Same-Day Delivery | ${name}`
+      : `Laptops in ${city} – Price in Pakistan with Cash on Delivery | ${name}`,
     description: karachi
       ? "Buy new, used & refurbished laptops in Karachi from our Regal Chowk, Saddar shop. Same/next-day delivery, Cash on Delivery, checked & tested with warranty."
-      : `Buy new, used & refurbished laptops in ${city} online. Delivered in ${est.days} with Cash on Delivery, warranty and checked & tested quality from Urko Tech Store.`,
+      : `Buy new, used & refurbished laptops in ${city} online. Delivered in ${est.days} with Cash on Delivery, warranty and checked & tested quality from ${name}.`,
     path: `/${category}`,
   });
 }
@@ -61,7 +69,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function SingleSegmentPage({ params }: Props) {
   const { category } = await params;
   const city = cityOf(category);
-  if (!city) {
+  if (!city || !(await isOriginalStore())) {
     const cat = await getCategoryBySlug(category);
     if (cat) permanentRedirect(`/category/${cat.slug}`);
     notFound();
@@ -91,7 +99,7 @@ async function CityLanding({ city }: { city: string }) {
   const copy = karachi
     ? `## Your laptop shop in Karachi – online and in Saddar
 
-Urko Tech Store is a walk-in **laptop shop in Karachi** at Regal Trade Square, Regal Chowk – the city's best-known laptop market. We stock **used laptops in Karachi** graded A+ and A, refurbished business machines and brand-new laptops from HP, Dell, Lenovo, Apple, Asus and MSI.
+${site.name} is a walk-in **laptop shop in Karachi** at Regal Trade Square, Regal Chowk – the city's best-known laptop market. We stock **used laptops in Karachi** graded A+ and A, refurbished business machines and brand-new laptops from HP, Dell, Lenovo, Apple, Asus and MSI.
 
 ### Same-day laptop delivery across Karachi
 Order online or on WhatsApp and we deliver to ${areas.slice(0, 6).join(", ")} and every other area of Karachi – usually the same day or next day. Pay with Cash on Delivery, or collect from our shop.
@@ -122,7 +130,7 @@ Pay the courier when your laptop arrives. You get a checking warranty on used la
             Laptops in {city} – <span className="gradient-text">Delivered with Cash on Delivery</span>
           </>
         }
-        description={<p>{cityIntro(city, settings)}</p>}
+        description={<p>{cityIntro(city, site.name, settings)}</p>}
         glow={karachi ? "from-cyan-500/25 via-blue-500/20 to-transparent" : "from-blue-500/25 via-violet-500/20 to-transparent"}
       >
         <div className="mt-8 grid gap-3 sm:grid-cols-3">
@@ -260,7 +268,7 @@ Pay the courier when your laptop arrives. You get a checking warranty on used la
         <WhatsAppCta
           title={`Need a laptop in ${city}? Talk to us`}
           text={`Share your budget and what you'll use it for – we'll suggest the best options and deliver to ${city} with Cash on Delivery.`}
-          message={`Hi Urko Tech Store! I'm in ${city} and need help choosing a laptop.`}
+          message={`Hi {store}! I'm in ${city} and need help choosing a laptop.`}
         />
 
         <nav aria-labelledby="cities-heading">

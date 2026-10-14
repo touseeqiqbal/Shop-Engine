@@ -162,8 +162,8 @@ export default async function FindPartsPage({ searchParams }: Props) {
           </span>
           <h2 className="mt-4 text-xl font-bold text-fg sm:text-2xl">Not sure? Send us a photo of your old charger or battery</h2>
           <p className="mt-2 text-sm text-muted sm:text-base">
-            Snap the label on the bottom of your laptop or on the old part and WhatsApp it to us. Our technicians at Regal Chowk, Saddar will match the
-            exact part – usually within a few minutes.
+            Snap the label on the bottom of your laptop or on the old part and WhatsApp it to us. Our technicians
+            {c.info.address.area ? ` in ${c.info.address.area}` : ""} will match the exact part – usually within a few minutes.
           </p>
           <a href={waLink(primaryPhone(c.info).wa, waText)} target="_blank" rel="noopener noreferrer" className="btn btn-whatsapp btn-lg mt-6">
             <WhatsAppIcon className="size-5" /> Send photo on WhatsApp

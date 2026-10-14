@@ -38,7 +38,7 @@ export function LoginIntro() {
     <div className="urko-login">
       <div className="urko-login-intro">
         <h1>Welcome back</h1>
-        <p>{needCode ? "Open your authenticator app and type the 6-digit code." : "Sign in to manage Urko Tech Store."}</p>
+        <p>{needCode ? "Open your authenticator app and type the 6-digit code." : "Sign in to ShopEngine to manage your store."}</p>
       </div>
       <form onSubmit={submit} className="urko-login__form" noValidate>
         {!needCode ? (

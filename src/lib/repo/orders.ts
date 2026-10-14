@@ -1,7 +1,7 @@
 import "server-only";
 import { randomInt } from "node:crypto";
 import { isCmsConfigured, isDatabaseConfigured } from "@/lib/db/config";
-import { byStorefrontId, getOrderCms, insertOrderCms, listOrdersCms } from "@/lib/cms/sales";
+import { byStorefrontId, getOrderCms, listOrdersCms } from "@/lib/cms/sales";
 import { prisma } from "@/lib/db/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import type { Order, OrderStatus } from "@/lib/types";
@@ -12,23 +12,28 @@ const orderData = (o: object) => toDb("orders", o) as Prisma.OrderUncheckedCreat
 
 /** Order data access (server-only). Orders live in Payload (/cms → Sales → Orders) since Phase 6. */
 
-export const ORDER_STATUSES: OrderStatus[] = ["awaiting-confirmation", "pending", "confirmed", "dispatched", "out-for-delivery", "delivered", "cancelled", "refused", "returned"];
+export const ORDER_STATUSES: OrderStatus[] = ["awaiting-payment", "awaiting-confirmation", "pending", "confirmed", "dispatched", "out-for-delivery", "delivered", "cancelled", "refused", "returned"];
 
-/** UTS-YYMMDD-NNNNNN (orders placed before Oct 2026 have 4 digits). Random part from a secure generator. */
-export function generateOrderNumber(date = new Date()) {
+/**
+ * <PREFIX>-YYMMDD-NNNNNN – the prefix is the store's own (Settings → order prefix; the original shop: UTS).
+ * Orders placed before Oct 2026 have 4 digits. Random part from a secure generator.
+ */
+export function generateOrderNumber(date = new Date(), prefix = "UTS") {
   const pkt = new Date(date.getTime() + 5 * 3600e3);
   const ymd = pkt.toISOString().slice(2, 10).replace(/-/g, "");
-  return `UTS-${ymd}-${randomInt(100000, 1000000)}`;
+  const p = prefix.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "UTS";
+  return `${p}-${ymd}-${randomInt(100000, 1000000)}`;
 }
 
 const digits = (s: string) => s.replace(/\D/g, "").replace(/^92/, "0");
 
+/** Demo mode (in memory) and the legacy database only – with /cms orders are placed by placeOrderCms (one transaction). */
 export async function insertOrder(order: Order): Promise<Order> {
   if (!isDatabaseConfigured) {
     memoryDb().orders.unshift(structuredClone(order));
     return order;
   }
-  if (isCmsConfigured) return insertOrderCms(order);
+  if (isCmsConfigured) throw new Error("insertOrder: use placeOrderCms with /cms");
   return toOrder(await prisma.order.create({ data: orderData(order) }));
 }
 

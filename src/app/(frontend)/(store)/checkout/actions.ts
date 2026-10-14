@@ -5,11 +5,12 @@ import { updateTag } from "next/cache";
 import { after } from "next/server";
 import { z } from "zod";
 import { priceCart } from "@/lib/cart-pricing";
-import { checkCoupon } from "@/lib/coupons";
-import { codFee, deliveryCharge, PAKISTAN_CITIES, paymentEnabled, shippingZoneFor } from "@/lib/cities";
+import { resolveDiscounts } from "@/lib/coupons";
+import { orderTotals } from "@/lib/order-totals";
+import { PAKISTAN_CITIES, paymentEnabled, shippingZoneFor } from "@/lib/cities";
 import { advanceReason, getProtectionSettings, isBlockedPhone, needsConfirmation, newConfirmation, riskFor } from "@/lib/protection";
 import { emailRequiredAtCheckout, getSessionUser, getUserProfile, mustConfirmEmailToOrder, updateUserProfile } from "@/lib/auth";
-import { canAskForConfirmation, notifyNewOrder } from "@/lib/notify";
+import { canAskForConfirmation, notifyFromStorefront } from "@/lib/notify";
 import { rateLimit, rateLimitKey, rateLimitPeek } from "@/lib/rate-limit";
 import { getOne, upsert } from "@/lib/repo/db";
 import { generateOrderNumber, getOrderByNumber, insertOrder } from "@/lib/repo/orders";
@@ -19,22 +20,26 @@ import { deleteObject, uploadObject } from "@/lib/storage";
 import type { Order, OrderConfirmation, OrderRisk, PaymentMethod } from "@/lib/types";
 import { normalizePkPhone } from "@/lib/utils";
 import { MAX_QTY_PER_ITEM } from "@/lib/cart-limits";
+import { currentAvailability, storeOrigin } from "@/lib/tenant";
 
 import { LAST_ORDER_COOKIE, orderCookieValue } from "@/lib/order-cookie";
-import { isBlockedCustomer, linkOrderToCustomerCms, placeOrderCms } from "@/lib/cms/sales";
+import { addCustomerOf, addMarketingConsent, isBlockedCustomer, linkOrderToCustomerCms, placeOrderCms } from "@/lib/cms/sales";
+import { payloadClient } from "@/lib/cms/catalog-source";
 import { log } from "@/lib/log";
 import { closeDraftForOrder } from "@/lib/cms/engagement";
 import { BOT_MESSAGE, verifyTurnstile } from "@/lib/turnstile";
 import { HONEYPOT } from "@/lib/honeypot";
 const MAX_FILE = 5 * 1024 * 1024;
 const ATTEMPT_ID = /^[A-Za-z0-9-]{8,64}$/;
+/** Paid by the customer before we ship, checked by staff against the uploaded receipt and its transaction id. */
 const ONLINE: PaymentMethod[] = ["jazzcash", "easypaisa", "bank"];
+const REFERENCE = /^[A-Za-z0-9-]{4,40}$/;
 
-export type CheckoutField = "name" | "phone" | "email" | "city" | "address" | "landmark" | "notes" | "paymentMethod" | "screenshot" | "items";
+export type CheckoutField = "name" | "phone" | "email" | "city" | "address" | "landmark" | "notes" | "paymentMethod" | "screenshot" | "paymentReference" | "items";
 
 export type PlaceOrderState =
   | { ok: false; message?: string; fieldErrors?: Partial<Record<CheckoutField, string>>; ts?: number; requireAdvance?: boolean; couponError?: string; newTotal?: number }
-  | { ok: true; orderNumber: string; total: number; items: { id: string; name: string; price: number; quantity: number }[]; ts: number };
+  | { ok: true; orderNumber: string; total: number; items: { id: string; name: string; price: number; quantity: number }[]; ts: number; paymentUrl?: string };
 
 const schema = z.object({
   name: z.string().trim().min(3, "Please enter your full name").max(80, "Name is too long"),
@@ -55,8 +60,10 @@ const schema = z.object({
   landmark: z.string().trim().max(120, "Landmark is too long"),
   notes: z.string().trim().max(500, "Notes are too long"),
   paymentMethod: z.enum(["cod", "jazzcash", "easypaisa", "bank", "card"], "Choose a payment method"),
+  paymentReference: z.union([z.literal(""), z.string().trim().regex(REFERENCE, "Enter the transaction ID from your payment receipt")]),
   couponCode: z.string().trim().max(40),
   saveAddress: z.boolean(),
+  marketingConsent: z.boolean(),
   items: z
     .array(z.object({ productId: z.string().min(1).max(120), qty: z.number().int().min(1).max(MAX_QTY_PER_ITEM, `You can order up to ${MAX_QTY_PER_ITEM} of one item online – for more, ask us on WhatsApp`), upgradeIds: z.array(z.string().max(120)).max(10) }))
     .min(1, "Your cart is empty")
@@ -106,11 +113,24 @@ async function setOrderCookie(orderNumber: string) {
   });
 }
 
+const CLOSED_MESSAGE: Record<string, string> = {
+  "setting-up": "This shop isn't open yet – please check back soon.",
+  "plan-ended": "This shop is temporarily not taking orders.",
+  suspended: "This shop is temporarily not taking orders.",
+  closed: "This shop has closed.",
+  missing: "This shop doesn't exist.",
+};
+
 export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<PlaceOrderState> {
   const ts = Date.now();
   // Honeypot – real shoppers never see/fill this field.
   if (str(fd, HONEYPOT)) return { ok: false, message: "We couldn't place your order. Please contact us on WhatsApp.", ts };
   if (!(await verifyTurnstile(fd, "checkout"))) return { ok: false, message: BOT_MESSAGE, ts };
+
+  // the store this checkout is for (from the address the shopper is on) – it must be open for orders
+  const { store, availability } = await currentAvailability();
+  if (!availability.open) return { ok: false, message: CLOSED_MESSAGE[availability.reason] ?? CLOSED_MESSAGE.closed, ts };
+  const storeId = store?.id ?? null;
 
   const parsed = schema.safeParse({
     name: str(fd, "name"),
@@ -121,8 +141,10 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     landmark: str(fd, "landmark"),
     notes: str(fd, "notes"),
     paymentMethod: str(fd, "paymentMethod") || "cod",
+    paymentReference: str(fd, "paymentReference").trim(),
     couponCode: str(fd, "couponCode"),
     saveAddress: str(fd, "saveAddress") === "on",
+    marketingConsent: str(fd, "marketingConsent") === "on",
     items: parseItems(str(fd, "items")),
   });
   if (!parsed.success) {
@@ -135,14 +157,11 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   }
   const data = parsed.data;
 
-  if (data.paymentMethod === "card")
-    return { ok: false, message: "Card payments are coming soon – please choose another method.", fieldErrors: { paymentMethod: "Card payments are coming soon" }, ts };
-
   // Email is how we verify: every order needs one (receipt, cash-on-delivery confirmation link and code, the
   // customer record in /cms), and a signed-in customer must have confirmed their account's email.
-  // Both only once the shop can actually send email.
+  // Both only once the shop can actually send email. Card payments always need one (the payment receipt).
   const user = await getSessionUser().catch(() => null);
-  if (emailRequiredAtCheckout() && !data.email)
+  if ((emailRequiredAtCheckout() || data.paymentMethod === "card") && !data.email)
     return { ok: false, message: "Please enter your email – we send your order confirmation there.", fieldErrors: { email: "Enter your email address" }, ts };
   if (user && (await mustConfirmEmailToOrder(user)))
     return { ok: false, message: "Please confirm your email address first – open the link we sent you (or send it again from your account page), then place the order.", ts };
@@ -150,52 +169,51 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   // Attempts per network are generous (shared mobile IPs, sold-out retries); placed orders per phone are strict.
   if (!(await rateLimit("checkout", 20, 10 * 60_000)))
     return { ok: false, message: "Too many tries from your network in a short time. Please wait a few minutes or order on WhatsApp.", ts };
-  if (!rateLimitPeek(`checkout-phone:${data.phone}`, 5))
+  if (!rateLimitPeek(`checkout-phone:${storeId ?? 0}:${data.phone}`, 5))
     return { ok: false, message: "Several orders were just placed with this number. Please wait a while or order on WhatsApp.", ts };
 
-  // ── Re-price everything server-side ──
-  const [settings, priced] = await Promise.all([getStoreSettings(), priceCart(data.items, { checkStock: true })]);
+  // ── Re-price everything server-side, from this store's catalog and settings ──
+  const [settings, priced] = await Promise.all([getStoreSettings(storeId), priceCart(data.items, { checkStock: true })]);
   if (priced.problems.length || priced.items.length === 0)
     return { ok: false, message: priced.problems[0] ?? "Your cart is empty.", fieldErrors: { items: priced.problems.join(" ") || "Your cart is empty" }, ts };
-
-  const subtotal = priced.subtotal;
-  let discount = 0;
-  let couponCode: string | null = null;
-  if (data.couponCode) {
-    const c = await checkCoupon(data.couponCode, subtotal);
-    // never place the order at a higher total than the customer saw – tell them instead
-    if (!c.ok) return { ok: false, message: `${c.message}. Remove the code or try another one, then place the order again.`, couponError: c.message, ts };
-    discount = c.discount;
-    couponCode = c.code;
-  }
   if (!paymentEnabled(data.paymentMethod, settings))
     return { ok: false, message: "This payment method isn't available right now – please choose another.", fieldErrors: { paymentMethod: "Please choose another payment method" }, ts };
+
+  const subtotal = priced.subtotal;
+  // the typed code and/or the best automatic discount (never place the order at a higher total than the customer saw)
+  const discounts = await resolveDiscounts(data.couponCode || null, { lines: priced.items, products: priced.products, subtotal, customer: { email: data.email || null, phone: data.phone }, storeId });
+  if (!discounts.ok) return { ok: false, message: `${discounts.message}. Remove the code or try another one, then place the order again.`, couponError: discounts.message, ts };
+  const discount = discounts.discount;
+  // the code whose use is counted: the typed one, else a lone automatic discount (its usage limit / per-customer limit)
+  const couponCode = discounts.code ?? (discounts.applied.length === 1 ? discounts.applied[0].code : null);
+
   // COD handling fee (/cms → Settings → Payments) is recorded as part of the delivery charge
-  const delivery = deliveryCharge(data.city, subtotal, settings) + (data.paymentMethod === "cod" ? codFee(settings) : 0);
-  const total = Math.max(0, subtotal - discount + delivery);
+  const totals = orderTotals({ subtotal, discount, city: data.city, method: data.paymentMethod, settings, freeShipping: discounts.freeShipping });
+  const delivery = (totals.delivery ?? 0) + totals.fee;
+  const total = totals.total;
   const expected = Number(str(fd, "expectedTotal"));
   if (Number.isFinite(expected) && expected > 0 && Math.abs(expected - total) >= 1)
     return {
       ok: false,
       newTotal: total,
-      message: `The total changed to Rs ${total.toLocaleString("en-PK")} (prices or delivery were updated). Please check your order and place it again.`,
+      message: `The total changed to Rs ${total.toLocaleString("en-PK")} (prices, discounts or delivery were updated). Please check your order and place it again.`,
       ts,
     };
   const codMax = settings.payments?.cod.maxOrder ?? null;
   if (data.paymentMethod === "cod" && codMax && total > codMax)
-    return { ok: false, message: `Cash on Delivery is available for orders up to Rs ${codMax.toLocaleString("en-PK")}. Please pay online.`, fieldErrors: { paymentMethod: "Choose JazzCash, EasyPaisa or bank transfer for this order" }, ts };
+    return { ok: false, message: `Cash on Delivery is available for orders up to Rs ${codMax.toLocaleString("en-PK")}. Please pay online.`, fieldErrors: { paymentMethod: "Choose an online payment method for this order" }, ts };
 
-  // ── Fake-order protection: blocked numbers, risk score, advance payment for risky COD orders ──
+  // ── Fake-order protection (this store's blocked numbers and rules): risk score, advance payment for risky COD ──
   let risk: OrderRisk | null = null;
   let advanceNeeded: string | null = null;
   if (isCmsConfigured) {
     try {
-      const prot = await getProtectionSettings();
-      const r = await riskFor(data.phone, prot);
+      const prot = await getProtectionSettings(storeId);
+      const r = await riskFor(data.phone, prot, storeId);
       if (r.blocked?.action === "block")
         return { ok: false, message: "We can't take online orders for this number. Please call or WhatsApp us to order.", fieldErrors: { phone: "Online orders are not available for this number" }, ts };
-      // a customer ACCOUNT blocked by staff (/cms → Customers) can't order as a guest with the same phone or email
-      if (await isBlockedCustomer(data.phone, data.email))
+      // a customer ACCOUNT blocked by the original shop's staff (/cms → Customers) can't order there as a guest either
+      if ((!store || store.isDefault) && (await isBlockedCustomer(data.phone, data.email)))
         return { ok: false, message: "We can't take online orders for this account. Please call or WhatsApp us to order.", ts };
       risk = { score: r.score, level: r.level, reasons: r.reasons };
       if (data.paymentMethod === "cod") {
@@ -203,26 +221,28 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
         if (advanceNeeded && settings.advanceAmount <= 0)
           return {
             ok: false,
-            message: `Cash on delivery isn't available here (${advanceNeeded}). Please pay with JazzCash, EasyPaisa or bank transfer.`,
-            fieldErrors: { paymentMethod: "Please choose JazzCash, EasyPaisa or bank transfer" },
+            message: `Cash on delivery isn't available here (${advanceNeeded}). Please choose an online payment method.`,
+            fieldErrors: { paymentMethod: "Please choose an online payment method" },
             ts,
           };
       }
     } catch (err) {
       // never block a real customer because the scoring failed – but the blocked list itself still applies
       log.error("checkout.risk_check_failed", err);
-      if (await isBlockedPhone(data.phone).catch(() => false))
+      if (await isBlockedPhone(data.phone, storeId).catch(() => false))
         return { ok: false, message: "We can't take online orders for this number. Please call or WhatsApp us to order.", fieldErrors: { phone: "Online orders are not available for this number" }, ts };
     }
   }
 
-  // ── Payment proof ──
+  // ── Payment proof (wallet / bank transfer: screenshot + transaction id; cards are checked by the provider) ──
   const advanceEligible = data.paymentMethod === "cod" && ((total >= settings.advanceThreshold && settings.advanceAmount > 0) || Boolean(advanceNeeded));
   const rawFile = fd.get("screenshot");
   const file = rawFile instanceof File && rawFile.size > 0 ? rawFile : null;
   const needsProof = ONLINE.includes(data.paymentMethod);
   if (needsProof && !file)
     return { ok: false, message: "Please upload your payment screenshot.", fieldErrors: { screenshot: "Upload a screenshot of your payment (JPG, PNG or WebP)" }, ts };
+  if (needsProof && !data.paymentReference)
+    return { ok: false, message: "Please enter the transaction ID of your payment.", fieldErrors: { paymentReference: "Enter the transaction ID from your payment receipt" }, ts };
   if (advanceNeeded && !file)
     return {
       ok: false,
@@ -240,8 +260,9 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   }
 
   const now = new Date();
-  let orderNumber = generateOrderNumber(now);
-  for (let i = 0; i < 4 && (await getOrderByNumber(orderNumber)); i++) orderNumber = generateOrderNumber(now);
+  const prefix = store?.orderPrefix || undefined;
+  let orderNumber = generateOrderNumber(now, prefix);
+  for (let i = 0; i < 4 && (await getOrderByNumber(orderNumber)); i++) orderNumber = generateOrderNumber(now, prefix);
 
   let screenshotUrl: string | null = null;
   if (file && proofType) {
@@ -254,11 +275,12 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   }
 
   const advancePaid = advanceEligible && screenshotUrl ? Math.min(settings.advanceAmount, total) : undefined;
+  const card = data.paymentMethod === "card";
 
   // COD orders the customer must confirm (link / code) before we pack them
   let confirmation: OrderConfirmation | null = null;
-  if (isCmsConfigured) {
-    const prot = await getProtectionSettings().catch(() => null);
+  if (isCmsConfigured && !card) {
+    const prot = await getProtectionSettings(storeId).catch(() => null);
     const zoneName = shippingZoneFor(data.city, settings)?.name ?? null;
     // An uploaded advance isn't checked yet, so it can't replace the confirmation; approving it in /cms confirms the order.
     // …and only when we can actually send the customer the link/code; otherwise staff confirm by phone.
@@ -267,7 +289,8 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       else log.warn("checkout.confirmation_unreachable", { phone: data.phone.slice(-4) });
     }
   }
-  const firstStatus = confirmation ? "awaiting-confirmation" : "pending";
+  // a card order waits for the payment provider; it moves on (or is cancelled) by itself
+  const firstStatus = card ? "awaiting-payment" : confirmation ? "awaiting-confirmation" : "pending";
   const order: Order = {
     id: randomUUID(),
     orderNumber,
@@ -286,18 +309,22 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     discount,
     couponCode,
     deliveryCharge: delivery,
+    taxTotal: totals.tax,
     total,
     ...(advancePaid ? { advancePaid } : {}),
     paymentMethod: data.paymentMethod,
-    paymentStatus: data.paymentMethod === "cod" ? (advancePaid ? "awaiting-verification" : "unpaid") : "awaiting-verification",
+    paymentStatus: data.paymentMethod === "cod" ? (advancePaid ? "awaiting-verification" : "unpaid") : card ? "unpaid" : "awaiting-verification",
     paymentScreenshotUrl: screenshotUrl,
+    paymentReference: needsProof ? data.paymentReference.toUpperCase() : null,
     courier: null,
     trackingNumber: null,
     notes: data.notes || null,
+    marketingConsent: data.marketingConsent,
     history: [{ status: firstStatus, at: now.toISOString() }],
     confirmation,
     risk,
     userId: user && user.role === "customer" ? user.id : null,
+    storeId,
   };
 
   const attemptRaw = str(fd, "attemptId");
@@ -306,9 +333,11 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     if (screenshotUrl) await deleteObject(screenshotUrl).catch((e) => log.error("checkout.screenshot_cleanup_failed", e));
     return { ok: false, message, ts, ...extra };
   };
+  const summary = (o: Order) => o.items.map((i) => ({ id: i.productId, name: i.name, price: i.unitPrice, quantity: i.qty }));
+  let orderDocId: number | null = null;
 
   if (isCmsConfigured) {
-    // Coupon use, stock, the order and its serial-numbered laptops in ONE transaction – all or nothing.
+    // Coupon use, stock, the order, its serial-numbered laptops and its notification in ONE transaction – all or nothing.
     const lines = [...aggregateQty(order)].map(([id, qty]) => ({ id, qty, title: order.items.find((i) => i.productId === id)?.name ?? "an item" }));
     let placed: Awaited<ReturnType<typeof placeOrderCms>> | null = null;
     for (let attempt = 0; attempt < 3 && !placed; attempt++) {
@@ -317,7 +346,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       } catch (err) {
         // a clashing order number (very rare) – try again with a new one
         if (/unique|duplicate key|invalid/i.test(String((err as Error)?.message)) && /order_number|orderNumber|Order number/i.test(String((err as Error)?.message)) && attempt < 2) {
-          order.orderNumber = generateOrderNumber(now);
+          order.orderNumber = generateOrderNumber(now, prefix);
           continue;
         }
         log.error("checkout.save_failed", err, { order: order.orderNumber });
@@ -327,6 +356,8 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     if (!placed) return failed("Something went wrong while placing your order. Please try again or order on WhatsApp.");
     if (!placed.ok) {
       if (placed.reason === "coupon") return failed(`The coupon ${couponCode} has just run out or expired. Remove it and place the order again.`, { couponError: "This coupon can't be used any more" });
+      if (placed.reason === "payment-reference")
+        return failed("This transaction ID was already used for another order. Please check it – one payment pays for one order.", { fieldErrors: { paymentReference: "This transaction ID was already used" } });
       log.warn("checkout.sold_out", { items: placed.short });
       return failed(`Sorry – ${placed.short.join(", ")} just sold out. Please update your cart.`);
     }
@@ -334,9 +365,15 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       // the same submit arrived twice (double click / retry) – show the order that was already placed
       if (screenshotUrl && screenshotUrl !== placed.order.paymentScreenshotUrl) await deleteObject(screenshotUrl).catch(() => undefined);
       await setOrderCookie(placed.order.orderNumber);
-      return { ok: true, orderNumber: placed.order.orderNumber, total: placed.order.total, items: placed.order.items.map((i) => ({ id: i.productId, name: i.name, price: i.unitPrice, quantity: i.qty })), ts };
+      let paymentUrl: string | undefined;
+      if (placed.order.status === "awaiting-payment") {
+        const { openCheckoutUrl } = await import("@/lib/payments");
+        paymentUrl = (await openCheckoutUrl(await payloadClient(), Number(placed.order.id)).catch(() => null)) ?? undefined;
+      }
+      return { ok: true, orderNumber: placed.order.orderNumber, total: placed.order.total, items: summary(placed.order), ts, ...(paymentUrl ? { paymentUrl } : {}) };
     }
     order.orderNumber = placed.order.orderNumber;
+    orderDocId = Number(placed.order.id);
   } else {
     try {
       await insertOrder(order);
@@ -345,31 +382,52 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       return failed("Something went wrong while placing your order. Please try again or order on WhatsApp.");
     }
   }
-  rateLimitKey(`checkout-phone:${data.phone}`, 5, 60 * 60_000);
+  rateLimitKey(`checkout-phone:${storeId ?? 0}:${data.phone}`, 5, 60 * 60_000);
+
+  // ── Card: on to the payment provider's page. If it can't be opened, the order is cancelled (stock goes back). ──
+  let paymentUrl: string | undefined;
+  if (card && orderDocId != null && storeId != null) {
+    const payload = await payloadClient();
+    try {
+      const { startCardPayment } = await import("@/lib/payments");
+      const origin = store ? storeOrigin(store) : (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/+$/, "");
+      paymentUrl = (await startCardPayment(payload, { orderId: orderDocId, orderNumber: order.orderNumber, total, storeId, email: order.customer.email ?? null, origin })).url;
+    } catch (err) {
+      log.error("checkout.card_start_failed", err, { order: order.orderNumber });
+      await payload
+        .update({
+          collection: "orders",
+          id: orderDocId,
+          data: { status: "cancelled", history: [{ status: "cancelled", at: new Date().toISOString(), note: "Card payment could not be started" }] } as never,
+          overrideAccess: true,
+          context: { system: true, skipNotify: true },
+        })
+        .catch((e) => log.error("checkout.card_cancel_failed", e, { order: order.orderNumber }));
+      return { ok: false, message: "We couldn't open the card payment page. Nothing was charged – please try again or choose another payment method.", fieldErrors: { paymentMethod: "Card payment is not available right now" }, ts };
+    }
+  }
 
   // ── Best-effort side effects (never fail the order) ──
   let stockChanged = isCmsConfigured;
-  for (const [productId, qty] of aggregateQty(order)) {
-    try {
-      if (isCmsConfigured) {
-        continue; // already taken above
-      } else {
+  if (!isCmsConfigured) {
+    for (const [productId, qty] of aggregateQty(order)) {
+      try {
         const p = await getOne("products", "id", productId);
         if (p) {
           await upsert("products", { ...p, stock: Math.max(0, p.stock - qty), soldCount: (p.soldCount ?? 0) + qty });
           stockChanged = true;
         }
+      } catch (err) {
+        log.error("checkout.stock_update", err);
       }
-    } catch (err) {
-      log.error("checkout.stock_update", err);
     }
-  }
-  if (couponCode && !isCmsConfigured) {
-    try {
-      const c = await getOne("coupons", "code", couponCode);
-      if (c) await upsert("coupons", { ...c, used: (c.used ?? 0) + 1 });
-    } catch (err) {
-      log.error("checkout.coupon_usage", err);
+    if (couponCode) {
+      try {
+        const c = await getOne("coupons", "code", couponCode);
+        if (c) await upsert("coupons", { ...c, used: (c.used ?? 0) + 1 });
+      } catch (err) {
+        log.error("checkout.coupon_usage", err);
+      }
     }
   }
   if (stockChanged) {
@@ -399,20 +457,23 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
 
   await setOrderCookie(order.orderNumber);
 
-  // Notifications run after the response is sent; notify.ts never throws, the catch is a second guard.
-  after(() => notifyNewOrder(order).catch((err) => log.error("checkout.notify", err)));
-  // guest order → the customer with this email (or a new "no account yet" record) in /cms → Customers
-  if (isCmsConfigured && !order.userId)
-    after(() => linkOrderToCustomerCms(order.orderNumber, { email: order.customer.email, name: order.customer.name, phone: order.customer.phone }).catch((e) => log.error("checkout.customer_link_failed", e)));
-  if (isCmsConfigured) after(() => closeDraftForOrder(order.customer.phone, order.customer.email ?? null, order.orderNumber).catch((e) => log.error("cart.draft_close_failed", e)));
+  if (isCmsConfigured) {
+    // (the "order received" messages were queued with the order itself – see placeOrderCms)
+    // the shopper becomes a customer of this store: a signed-in account is linked, a guest gets a customer record
+    if (order.userId)
+      after(async () => {
+        const payload = await payloadClient();
+        await addCustomerOf(payload, order.userId, storeId).catch((e) => log.error("checkout.customer_of_failed", e));
+        if (data.marketingConsent) await addMarketingConsent(payload, order.userId, storeId).catch((e) => log.error("checkout.consent_failed", e));
+      });
+    else after(() => linkOrderToCustomerCms(order.orderNumber, { email: order.customer.email, name: order.customer.name, phone: order.customer.phone, storeId, marketingConsent: data.marketingConsent }).catch((e) => log.error("checkout.customer_link_failed", e)));
+    after(() => closeDraftForOrder(order.customer.phone, order.customer.email ?? null, order.orderNumber, storeId).catch((e) => log.error("cart.draft_close_failed", e)));
+  } else {
+    // demo mode (no CMS, no outbox): sent straight after the response
+    after(() => notifyFromStorefront("order-placed", { order }));
+  }
 
-  return {
-    ok: true,
-    orderNumber: order.orderNumber,
-    total: order.total,
-    items: order.items.map((i) => ({ id: i.productId, name: i.name, price: i.unitPrice, quantity: i.qty })),
-    ts,
-  };
+  return { ok: true, orderNumber: order.orderNumber, total: order.total, items: summary(order), ts, ...(paymentUrl ? { paymentUrl } : {}) };
 }
 
 function aggregateQty(order: Order) {

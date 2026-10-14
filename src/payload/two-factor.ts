@@ -96,7 +96,7 @@ export function newBackupCodes(): string[] {
   });
 }
 
-export const otpauthUrl = (secret: string, account: string, issuer = "Urko Tech Store") =>
+export const otpauthUrl = (secret: string, account: string, issuer = "ShopEngine") =>
   `otpauth://totp/${encodeURIComponent(`${issuer}:${account}`)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 
 export const TWO_FACTOR_ROLES = new Set(["owner", "manager"]);

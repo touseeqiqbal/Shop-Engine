@@ -17,13 +17,19 @@ import { STORE_ID, faqJsonLd, itemListJsonLd } from "@/lib/seo";
 import { getPageMeta } from "@/lib/page-seo";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { absoluteUrl, waLink } from "@/lib/site";
+import { primaryPhone, storePlace, type SiteInfo } from "@/lib/site-info";
+import { getCurrentStore } from "@/lib/tenant";
 import type { FaqItem } from "@/lib/types";
 import { WHOLESALE_CATEGORY_SLUG, WHOLESALE_PATH, isWholesaleAvailable, wholesaleMinQty } from "@/lib/wholesale";
 
 // Title/description/share image can be overridden in /cms → Online store → Page texts.
-export function generateMetadata(): Promise<Metadata> {
+export async function generateMetadata(): Promise<Metadata> {
+  const store = await getCurrentStore();
+  // these texts describe the original shop; any other store gets the plain built-in ones with its own name
+  if (store && !store.isDefault) return getPageMeta(WHOLESALE_PATH);
+  const { name } = await getSiteInfo();
   return getPageMeta(WHOLESALE_PATH, {
-    title: "Wholesale Used Laptops in Pakistan – Bulk Laptops Karachi | Urko Tech Store",
+    title: `Wholesale Used Laptops in Pakistan – Bulk Laptops Karachi | ${name}`,
     description:
       "Wholesale used laptops & accessories from Saddar, Karachi: bulk HP, Dell & Lenovo laptops, mixed laptop lots and chargers/batteries in bulk for shops, resellers & offices. Checked & tested, delivery all over Pakistan. Request a quote.",
   });
@@ -50,8 +56,11 @@ const SUPPLY = [
   },
 ];
 
-const WHY = [
-  { icon: ClipboardCheck, title: "Checked & tested", text: "Every unit is tested on 30+ points – battery, display, keyboard, ports, Wi-Fi and thermals – in our Saddar workshop." },
+// texts that name the shop's area / city / address come from the store's own profile (Settings → Store details)
+const shopAddress = (site: SiteInfo) => [site.address.street.split(",")[0], site.address.area, site.address.city].filter(Boolean).join(", ");
+
+const why = (site: SiteInfo) => [
+  { icon: ClipboardCheck, title: "Checked & tested", text: `Every unit is tested on 30+ points – battery, display, keyboard, ports, Wi-Fi and thermals – in our ${site.address.area ? `${site.address.area} ` : ""}workshop.` },
   { icon: Layers, title: "Honest A / B grading", text: "Grade A: light signs of use only. Grade B: visible scratches or wear but 100% working. The grade is written on every lot." },
   { icon: ShieldCheck, title: "Warranty on bulk", text: "Checking warranty on every unit in the lot – faulty pieces are repaired or replaced, no arguments." },
   { icon: Truck, title: "Nationwide delivery", text: "Courier for smaller orders and cargo for pallets – Lahore, Islamabad, Peshawar, Multan, Quetta and every other city." },
@@ -59,14 +68,14 @@ const WHY = [
   { icon: Wallet, title: "Flexible payment terms", text: "Advance or part-advance with balance on delivery for repeat buyers. Terms are agreed with each quote." },
 ];
 
-const STEPS = [
+const steps = (site: SiteInfo) => [
   { icon: MessageSquareText, title: "Send your requirement", text: "Tell us the models, quantity, grade and city using the quote form or WhatsApp." },
   { icon: Handshake, title: "Get a quote", text: "We reply with per-unit prices, photos and videos of the actual stock – usually within store hours." },
-  { icon: BadgeCheck, title: "Confirm & inspect", text: "Confirm the order with an advance. Visit our Saddar shop to inspect, or get a video walkthrough." },
+  { icon: BadgeCheck, title: "Confirm & inspect", text: `Confirm the order with an advance. Visit our ${site.address.area ? `${site.address.area} ` : ""}shop to inspect, or get a video walkthrough.` },
   { icon: PackageCheck, title: "Packed & delivered", text: "Units are packed securely and shipped by courier or cargo with an invoice and warranty." },
 ];
 
-const FAQS: FaqItem[] = [
+const faqs = (site: SiteInfo): FaqItem[] => [
   {
     q: "Why don't you publish wholesale prices?",
     a: "Wholesale prices depend on the quantity, grade, specs and the current dollar rate, which changes almost daily. To give you the best real price we quote every bulk order individually – just send the quote form or WhatsApp us.",
@@ -84,12 +93,12 @@ const FAQS: FaqItem[] = [
     a: "Yes. Every unit in a wholesale order gets a checking warranty (typically 15 days for used laptops). If a unit is faulty we repair or replace it.",
   },
   {
-    q: "Do you deliver wholesale orders outside Karachi?",
+    q: `Do you deliver wholesale orders ${site.address.city ? `outside ${site.address.city}` : "to other cities"}?`,
     a: "Yes, we deliver all over Pakistan. Smaller bulk orders go by courier (TCS, Leopards, M&P and others) and larger lots or pallets by cargo. Delivery charges are included in your quote.",
   },
   {
     q: "Can I inspect the laptops before paying the full amount?",
-    a: "Yes. You can visit our shop at Regal Trade Square, Saddar, Karachi to inspect the stock, or we send photos and a video walkthrough of the exact units before dispatch.",
+    a: `Yes. You can visit our shop${shopAddress(site) ? ` at ${shopAddress(site)}` : ""} to inspect the stock, or we send photos and a video walkthrough of the exact units before dispatch.`,
   },
   {
     q: "Can you upgrade RAM or SSD for the whole lot?",
@@ -135,6 +144,9 @@ export default async function WholesalePage({ searchParams }: { searchParams: SP
   const bulkRetail = all.filter((p) => !lots.includes(p) && isWholesaleAvailable(p)).sort((a, b) => b.soldCount - a.soldCount);
   const listed = [...lots.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), ...bulkRetail].slice(0, 12);
   const waText = `Hi ${site.name}! I'd like a wholesale quote for bulk laptops / accessories.`;
+  const phone = primaryPhone(site);
+  const place = storePlace(site);
+  const FAQS = faqs(site);
 
   return (
     <div className="pb-16">
@@ -144,7 +156,7 @@ export default async function WholesalePage({ searchParams }: { searchParams: SP
 
       <PageHero
         crumbs={[{ name: "Wholesale", href: WHOLESALE_PATH }]}
-        eyebrow="Wholesale & bulk orders · Saddar, Karachi"
+        eyebrow={`Wholesale & bulk orders${place ? ` · ${place}` : ""}`}
         title={
           <>
             Wholesale <span className="gradient-text">Laptops &amp; Accessories</span> in Pakistan
@@ -152,8 +164,8 @@ export default async function WholesalePage({ searchParams }: { searchParams: SP
         }
         description={
           <>
-            Bulk used laptops, mixed laptop lots and accessories by the box for computer shops, resellers, offices and institutes. Checked &amp; tested in
-            Saddar, Karachi and delivered all over Pakistan – <strong className="text-fg">price on request</strong>.
+            Bulk used laptops, mixed laptop lots and accessories by the box for computer shops, resellers, offices and institutes. Checked &amp; tested
+            {place ? ` in ${place}` : ""} and delivered all over Pakistan – <strong className="text-fg">price on request</strong>.
           </>
         }
         glow="from-cyan-500/25 via-blue-500/20 to-violet-500/15"
@@ -162,9 +174,11 @@ export default async function WholesalePage({ searchParams }: { searchParams: SP
           <a href="#quote" className="btn btn-primary btn-lg">
             <FileText className="size-5" aria-hidden="true" /> Request a wholesale quote
           </a>
-          <a href={waLink(site.phones[0].wa, waText)} target="_blank" rel="noopener noreferrer" className="btn btn-whatsapp btn-lg">
-            <WhatsAppIcon className="size-5" /> WhatsApp {site.phones[0].display}
-          </a>
+          {phone.wa && (
+            <a href={waLink(phone.wa, waText)} target="_blank" rel="noopener noreferrer" className="btn btn-whatsapp btn-lg">
+              <WhatsAppIcon className="size-5" /> WhatsApp {phone.display}
+            </a>
+          )}
         </div>
         <ul className="mt-7 flex flex-wrap gap-2 text-sm">
           {["5+ units per model", "Grade A / B lots", "Invoice & warranty", "Courier & cargo nationwide"].map((t) => (
@@ -181,7 +195,7 @@ export default async function WholesalePage({ searchParams }: { searchParams: SP
           <SectionHeading
             eyebrow="What we supply"
             title={<span id="supply-heading">Bulk laptops, lots &amp; accessories</span>}
-            description="Three ways to buy wholesale from Urko Tech Store – all quote-based, all checked before dispatch."
+            description={`Three ways to buy wholesale from ${site.name} – all quote-based, all checked before dispatch.`}
           />
           <ul className="grid gap-4 md:grid-cols-3">
             {SUPPLY.map((s, i) => (
@@ -211,13 +225,16 @@ export default async function WholesalePage({ searchParams }: { searchParams: SP
           </section>
         )}
 
-        {/* Why Urko */}
+        {/* Why buy from us */}
         <section aria-labelledby="why-heading" className="relative overflow-hidden rounded-[2rem] border border-border bg-gradient-to-br from-sky-500/10 via-blue-600/5 to-violet-600/10 p-6 sm:p-10">
           <div className="bg-grid pointer-events-none absolute inset-0 opacity-40" aria-hidden="true" />
           <div className="relative">
-            <SectionHeading eyebrow="Why buy from Urko" title={<span id="why-heading">Trusted wholesale partner in Saddar&apos;s laptop market</span>} />
+            <SectionHeading
+              eyebrow={`Why buy from ${site.shortName}`}
+              title={<span id="why-heading">Trusted wholesale partner{site.address.area ? ` in ${site.address.area}'s laptop market` : ""}</span>}
+            />
             <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {WHY.map((w) => (
+              {why(site).map((w) => (
                 <li key={w.title} className="glass rounded-3xl p-5">
                   <w.icon className="size-6 text-sky-400" aria-hidden="true" />
                   <h3 className="mt-3 font-semibold text-fg">{w.title}</h3>
@@ -232,7 +249,7 @@ export default async function WholesalePage({ searchParams }: { searchParams: SP
         <section aria-labelledby="how-heading">
           <SectionHeading eyebrow="How it works" title={<span id="how-heading">From quote to delivery in 4 steps</span>} />
           <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {STEPS.map((s, i) => (
+            {steps(site).map((s, i) => (
               <Reveal as="li" key={s.title} delay={i * 0.06} className="card relative p-6">
                 <span className="absolute right-5 top-4 font-display text-4xl font-bold text-fg/10" aria-hidden="true">
                   {String(i + 1).padStart(2, "0")}

@@ -1,10 +1,10 @@
 import type { CollectionBeforeLoginHook, Endpoint, PayloadRequest } from "payload";
 import { APIError, generatePayloadCookie } from "payload";
 import { sql } from "@payloadcms/db-postgres";
-import { decrypt, encrypt, hashCode, newBackupCodes, newSecret, otpauthUrl, TWO_FACTOR_ROLES, twoFactorRequired, verifyTotp } from "../two-factor";
+import { decrypt, encrypt, hashCode, newBackupCodes, newSecret, otpauthUrl, twoFactorRequired, verifyTotp } from "../two-factor";
 import { log } from "../../lib/log";
 import { ipFromHeaders } from "../../lib/client-ip";
-import { isOwnerUser } from "../access";
+import { adminSeat, isPlatformAdminUser, type TenantUser } from "../tenancy";
 
 /**
  * 2-step verification for /cms.
@@ -20,7 +20,7 @@ import { isOwnerUser } from "../access";
  */
 
 type TwoFactor = { enabled?: boolean; secret?: string | null; pendingSecret?: string | null; lastStep?: number | null; backupCodes?: string[] | null; failedCodes?: number | null; lockedUntil?: string | null };
-type U = { id: number; email: string; role?: string; twoFactor?: TwoFactor };
+type U = { id: number; email: string; role?: string; platformRole?: string | null; twoFactor?: TwoFactor };
 
 const me = (req: PayloadRequest) => req.user as unknown as U | null;
 const load = async (req: PayloadRequest, id: number) => (await req.payload.findByID({ collection: "users", id, depth: 0, overrideAccess: true, showHiddenFields: true, req })) as unknown as U;
@@ -71,6 +71,9 @@ function countWrongCode(payload: PayloadRequest["payload"], userId: number) {
  */
 export const requireTwoFactor: CollectionBeforeLoginHook = async ({ user, req, context }) => {
   if (context?.storefront) return user; // storefront account sign-in (Auth.js) – never grants /cms
+  // /cms and the REST API are for store teams and platform admins – a shopper's account gets no token here
+  const seat = await adminSeat(req.payload, user as TenantUser, req);
+  if (!seat.allowed) throw new APIError("ADMIN_NOT_ALLOWED", 403);
   const u = await load(req, Number((user as { id: number }).id));
   if (!u.twoFactor?.enabled) return user;
   const tf = u.twoFactor;
@@ -119,9 +122,10 @@ const status: Endpoint = {
     const u = me(req);
     if (!u) return bad("Sign in first.", 401);
     const full = await load(req, u.id);
+    const seat = await adminSeat(req.payload, full as unknown as TenantUser, req);
     return Response.json({
       enabled: Boolean(full.twoFactor?.enabled),
-      required: TWO_FACTOR_ROLES.has(String(full.role)) && twoFactorRequired(),
+      required: seat.needsTwoFactor && twoFactorRequired(),
       backupCodesLeft: full.twoFactor?.backupCodes?.length ?? 0,
     });
   },
@@ -196,7 +200,7 @@ const disable: Endpoint = {
   handler: async (req) => {
     const u = me(req);
     if (!u) return bad("Sign in first.", 401);
-    if (TWO_FACTOR_ROLES.has(String(u.role)) && twoFactorRequired()) return bad("Owners and managers must keep 2-step verification on.");
+    if ((await adminSeat(req.payload, u as unknown as TenantUser, req)).needsTwoFactor && twoFactorRequired()) return bad("Owners, managers and platform admins must keep 2-step verification on.");
     if (tooMany(`disable:${u.id}`)) return bad("Too many tries – wait 10 minutes.", 429);
     const body = (await req.json?.().catch(() => null)) as { code?: string } | null;
     const full = await load(req, u.id);
@@ -212,7 +216,7 @@ const reset: Endpoint = {
   method: "post",
   handler: async (req) => {
     const u = me(req);
-    if (u?.role !== "owner" || !isOwnerUser(u as never)) return bad("Only an owner (with 2-step verification on) can reset 2-step verification.", 403);
+    if (!u || !isPlatformAdminUser(u as unknown as TenantUser)) return bad("Only a platform admin (with 2-step verification on) can reset 2-step verification.", 403);
     const body = (await req.json?.().catch(() => null)) as { userId?: number } | null;
     const id = Number(body?.userId);
     if (!id || id === u.id) return bad("Choose another user (to change your own, use My account → Security).");
@@ -235,7 +239,7 @@ const login: Endpoint = {
     try {
       const res = await req.payload.login({ collection: "users", data: { email, password }, context: { twoFactorCode: String(body?.code ?? "").trim() } });
       const user = res.user as unknown as U;
-      if (!user || user.role === "customer") return bad("This account can't open the admin.", 403);
+      if (!user) return bad("This account can't open the admin.", 403);
       const cookie = generatePayloadCookie({ collectionAuthConfig: req.payload.collections.users.config.auth, cookiePrefix: req.payload.config.cookiePrefix, token: res.token! });
       log.info("auth.admin_login", { user: user.id, twoFactor: Boolean(user.twoFactor?.enabled) });
       return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json", "Set-Cookie": cookie } });
@@ -243,6 +247,7 @@ const login: Endpoint = {
       const msg = (e as Error).message;
       if (msg === "TWO_FACTOR_REQUIRED") return Response.json({ needCode: true });
       if (msg === "TWO_FACTOR_WRONG") return bad("That code isn't right. Use the newest code from your app, or a backup code.", 401);
+      if (msg === "ADMIN_NOT_ALLOWED") return bad("This account can't open the admin. Shoppers sign in on the store; merchants create a store first (Account → Stores).", 403);
       if (msg === "TWO_FACTOR_LOCKED") return bad("Too many wrong codes – 2-step sign-in for this account is paused for 15 minutes.", 423);
       if (/locked/i.test(msg)) return bad("This account is locked for 15 minutes after too many wrong passwords.", 423);
       return bad("Email or password is wrong.", 401);

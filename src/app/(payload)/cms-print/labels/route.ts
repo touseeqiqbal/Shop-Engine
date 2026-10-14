@@ -1,7 +1,7 @@
-import { getPayload } from "payload";
-import config from "@payload-config";
-import { isStaffUser } from "@/payload/access";
+import { adminRequest, canSeeStore } from "@/payload/route-access";
+import { storeIdOf } from "@/payload/tenancy";
 import { absoluteUrl } from "@/lib/site";
+import { storeDirectory, storeOrigin } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 
@@ -16,10 +16,9 @@ const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "
 const rs = (n: number) => `Rs ${Math.round(n).toLocaleString("en-PK")}`;
 
 export async function GET(req: Request) {
-  const payload = await getPayload({ config });
-  const { user } = await payload.auth({ headers: req.headers });
-  // full staff rights only (owners/managers must have 2-step on – same rule as the rest of /cms)
-  if (!isStaffUser(user as never)) return new Response("Please sign in to /cms first.", { status: 401 });
+  // the store's team only (owners/managers must have 2-step on – same rule as the rest of /cms)
+  const { payload, t } = await adminRequest(req);
+  if (!t.platformAdmin && !t.roles.size) return new Response("Please sign in to /cms first.", { status: 401 });
 
   const url = new URL(req.url);
   const type = url.searchParams.get("type") === "units" ? "units" : "products";
@@ -30,14 +29,23 @@ export async function GET(req: Request) {
   if (!ids.length) return new Response("Choose products or units first.", { status: 400 });
 
   const [bwip, QR] = await Promise.all([import("bwip-js/node"), import("qrcode")]);
-  const docs = (await payload.find({ collection: type, where: { id: { in: ids } }, limit: ids.length, depth: 2, overrideAccess: true })).docs as unknown as Doc[];
+  // only the store's own products / units
+  const docs = ((await payload.find({ collection: type, where: { id: { in: ids } }, limit: ids.length, depth: 2, overrideAccess: true })).docs as unknown as Doc[]).filter((d) => canSeeStore(t, d.store));
+
+  // QR codes open the product on its own store's address
+  const stores = await storeDirectory();
+  const pageOf = (store: unknown, path: string) => {
+    const s = stores.find((x) => x.id === storeIdOf(store));
+    const origin = s ? storeOrigin(s) : "";
+    return origin ? `${origin}${path}` : absoluteUrl(path);
+  };
 
   const labels: string[] = [];
   for (const d of docs) {
     const product = (type === "units" ? (d.product as Doc) : d) ?? {};
     const code = String(type === "units" ? d.serial : product.sku || product.id);
     const cat = product.category as Doc | undefined;
-    const pageUrl = cat?.slug && product.slug ? absoluteUrl(`/${cat.slug}/${product.slug}`) : "";
+    const pageUrl = cat?.slug && product.slug ? pageOf(product.store ?? d.store, `/${cat.slug}/${product.slug}`) : "";
     let barcode = "";
     try {
       barcode = bwip.toSVG({ bcid: "code128", text: code, scale: 2, height: 9, includetext: true, textxalign: "center", textsize: 8 });

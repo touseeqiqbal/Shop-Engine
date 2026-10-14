@@ -3,13 +3,17 @@ import { AuthShell } from "@/components/account/auth-shell";
 import { ForgotPasswordForm } from "@/components/account/auth-forms";
 import { isDatabaseConfigured } from "@/lib/db/config";
 import { pageMetadata } from "@/lib/seo";
+import { getSiteInfo } from "@/lib/repo/site-content";
 
-export const metadata: Metadata = pageMetadata({
-  title: "Forgot Password | Urko Tech Store",
-  description: "Get a link to choose a new password for your Urko Tech Store account.",
-  path: "/account/forgot-password",
-  noindex: true,
-});
+export async function generateMetadata(): Promise<Metadata> {
+  const { name } = await getSiteInfo(); // the current store's own name
+  return pageMetadata({
+    title: `Forgot Password | ${name}`,
+    description: `Get a link to choose a new password for your ${name} account.`,
+    path: "/account/forgot-password",
+    noindex: true,
+  });
+}
 
 export default function ForgotPasswordPage() {
   return (

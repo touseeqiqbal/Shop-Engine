@@ -8,7 +8,7 @@ import { JsonLd } from "@/components/ui/json-ld";
 import { InlineText } from "@/components/content/inline-text";
 import { Markdown } from "@/components/ui/markdown";
 import { waLink } from "@/lib/site";
-import { primaryPhone } from "@/lib/site-info";
+import { primaryPhone, storePlace } from "@/lib/site-info";
 import { faqJsonLd } from "@/lib/seo";
 import { getPageMeta } from "@/lib/page-seo";
 import { getResolvedPageContent } from "@/lib/repo/site-content";
@@ -21,11 +21,12 @@ export async function generateMetadata(): Promise<Metadata> {
   return getPageMeta("/installments");
 }
 
-const STEPS = [
+// `place` = where the store is, e.g. "Saddar, Karachi" (Settings → Store details)
+const steps = (place: string) => [
   {
     icon: Laptop,
     title: "Choose your laptop",
-    text: "Pick any eligible laptop or bundle on our website or at our Saddar, Karachi shop.",
+    text: `Pick any eligible laptop or bundle on our website or at our ${place ? `${place} ` : ""}shop.`,
   },
   {
     icon: CreditCard,
@@ -125,7 +126,7 @@ export default async function InstallmentsPage() {
           {live ? "How it works" : "How it will work"}
         </h2>
         <ol className="grid gap-4 sm:grid-cols-2">
-          {STEPS.map((s, i) => (
+          {steps(storePlace(c.info)).map((s, i) => (
             <li key={s.title} className="card relative p-5">
               <span className="absolute right-5 top-4 font-display text-3xl font-bold text-fg/10">{i + 1}</span>
               <s.icon className="size-6 text-sky-400" aria-hidden="true" />

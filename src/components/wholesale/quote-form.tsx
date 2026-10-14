@@ -5,7 +5,9 @@ import { submitWholesaleQuote, type QuoteField, type QuoteState } from "@/app/(f
 import { CityCombobox } from "@/components/checkout/city-combobox";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
 import { trackEvent } from "@/components/analytics";
-import { site, waLink } from "@/lib/site";
+import { useSiteInfo } from "@/components/providers/site-info";
+import { waLink } from "@/lib/site";
+import { primaryPhone } from "@/lib/site-info";
 import { cn } from "@/lib/utils";
 import { BUYER_TYPES, BUYER_TYPE_LABEL } from "@/lib/wholesale";
 import { Turnstile } from "@/components/ui/turnstile";
@@ -191,6 +193,8 @@ function ItemRow({
 
 export function WholesaleQuoteForm({ initialItems, source = "/wholesale" }: { initialItems: QuoteItemDraft[]; source?: string }) {
   const [state, action, pending] = useActionState<QuoteState, FormData>(submitWholesaleQuote, { ok: false });
+  const site = useSiteInfo(); // the current store's own name and phone (Settings → Store details)
+  const phone = primaryPhone(site);
   const [rows, setRows] = useState<Row[]>(() =>
     (initialItems.length ? initialItems : [{ productName: "", qty: 10 }]).map((i) => ({ ...i, key: newKey() }))
   );
@@ -231,7 +235,7 @@ export function WholesaleQuoteForm({ initialItems, source = "/wholesale" }: { in
             <pre className="whitespace-pre-wrap rounded-2xl bg-surface p-4 font-sans text-sm text-fg">{state.summary}</pre>
             <div className="flex flex-col gap-2 sm:flex-row">
               <a
-                href={waLink(site.phones[0].wa, `Hi ${site.name}! I just sent a wholesale quote request on your website.\n\n${state.summary}`)}
+                href={waLink(phone.wa, `Hi ${site.name}! I just sent a wholesale quote request on your website.\n\n${state.summary}`)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn btn-whatsapp btn-lg"
@@ -239,9 +243,11 @@ export function WholesaleQuoteForm({ initialItems, source = "/wholesale" }: { in
               >
                 <WhatsAppIcon className="size-5" /> Also message us on WhatsApp
               </a>
-              <a href={`tel:${site.phones[0].tel}`} className="btn btn-secondary btn-lg">
-                Call {site.phones[0].display}
-              </a>
+              {phone.tel && (
+                <a href={`tel:${phone.tel}`} className="btn btn-secondary btn-lg">
+                  Call {phone.display}
+                </a>
+              )}
             </div>
             <p className="text-xs text-subtle">WhatsApp is the fastest way to get photos and videos of the stock.</p>
           </>

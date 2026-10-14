@@ -4,6 +4,8 @@ import { PageHero } from "@/components/content/page-hero";
 import { WhatsAppCta } from "@/components/content/whatsapp-cta";
 import { BlogCategoryChips, BlogTagCloud, PostGrid } from "@/components/blog/blog-listing";
 import { getBlogPosts } from "@/lib/repo/catalog";
+import { getSiteInfo } from "@/lib/repo/site-content";
+import { storePlace } from "@/lib/site-info";
 import { blogTagSlug, blogTags } from "@/lib/blog";
 import { pageMetadata } from "@/lib/seo";
 
@@ -24,11 +26,12 @@ async function load(slug: string) {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { tag } = await params;
-  const { name, posts } = await load(tag);
+  const [{ name, posts }, site] = await Promise.all([load(tag), getSiteInfo()]);
   if (!name) return {};
+  const place = storePlace(site);
   return pageMetadata({
-    title: `${name.charAt(0).toUpperCase() + name.slice(1)} – Articles & Guides | Urko Tech Store`,
-    description: `Read ${posts.length} Urko Tech Store article${posts.length === 1 ? "" : "s"} about ${name}: buying advice, prices in Pakistan and expert tips from our Saddar, Karachi laptop shop.`,
+    title: `${name.charAt(0).toUpperCase() + name.slice(1)} – Articles & Guides | ${site.name}`,
+    description: `Read ${posts.length} ${site.name} article${posts.length === 1 ? "" : "s"} about ${name}: buying advice, prices in Pakistan and expert tips from our ${place ? `${place} ` : ""}laptop shop.`,
     path: `/blog/tag/${tag}`,
     // Thin tag archives stay crawlable but out of the index.
     noindex: posts.length < 2,

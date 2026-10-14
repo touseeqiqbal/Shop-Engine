@@ -1,9 +1,8 @@
 "use server";
 import { randomUUID } from "node:crypto";
-import { after } from "next/server";
 import { z } from "zod";
 import { createReturnRequest, createWarrantyClaim, findOrderForAftersales, getReturnsPolicy, type ReturnableOrder } from "@/lib/cms/aftersales";
-import { notifyStaff } from "@/lib/notify";
+import { notifyFromStorefront } from "@/lib/notify";
 import { ORDER_NUMBER_EXAMPLE, ORDER_NUMBER_RE } from "@/lib/order-number";
 import { rateLimit } from "@/lib/rate-limit";
 import { storePhotos } from "@/lib/uploads";
@@ -18,7 +17,7 @@ const numberSchema = z
   .string()
   .trim()
   .toUpperCase()
-  .refine((v) => ORDER_NUMBER_RE.test(v) || /^POS-\d{6}-\d{4}$/.test(v), `Order number looks like ${ORDER_NUMBER_EXAMPLE} (or a shop receipt POS-…)`);
+  .refine((v) => ORDER_NUMBER_RE.test(v) || /^POS-\d{6}-(?:\d{4}|\d{6})$/.test(v), `Order number looks like ${ORDER_NUMBER_EXAMPLE} (or a shop receipt POS-…)`);
 const phoneSchema = z.string().refine((v) => !!normalizePkPhone(v), "Enter the mobile number used for the order");
 
 export type LookupState = { ok: true; order: Omit<ReturnableOrder, "id">; returnDays: number } | { ok: false; message: string } | null;
@@ -77,7 +76,7 @@ export async function submitReturn(_prev: SubmitState, fd: FormData): Promise<Su
   const reference = await createReturnRequest({
     status: "requested",
     orderNumber: order.orderNumber,
-    order: order.orderNumber.startsWith("UTS-") ? order.id : null,
+    order: order.orderNumber.startsWith("POS-") ? null : order.id,
     customerName: order.customerName || "Customer",
     customerPhone: order.phone,
     items,
@@ -86,7 +85,7 @@ export async function submitReturn(_prev: SubmitState, fd: FormData): Promise<Su
     details,
     photoKeys: stored.keys,
   });
-  after(() => notifyStaff(`New return ${reference}`, [`${order.customerName} · ${order.phone}`, `Order ${order.orderNumber} – ${reason.label}`, ...items.map((i) => `• ${i.title} × ${i.qty}`)], { href: "/cms/collections/return-requests?where[status][equals]=requested", label: "Open returns" }));
+  await notifyFromStorefront("staff", { subject: `New return ${reference}`, lines: [`${order.customerName} · ${order.phone}`, `Order ${order.orderNumber} – ${reason.label}`, ...items.map((i) => `• ${i.title} × ${i.qty}`)], link: { href: "/cms/collections/return-requests?where[status][equals]=requested", label: "Open returns" } });
   log.info("return.requested", { reference, order: order.orderNumber });
   return { ok: true, reference, message: `We've got your return request ${reference}. We'll WhatsApp or call you within 1 working day.` };
 }
@@ -115,7 +114,7 @@ export async function submitWarranty(_prev: SubmitState, fd: FormData): Promise<
   const stored = await storePhotos(fd.getAll("photos"), "warranty", randomUUID().slice(0, 12));
   if ("error" in stored) return { ok: false, message: stored.error };
   const claim = await createWarrantyClaim({ status: "open", customerName: d.name, customerPhone: phone, serial: d.serial ?? null, orderNumber: d.orderNumber ?? null, issue: d.issue, photoKeys: stored.keys });
-  after(() => notifyStaff(`New warranty claim ${claim.claimNumber}`, [`${d.name} · ${phone}`, `Serial ${d.serial ?? "–"} · order ${d.orderNumber ?? "–"}`, d.issue, `Warranty check: ${claim.inWarranty}`], { href: "/cms/collections/warranty-claims?where[status][equals]=open", label: "Open warranty claims" }));
+  await notifyFromStorefront("staff", { subject: `New warranty claim ${claim.claimNumber}`, lines: [`${d.name} · ${phone}`, `Serial ${d.serial ?? "–"} · order ${d.orderNumber ?? "–"}`, d.issue, `Warranty check: ${claim.inWarranty}`], link: { href: "/cms/collections/warranty-claims?where[status][equals]=open", label: "Open warranty claims" } });
   log.info("warranty.claimed", { reference: claim.claimNumber, inWarranty: claim.inWarranty });
   const until = claim.warrantyEndsAt ? new Date(claim.warrantyEndsAt).toLocaleDateString("en-PK", { dateStyle: "medium" }) : "";
   const note =

@@ -4,6 +4,7 @@ import { isCmsConfigured } from "@/lib/db/config";
 import { getCategoryTree, getProductBySlug } from "@/lib/repo/catalog";
 import { CHROME_TAG } from "@/payload/revalidate";
 import { DEFAULT_CHROME, toWaNumber, type Chrome, type NavLink } from "./chrome-types";
+import { currentStoreId, getCurrentStore, runInStore } from "@/lib/tenant";
 
 /**
  * Loads the "online store" settings (theme, announcement, header, footer, menus, WhatsApp button) from Payload.
@@ -86,10 +87,11 @@ async function resolveMenu(menu: Rel<MenuDoc>): Promise<NavLink[] | null> {
   return (await Promise.all(m.items.map(resolveLink))).filter((x): x is NavLink => Boolean(x));
 }
 
-async function loadFromPayload(): Promise<Chrome> {
-  const [{ getPayload }, { default: config }] = await Promise.all([import("payload"), import("@payload-config")]);
+async function loadFromPayload(storeId: number | null): Promise<Chrome> {
+  const [{ getPayload }, { default: config }, { getStoreSettings }] = await Promise.all([import("payload"), import("@payload-config"), import("@/payload/store-settings")]);
   const payload = await getPayload({ config });
-  const g = (slug: string) => payload.findGlobal({ slug: slug as never, depth: 3, overrideAccess: true }) as Promise<Record<string, unknown>>;
+  // the store's own theme, header, footer … (the default store falls back to the original globals)
+  const g = (slug: string) => getStoreSettings<Record<string, unknown>>(payload, slug as never, storeId, { depth: 3 });
   const [theme, ann, header, footer, wa] = await Promise.all([g("theme-settings"), g("announcement-bar"), g("header"), g("footer"), g("whatsapp-button")]);
   const d = DEFAULT_CHROME;
   const media = (v: unknown) => obj(v as Rel<MediaDoc>);
@@ -162,39 +164,52 @@ async function loadFromPayload(): Promise<Chrome> {
   };
 }
 
-export const getChrome = unstable_cache(
-  async (): Promise<Chrome> => {
+const chromeCached = unstable_cache(
+  async (storeId: number | null): Promise<Chrome> => {
     if (!isCmsConfigured) return DEFAULT_CHROME;
     try {
-      return await loadFromPayload();
+      // links to products resolve within this store
+      return await runInStore(storeId, () => loadFromPayload(storeId));
     } catch (e) {
       // Never break the storefront because the CMS is unavailable – fall back to the built-in design.
       console.error("[chrome] Payload unavailable, using defaults:", e);
       return DEFAULT_CHROME;
     }
   },
-  ["cms-chrome-v1"],
+  ["cms-chrome-v2"],
   { tags: [CHROME_TAG], revalidate: 300 }
 );
+/** Theme, header, footer, announcement and WhatsApp button of the current store. */
+export const getChrome = async () => chromeCached(await currentStoreId());
 
 /** Built-in main menu (used until a menu is assigned in Online store → Header): categories mega menu + key links. */
 export async function defaultMainMenu(): Promise<NavLink[]> {
   const tree = await getCategoryTree();
+  const store = await getCurrentStore();
+  const categories: NavLink = {
+    label: "Categories",
+    labelUr: "کیٹیگریز",
+    href: "/category",
+    icon: "LayoutGrid",
+    mega: true,
+    children: tree.map((c) => ({
+      label: c.name,
+      labelUr: c.nameUr,
+      href: `/category/${c.slug}`,
+      icon: c.icon,
+      children: c.children.map((s) => ({ label: s.name, href: `/category/${s.slug}`, children: [] })),
+    })),
+  };
+  // a new store: just its own categories and the basics (the original shop keeps its laptop links)
+  if (store && !store.isDefault)
+    return [
+      categories,
+      { label: "Shop", href: "/shop", children: [] },
+      { label: "Deals", href: "/deals", children: [] },
+      { label: "Blog", href: "/blog", children: [] },
+    ];
   return [
-    {
-      label: "Categories",
-      labelUr: "کیٹیگریز",
-      href: "/category",
-      icon: "LayoutGrid",
-      mega: true,
-      children: tree.map((c) => ({
-        label: c.name,
-        labelUr: c.nameUr,
-        href: `/category/${c.slug}`,
-        icon: c.icon,
-        children: c.children.map((s) => ({ label: s.name, href: `/category/${s.slug}`, children: [] })),
-      })),
-    },
+    categories,
     { label: "Laptops", labelUr: "لیپ ٹاپ", href: "/category/laptops", children: [] },
     { label: "Hot Deals", labelUr: "ہاٹ ڈیلز", href: "/deals", children: [] },
     { label: "Find Parts", labelUr: "پارٹس تلاش کریں", href: "/find-parts", children: [] },

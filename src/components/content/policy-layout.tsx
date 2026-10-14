@@ -64,7 +64,7 @@ export function PolicyLayout({
         </aside>
       </div>
       <div className="container-x mt-14">
-        <WhatsAppCta title="Questions about this policy?" text="Message or call our team – we're happy to explain anything before you order." message="Hi Urko Tech Store! I have a question about your policies." />
+        <WhatsAppCta title="Questions about this policy?" text="Message or call our team – we're happy to explain anything before you order." message="Hi {store}! I have a question about your policies." />
       </div>
     </div>
   );

@@ -2,7 +2,9 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getCategories, getCategoryBySlug, getCategoryLineage, getSubcategories } from "@/lib/repo/catalog";
+import { getSiteInfo } from "@/lib/repo/site-content";
 import { pageMetadata } from "@/lib/seo";
+import { storePlace } from "@/lib/site-info";
 import { cn } from "@/lib/utils";
 import { CategoryIcon } from "@/components/ui/category-icon";
 import { Markdown } from "@/components/ui/markdown";
@@ -27,13 +29,14 @@ export async function generateStaticParams() {
 
 export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const [{ slug }, sp] = await Promise.all([params, searchParams]);
-  const category = await getCategoryBySlug(slug);
+  const [category, site] = await Promise.all([getCategoryBySlug(slug), getSiteInfo()]);
   if (!category) return { title: "Category not found", robots: { index: false } };
+  const place = storePlace(site);
   return pageMetadata({
-    title: category.seoTitle || `${category.name} Price in Pakistan | Urko Tech Store`,
+    title: category.seoTitle || `${category.name} Price in Pakistan | ${site.name}`,
     description:
       category.seoDescription ||
-      `Buy ${category.name.toLowerCase()} online at the best price in Pakistan. ${category.shortDescription} Cash on Delivery, warranty & fast delivery from Saddar, Karachi to all cities.`,
+      `Buy ${category.name.toLowerCase()} online at the best price in Pakistan. ${category.shortDescription} Cash on Delivery, warranty & fast delivery${place ? ` from ${place}` : ""} to all cities.`,
     path: `/category/${category.slug}`,
     image: category.image,
     noindex: shouldNoindex(sp) || category.seoNoindex,
@@ -48,10 +51,11 @@ export default async function CategoryPage({ params, searchParams }: Props) {
 
   const lineage = await getCategoryLineage(category);
   const parent = lineage.length > 1 ? lineage[lineage.length - 2] : null;
-  const [children, siblings, counts] = await Promise.all([
+  const [children, siblings, counts, site] = await Promise.all([
     getSubcategories(category.id),
     parent ? getSubcategories(parent.id) : Promise.resolve([]),
     getCategoryCounts(),
+    getSiteInfo(),
   ]);
   const showFinder = lineage.some((c) => c.compatibility) && category.compatibility !== false;
   // Sub-categories: own children, or siblings (with a link back to the parent) when this is a leaf.
@@ -104,7 +108,7 @@ export default async function CategoryPage({ params, searchParams }: Props) {
         basePath={`/category/${category.slug}`}
         searchParams={sp}
         base={{ categorySlug: category.slug }}
-        listName={`${category.name} – Urko Tech Store`}
+        listName={`${category.name} – ${site.name}`}
       />
 
       {category.seoContent && (

@@ -1,6 +1,6 @@
 import { sql } from "@payloadcms/db-postgres";
 import type { CollectionAfterChangeHook, CollectionAfterDeleteHook, CollectionConfig, GlobalAfterChangeHook, GlobalConfig, PayloadRequest } from "payload";
-import { canOpenAdmin, isOwnerUser, managers, staff } from "../access";
+import { getTenant, hasStoreRole, readFor, storeField, storeIdOf } from "../tenancy";
 import { dbName } from "../fields";
 import { log } from "../../lib/log";
 
@@ -44,9 +44,10 @@ export const StockMovements: CollectionConfig = {
     listSearchableFields: ["productTitle", "reference", "serial"],
   },
   defaultSort: "-createdAt",
-  access: { read: staff, create: () => false, update: () => false, delete: () => false },
+  access: { read: readFor("store_staff"), create: () => false, update: () => false, delete: () => false },
   timestamps: true,
   fields: [
+    storeField(),
     { name: "product", type: "relationship", relationTo: "products", index: true },
     { name: "productTitle", type: "text", label: "Product" },
     { type: "row", fields: [
@@ -74,23 +75,25 @@ export const ActivityLog: CollectionConfig = {
     group: "Customers & staff",
     useAsTitle: "title",
     defaultColumns: ["createdAt", "userEmail", "action", "entityLabel", "title", "summary"],
-    description: "Who changed what in /cms and when, with the old → new values. Owners and managers only.",
+    description: "Who changed what in /cms and when, with the old → new values. Owners and managers see their store's; platform admins everything.",
     listSearchableFields: ["title", "summary", "userEmail", "docId"],
   },
   defaultSort: "-createdAt",
-  access: { read: managers, create: () => false, update: () => false, delete: () => false },
+  access: { read: readFor("store_manager"), create: () => false, update: () => false, delete: () => false },
   timestamps: true,
   hooks: {
     // cost prices are owner-only everywhere else – the same here
     // older entries may still hold cost values – hide them from everyone but owners
     afterRead: [
-      ({ doc, req }) => {
-        if (isOwnerUser(req.user as never) || !Array.isArray(doc?.changes)) return doc;
+      async ({ doc, req }) => {
+        if (!Array.isArray(doc?.changes)) return doc;
+        if (req.user && hasStoreRole(await getTenant(req), storeIdOf(doc.store), "store_owner")) return doc;
         return { ...doc, changes: (doc.changes as Change[]).map((c) => (ownerOnly(String(doc.entity ?? ""), c.field) ? { ...c, from: "•••", to: "changed" } : c)) };
       },
     ],
   },
   fields: [
+    storeField(),
     { type: "row", fields: [
       { name: "user", type: "relationship", relationTo: "users", admin: { width: "50%" } },
       { name: "userEmail", type: "text", label: "Who", admin: { width: "50%" } },
@@ -181,10 +184,13 @@ const summaryOf = (changes: Change[]) =>
 const titleOf = (doc: Doc | undefined, id: unknown) =>
   String(doc?.orderNumber ?? doc?.receiptNumber ?? doc?.title ?? doc?.name ?? doc?.code ?? doc?.email ?? doc?.serial ?? doc?.filename ?? `#${id}`).slice(0, 160);
 
-/** Only people working in /cms are logged (storefront checkouts, customers' own profile, system jobs are not). */
+/**
+ * Every signed-in person working through /cms or the API is logged (only store teams and platform admins can get an admin
+ * token). The website's own code (checkout, a customer's account page, background jobs) runs without a user and isn't.
+ */
 function staffActor(req: PayloadRequest) {
   const u = req.user as { id?: number; email?: string; role?: string; collection?: string } | null;
-  return u && canOpenAdmin(u as never) ? u : null;
+  return u && !req.context?.storefront ? u : null;
 }
 
 /**
@@ -192,7 +198,7 @@ function staffActor(req: PayloadRequest) {
  * entry can't be written, only the entry is dropped – never the save it describes. (A failing nested Payload
  * create would roll back the whole parent transaction.)
  */
-async function write(req: PayloadRequest, entry: { action: "create" | "update" | "delete"; entity: string; entityLabel: string; docId: string; title: string; changes: Change[] }) {
+export async function logActivity(req: PayloadRequest, entry: { action: "create" | "update" | "delete"; entity: string; entityLabel: string; docId: string; title: string; changes: Change[]; storeId?: number | null }) {
   const u = staffActor(req);
   if (!u || (entry.action === "update" && !entry.changes.length)) return;
   const changes = entry.changes.map((c) => (ownerOnly(entry.entity, c.field) ? { field: c.field, from: "•••", to: "changed" } : c));
@@ -204,8 +210,8 @@ async function write(req: PayloadRequest, entry: { action: "create" | "update" |
     db = await conn(req.payload, req);
     if (inTx) await db.execute(sql`SAVEPOINT activity_log`);
     await db.execute(sql`
-      INSERT INTO "payload"."cms_activity_log" ("user_id", "user_email", "action", "entity", "entity_label", "doc_id", "title", "summary", "changes")
-      VALUES (${Number(u.id) || null}, ${u.email ?? ""}, ${entry.action}::"payload"."enum_cms_activity_log_action", ${entry.entity}, ${entry.entityLabel},
+      INSERT INTO "payload"."cms_activity_log" ("store_id", "user_id", "user_email", "action", "entity", "entity_label", "doc_id", "title", "summary", "changes")
+      VALUES (${entry.storeId ?? null}, ${Number(u.id) || null}, ${u.email ?? ""}, ${entry.action}::"payload"."enum_cms_activity_log_action", ${entry.entity}, ${entry.entityLabel},
               ${entry.docId}, ${entry.title}, ${summary}, ${JSON.stringify(changes)}::jsonb)`);
     if (inTx) await db.execute(sql`RELEASE SAVEPOINT activity_log`);
   } catch (e) {
@@ -217,13 +223,15 @@ async function write(req: PayloadRequest, entry: { action: "create" | "update" |
 /** Adds activity-log hooks to a collection (staff changes only). */
 export function withActivityLog(c: CollectionConfig): CollectionConfig {
   const label = typeof c.labels?.singular === "string" ? c.labels.singular : c.slug;
+  // the store an entry belongs to: the record's own store (a store's own record: itself; accounts: platform-level)
+  const storeOf = (doc: Doc | undefined) => (c.slug === "stores" ? storeIdOf(doc?.id) : storeIdOf(doc?.store));
   const afterChange: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, req, context }) => {
     if (context?.migrating || context?.skipActivity || doc?._status === "draft") return doc;
-    await write(req, { action: operation === "create" ? "create" : "update", entity: c.slug, entityLabel: label, docId: String(doc.id), title: titleOf(doc, doc.id), changes: operation === "create" ? [] : diff(previousDoc, doc) });
+    await logActivity(req, { action: operation === "create" ? "create" : "update", entity: c.slug, entityLabel: label, docId: String(doc.id), title: titleOf(doc, doc.id), changes: operation === "create" ? [] : diff(previousDoc, doc), storeId: storeOf(doc) });
     return doc;
   };
   const afterDelete: CollectionAfterDeleteHook = async ({ doc, id, req }) => {
-    await write(req, { action: "delete", entity: c.slug, entityLabel: label, docId: String(id), title: titleOf(doc, id), changes: [] });
+    await logActivity(req, { action: "delete", entity: c.slug, entityLabel: label, docId: String(id), title: titleOf(doc, id), changes: [], storeId: storeOf(doc) });
     return doc;
   };
   return { ...c, hooks: { ...c.hooks, afterChange: [...(c.hooks?.afterChange ?? []), afterChange], afterDelete: [...(c.hooks?.afterDelete ?? []), afterDelete] } };
@@ -234,7 +242,7 @@ export function withGlobalActivityLog(g: GlobalConfig): GlobalConfig {
   const label = typeof g.label === "string" ? g.label : g.slug;
   const afterChange: GlobalAfterChangeHook = async ({ doc, previousDoc, req, context }) => {
     if (context?.migrating) return doc;
-    await write(req, { action: "update", entity: g.slug, entityLabel: label, docId: g.slug, title: label, changes: diff(previousDoc, doc) });
+    await logActivity(req, { action: "update", entity: g.slug, entityLabel: label, docId: g.slug, title: label, changes: diff(previousDoc, doc), storeId: null });
     return doc;
   };
   return { ...g, hooks: { ...g.hooks, afterChange: [...(g.hooks?.afterChange ?? []), afterChange] } };
@@ -244,5 +252,9 @@ export function withGlobalActivityLog(g: GlobalConfig): GlobalConfig {
 export const LOGGED_COLLECTIONS = new Set([
   "users", "products", "categories", "brands", "laptop-models", "product-collections", "orders", "return-requests", "warranty-claims",
   "pos-sales", "cash-ups", "units", "discounts", "flash-sales", "pages", "posts", "menus", "suppliers", "purchases", "stock-counts",
-  "reviews", "media", "trade-ins", "wholesale-inquiries",
+  "reviews", "media", "trade-ins", "wholesale-inquiries", "contact-messages", "blocked-phones",
+  // the platform and every store's team, plan and settings
+  "stores", "store-memberships", "subscription-plans", "store-subscriptions", "store-invoices",
 ]);
+/** Store settings pages (store-theme-settings, store-payments …) are logged too. */
+export const isLoggedCollection = (slug: string) => LOGGED_COLLECTIONS.has(slug) || slug.startsWith("store-");

@@ -198,6 +198,7 @@ export interface Banner {
 }
 
 export type OrderStatus =
+  | "awaiting-payment"
   | "awaiting-confirmation"
   | "pending"
   | "confirmed"
@@ -225,7 +226,7 @@ export interface OrderRisk {
 }
 
 export type PaymentMethod = "cod" | "jazzcash" | "easypaisa" | "bank" | "card";
-export type PaymentStatus = "unpaid" | "awaiting-verification" | "paid" | "refunded" | "partial";
+export type PaymentStatus = "unpaid" | "awaiting-verification" | "paid" | "refunded" | "partial" | "partially-refunded";
 
 export interface OrderItem {
   productId: string;
@@ -272,21 +273,41 @@ export interface Order {
   courier?: string | null;
   trackingNumber?: string | null;
   notes?: string | null;
+  /** the customer ticked "email me news and offers" (for this store only) */
+  marketingConsent?: boolean;
   confirmation?: OrderConfirmation | null;
   risk?: OrderRisk | null;
   history: OrderEvent[];
   userId?: string | null;
+  /** the store the order was placed in (multi-store) */
+  storeId?: number | null;
+  /** transfer / wallet transaction id, or the online payment's id – one order per payment */
+  paymentReference?: string | null;
+  /** tax included in the total (the store's tax rate) */
+  taxTotal?: number;
 }
 
 export interface Coupon {
+  id?: string;
   code: string;
-  kind: "percent" | "fixed";
+  kind: "percent" | "fixed" | "free_shipping";
   value: number;
   minOrder: number;
+  startsAt?: string | null;
   expiresAt?: string | null;
   usageLimit?: number | null;
+  /** uses per customer (email / phone); null = unlimited */
+  perCustomerLimit?: number | null;
   used: number;
   active: boolean;
+  /** applied by itself to every qualifying cart (no code) */
+  automatic?: boolean;
+  /** adds up with the other kind (code + automatic) when both allow it */
+  combinable?: boolean;
+  appliesTo?: "all" | "products" | "categories" | "collections";
+  productIds?: string[];
+  categoryIds?: string[];
+  collectionIds?: string[];
 }
 
 export interface FlashSale {
@@ -323,6 +344,18 @@ export interface PaymentSettings {
   jazzcash: PaymentMethodSettings;
   easypaisa: PaymentMethodSettings;
   bank: PaymentMethodSettings;
+  /** online card payments – offered only once the store's payment account is connected (cardReady) */
+  card?: PaymentMethodSettings;
+}
+
+export interface TaxSettings {
+  enabled: boolean;
+  /** percent */
+  rate: number;
+  /** prices already include tax (else it is added on top) */
+  inclusive: boolean;
+  label: string;
+  taxDelivery: boolean;
 }
 
 export interface StoreSettings {
@@ -340,6 +373,11 @@ export interface StoreSettings {
   jazzcash: { title: string; number: string };
   easypaisa: { title: string; number: string };
   announcement?: string;
+  tax?: TaxSettings;
+  /** the store's online payment account is connected and can take cards */
+  cardReady?: boolean;
+  /** ISO currency of the store's prices */
+  currency?: string;
 }
 
 export interface Redirect {

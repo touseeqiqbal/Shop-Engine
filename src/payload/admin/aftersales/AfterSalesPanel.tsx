@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useDocumentInfo } from "@payloadcms/ui";
 import { toast } from "../ui/toast";
+import { useStoreName } from "../ui/store-context";
 import { intlPhone, rs, timeAgo } from "../orders/status";
 
 /**
@@ -34,6 +35,7 @@ type Doc = {
   serial?: string;
   createdAt?: string;
   history?: { status?: string; at?: string; note?: string }[];
+  store?: number | { id?: number } | null;
 };
 
 const LABEL: Record<string, { label: string; tone: string }> = {
@@ -77,6 +79,8 @@ export function AfterSalesPanel({ kind }: { kind: Kind }) {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [busy, setBusy] = useState(false);
   const [refund, setRefund] = useState<{ method: string; amount: string; restock: boolean } | null>(null);
+  // the request's own store, named in messages to the customer
+  const storeName = useStoreName(doc?.store);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -116,7 +120,7 @@ export function AfterSalesPanel({ kind }: { kind: Kind }) {
   const steps = (kind === "return" ? RETURN_STEPS : WARRANTY_STEPS)[doc.status] ?? [];
   const phone = doc.customerPhone ?? "";
   const number = doc.requestNumber ?? doc.claimNumber ?? "";
-  const wa = phone ? `https://wa.me/${intlPhone(phone)}?text=${encodeURIComponent(`Hi ${doc.customerName?.split(" ")[0] ?? ""}! This is Urko Tech Store about your ${kind === "return" ? "return" : "warranty claim"} ${number}.`)}` : "";
+  const wa = phone ? `https://wa.me/${intlPhone(phone)}?text=${encodeURIComponent(`Hi ${doc.customerName?.split(" ")[0] ?? ""}! ${storeName ? `This is ${storeName} about` : "A message about"} your ${kind === "return" ? "return" : "warranty claim"} ${number}.`)}` : "";
 
   return (
     <section className="urko-opanel" aria-label="Summary">

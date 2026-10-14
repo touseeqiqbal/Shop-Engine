@@ -2,12 +2,13 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ImageResponse } from "next/og";
-import { site } from "./site";
+import { getSiteInfo } from "@/lib/repo/site-content";
+import { currentOrigin, getCurrentStore } from "@/lib/tenant";
 
 export const OG_SIZE = { width: 1200, height: 630 };
 const BRAND_GRADIENT = "linear-gradient(135deg, #00C6FF 0%, #3B82F6 50%, #8B5CF6 100%)";
 
-/** Official brand mark (public/brand/urko-mark.svg) as a data URI, or null when not available. */
+/** The original shop's brand mark (public/brand/urko-mark.svg) as a data URI, or null when not available. */
 async function brandMarkDataUri() {
   try {
     const svg = await readFile(join(process.cwd(), "public/brand/urko-mark.svg"));
@@ -17,27 +18,29 @@ async function brandMarkDataUri() {
   }
 }
 
-function Mark({ src, size }: { src: string | null; size: number }) {
+function Mark({ src, size, initial }: { src: string | null; size: number; initial: string }) {
   if (src) {
     // eslint-disable-next-line @next/next/no-img-element
     return <img src={src} width={size} height={size} alt="" style={{ width: size, height: size }} />;
   }
-  // Fallback: gradient tile with the "U" mark.
+  // Fallback: gradient tile with the store's first letter.
   return (
-    <div style={{ display: "flex", width: size, height: size, borderRadius: size * 0.28, backgroundImage: BRAND_GRADIENT, alignItems: "center", justifyContent: "center" }}>
-      <svg width={size * 0.7} height={size * 0.7} viewBox="0 0 40 40">
-        <path d="M12 11v11a8 8 0 0 0 16 0V11" fill="none" stroke="#fff" strokeWidth="4" strokeLinecap="round" />
-        <path d="M20 11v9" stroke="#fff" strokeWidth="4" strokeLinecap="round" opacity="0.55" />
-      </svg>
+    <div style={{ display: "flex", width: size, height: size, borderRadius: size * 0.28, backgroundImage: BRAND_GRADIENT, alignItems: "center", justifyContent: "center", color: "#fff", fontSize: size * 0.55, fontWeight: 800 }}>
+      {initial}
     </div>
   );
 }
 
 /**
  * Premium branded 1200×630 social card. Used by the root opengraph-image and per-article images.
+ * Name, place and address come from the current store (Settings → Store details); only the original shop shows its mark.
  */
 export async function brandOgImage({ title, eyebrow, footer }: { title: string; eyebrow?: string; footer?: string }) {
-  const mark = await brandMarkDataUri();
+  const [info, store, origin] = await Promise.all([getSiteInfo(), getCurrentStore(), currentOrigin()]);
+  const mark = !store || store.isDefault ? await brandMarkDataUri() : null;
+  // "Acme Tech Store" → ACME + TECH STORE (first word in white, the rest in the accent colour)
+  const [first = "", ...rest] = info.name.trim().split(/\s+/);
+  const place = [info.address.area, info.address.city, info.address.country].filter(Boolean).join(" · ");
   const long = title.length > 60;
   return new ImageResponse(
     (
@@ -57,13 +60,13 @@ export async function brandOgImage({ title, eyebrow, footer }: { title: string; 
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-          <Mark src={mark} size={72} />
+          <Mark src={mark} size={72} initial={first.charAt(0).toUpperCase()} />
           <div style={{ display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", fontSize: 34, fontWeight: 800, letterSpacing: 1 }}>
-              <span style={{ color: "#FFFFFF" }}>URKO</span>
-              <span style={{ color: "#00D4FF", marginLeft: 12 }}>TECH STORE</span>
+              <span style={{ color: "#FFFFFF" }}>{first.toUpperCase()}</span>
+              {rest.length > 0 && <span style={{ color: "#00D4FF", marginLeft: 12 }}>{rest.join(" ").toUpperCase()}</span>}
             </div>
-            <span style={{ fontSize: 18, color: "#A1A8B8", letterSpacing: 4, marginTop: 4 }}>SADDAR · KARACHI · PAKISTAN</span>
+            {place && <span style={{ fontSize: 18, color: "#A1A8B8", letterSpacing: 4, marginTop: 4 }}>{place.toUpperCase()}</span>}
           </div>
         </div>
 
@@ -94,7 +97,7 @@ export async function brandOgImage({ title, eyebrow, footer }: { title: string; 
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 22, color: "#A1A8B8" }}>
           <span>{footer ?? "Cash on Delivery · Checked & Tested · Warranty"}</span>
-          <span style={{ color: "#F4F6FB", fontWeight: 700 }}>{site.url.replace(/^https?:\/\//, "")}</span>
+          <span style={{ color: "#F4F6FB", fontWeight: 700 }}>{origin.replace(/^https?:\/\//, "")}</span>
         </div>
       </div>
     ),

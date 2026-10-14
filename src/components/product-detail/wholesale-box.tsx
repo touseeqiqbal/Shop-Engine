@@ -1,12 +1,18 @@
 import Link from "next/link";
 import { Boxes, ClipboardList, FileText, Layers, Phone, ShieldCheck, Truck } from "lucide-react";
 import type { CatalogProduct } from "@/lib/types";
-import { absoluteUrl, site, waLink } from "@/lib/site";
+import { waLink } from "@/lib/site";
+import { primaryPhone } from "@/lib/site-info";
+import { getSiteInfo } from "@/lib/repo/site-content";
+import { storeUrl } from "@/lib/tenant";
 import { quoteHref, wholesaleMinQty } from "@/lib/wholesale";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
 
 /** Replaces the buy box on quote-only (price on request) wholesale lots: no price, no cart – quote + WhatsApp only. */
-export function QuoteOnlyBox({ product: p }: { product: CatalogProduct }) {
+export async function QuoteOnlyBox({ product: p }: { product: CatalogProduct }) {
+  // the current store's own name, phone and address (Settings → Store details)
+  const [site, url] = await Promise.all([getSiteInfo(), storeUrl(p.url)]);
+  const phone = primaryPhone(site);
   const w = p.wholesale ?? undefined;
   const waText = [
     `Hi ${site.name}! I'm interested in this wholesale lot:`,
@@ -15,7 +21,7 @@ export function QuoteOnlyBox({ product: p }: { product: CatalogProduct }) {
     `SKU: ${p.sku}`,
     "Please share the wholesale price, photos and availability.",
     "",
-    absoluteUrl(p.url),
+    url,
   ].join("\n");
   const rows = [
     w?.lotSize ? { icon: Boxes, label: "Units in lot", value: `${w.lotSize} pcs` } : null,
@@ -61,12 +67,16 @@ export function QuoteOnlyBox({ product: p }: { product: CatalogProduct }) {
         <Link href={quoteHref(p.slug)} className="btn btn-primary btn-lg w-full">
           <FileText className="size-5" aria-hidden="true" /> Request bulk quote
         </Link>
-        <a href={waLink(site.phones[0].wa, waText)} target="_blank" rel="noopener noreferrer" className="btn btn-whatsapp btn-lg w-full">
-          <WhatsAppIcon className="size-5" /> Ask for price on WhatsApp
-        </a>
-        <a href={`tel:${site.phones[0].tel}`} className="btn btn-ghost btn-sm w-full">
-          <Phone className="size-4" aria-hidden="true" /> Call {site.phones[0].display}
-        </a>
+        {phone.wa && (
+          <a href={waLink(phone.wa, waText)} target="_blank" rel="noopener noreferrer" className="btn btn-whatsapp btn-lg w-full">
+            <WhatsAppIcon className="size-5" /> Ask for price on WhatsApp
+          </a>
+        )}
+        {phone.tel && (
+          <a href={`tel:${phone.tel}`} className="btn btn-ghost btn-sm w-full">
+            <Phone className="size-4" aria-hidden="true" /> Call {phone.display}
+          </a>
+        )}
       </div>
 
       <ul className="glass grid gap-2 rounded-3xl p-4 text-sm text-muted sm:grid-cols-2 sm:p-5">

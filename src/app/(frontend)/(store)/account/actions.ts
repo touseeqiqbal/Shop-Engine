@@ -16,12 +16,13 @@ import {
 import { PAKISTAN_CITIES } from "@/lib/cities";
 import { isDatabaseConfigured } from "@/lib/db/config";
 import { rateLimit, rateLimitKey } from "@/lib/rate-limit";
-import { canSendOrderLookup, notifyOrderLookup } from "@/lib/notify";
+import { canSendOrderLookup, notifyFromStorefront } from "@/lib/notify";
 import { listOrdersByPhone } from "@/lib/repo/orders";
 import type { SavedAddress } from "@/lib/types";
 import { normalizePkPhone } from "@/lib/utils";
 import { safePath } from "@/lib/safe-path";
 import { HONEYPOT } from "@/lib/honeypot";
+import { BOT_MESSAGE, verifyTurnstile } from "@/lib/turnstile";
 import { log } from "@/lib/log";
 
 export type AuthFormState = { error?: string; fieldErrors?: Record<string, string>; ts?: number };
@@ -65,6 +66,7 @@ const registerSchema = z.object({
 export async function registerAction(_prev: AuthFormState, fd: FormData): Promise<AuthFormState> {
   if (!isDatabaseConfigured) return { error: "Customer accounts activate once the store database is connected.", ts: Date.now() };
   if (fd.get(HONEYPOT)) return { error: "Could not create account.", ts: Date.now() };
+  if (!(await verifyTurnstile(fd, "register"))) return { error: BOT_MESSAGE, ts: Date.now() };
   const parsed = registerSchema.safeParse({
     name: String(fd.get("name") ?? ""),
     email: String(fd.get("email") ?? "").trim().toLowerCase(),
@@ -213,7 +215,7 @@ export async function findOrdersByPhoneAction(_prev: FindOrdersState, fd: FormDa
   if (rateLimitKey(`find-orders-phone:${phone}`, 3, 24 * 60 * 60_000)) {
     after(async () => {
       const orders = await listOrdersByPhone(phone).catch(() => []);
-      if (orders.length) await notifyOrderLookup(phone, orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((o) => ({ orderNumber: o.orderNumber, email: o.customer.email })));
+      if (orders.length) await notifyFromStorefront("order-lookup", { phone, orders: orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((o) => ({ orderNumber: o.orderNumber, email: o.customer.email ?? null })) });
     });
   }
   return { status: "sent", byMessage: true, ts };

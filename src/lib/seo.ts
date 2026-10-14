@@ -33,12 +33,14 @@ export const indexable = (s: { seoNoindex?: boolean; seoCanonical?: string }) =>
  * `title` is used as-is (the root layout template appends the brand only when a plain string is passed).
  */
 export function pageMetadata({ title, description, path, image, type = "website", noindex, canonical, publishedTime, modifiedTime }: PageMetaInput): Metadata {
-  const url = absoluteUrl(path);
-  const canonicalUrl = canonical ? (/^https?:\/\//.test(canonical) ? canonical : absoluteUrl(canonical)) : url;
+  // relative links: Next.js resolves them against the store's own address (metadataBase in the root layout)
+  const rel = (p: string) => (p.startsWith("/") ? p : `/${p}`);
+  const url = rel(path);
+  const canonicalUrl = canonical ? (/^https?:\/\//.test(canonical) ? canonical : rel(canonical)) : url;
   // a page's own photo has its own size (product photos are square); only the brand image is 1200×630
   const images = image
-    ? [{ url: /^https?:\/\//.test(image) ? image : jpegImageUrl(image), alt: title }]
-    : [{ url: absoluteUrl("/opengraph-image"), width: 1200, height: 630, alt: title }];
+    ? [{ url: /^https?:\/\//.test(image) ? image : image.startsWith("/media/") ? `/feed-image/${image.slice("/media/".length)}` : rel(image), alt: title }]
+    : [{ url: "/opengraph-image", width: 1200, height: 630, alt: title }];
   return {
     title: { absolute: title },
     description,
@@ -48,7 +50,6 @@ export function pageMetadata({ title, description, path, image, type = "website"
       url,
       title,
       description,
-      siteName: site.name,
       locale: "en_PK",
       images,
       ...(type === "article" ? { publishedTime, modifiedTime } : {}),
@@ -64,14 +65,17 @@ export const ORG_ID = `${site.url}/#organization`;
 export const STORE_ID = `${site.url}/#store`;
 
 /** `info` = live business profile from `getSiteInfo()` (defaults to the built-in `site` details). */
-export function organizationJsonLd(info: SiteInfo = DEFAULT_SITE_INFO) {
+/** A logo / image path or URL as an absolute URL. */
+const abs = (src: string) => (/^https?:\/\//.test(src) ? src : absoluteUrl(src));
+
+export function organizationJsonLd(info: SiteInfo = DEFAULT_SITE_INFO, logo = "/icon.svg") {
   return {
     "@context": "https://schema.org",
     "@type": "Organization",
     "@id": ORG_ID,
     name: info.name,
     url: site.url,
-    logo: absoluteUrl("/icon.svg"),
+    logo: abs(logo),
     email: info.email,
     contactPoint: info.phones.map((p) => ({
       "@type": "ContactPoint",
@@ -91,7 +95,7 @@ export function paymentsAcceptedText(settings?: StoreSettings | null) {
   return names.filter(([m]) => paymentEnabled(m, settings)).map(([, n]) => n).join(", ") || "Cash";
 }
 
-export function localBusinessJsonLd(info: SiteInfo = DEFAULT_SITE_INFO, settings?: StoreSettings | null) {
+export function localBusinessJsonLd(info: SiteInfo = DEFAULT_SITE_INFO, settings?: StoreSettings | null, logo = "/icon.svg") {
   return {
     "@context": "https://schema.org",
     "@type": ["ElectronicsStore", "LocalBusiness"],
@@ -100,7 +104,7 @@ export function localBusinessJsonLd(info: SiteInfo = DEFAULT_SITE_INFO, settings
     description: info.description,
     url: site.url,
     image: absoluteUrl("/opengraph-image"),
-    logo: absoluteUrl("/icon.svg"),
+    logo: abs(logo),
     email: info.email,
     telephone: info.phones[0]?.tel,
     priceRange: "Rs",
@@ -275,7 +279,8 @@ export function faqJsonLd(faqs: FaqItem[]) {
   };
 }
 
-export function articleJsonLd(post: BlogPost) {
+/** `storeName` = the current store's name (the author when the post names none). */
+export function articleJsonLd(post: BlogPost, storeName: string) {
   return {
     "@context": "https://schema.org",
     "@type": "Article",
@@ -285,7 +290,7 @@ export function articleJsonLd(post: BlogPost) {
     ...(post.cover ? { image: [absoluteUrl(post.cover)] } : {}),
     datePublished: post.publishedAt,
     dateModified: post.updatedAt ?? post.publishedAt,
-    author: { "@type": "Organization", name: post.author || site.name, url: site.url },
+    author: { "@type": "Organization", name: post.author || storeName, url: site.url },
     publisher: { "@id": ORG_ID },
     mainEntityOfPage: absoluteUrl(`/blog/${post.slug}`),
     keywords: post.tags.join(", "),

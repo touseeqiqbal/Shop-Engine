@@ -22,9 +22,11 @@ export const revalidateChrome = <T>({ doc }: { doc: T }): T => {
 /** Cache tag for page-builder pages (Payload → Pages). */
 export const PAGES_TAG = "cms-pages";
 
-/** Drop the proxy's redirect cache (shared via globalThis) so a saved redirect applies immediately. */
+/** Drop the proxy's redirect and store-list caches (shared via globalThis, see src/lib/repo/redirects.ts) so a change applies at once. */
 export function clearRedirectCache() {
-  (globalThis as { __urkoRedirectCache?: unknown }).__urkoRedirectCache = null;
+  const g = globalThis as { __shopengineRedirects?: Map<string, unknown>; __shopengineStores?: unknown };
+  g.__shopengineRedirects?.clear();
+  g.__shopengineStores = undefined;
 }
 
 function run(tags: string[], paths: string[], layout: boolean) {

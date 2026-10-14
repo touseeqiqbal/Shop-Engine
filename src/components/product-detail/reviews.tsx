@@ -1,6 +1,7 @@
 import { BadgeCheck, MapPin, MessageSquareText } from "lucide-react";
 import type { CatalogProduct, Review } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
+import { getSiteInfo } from "@/lib/repo/site-content";
 import { Stars } from "@/components/ui/stars";
 import { ReviewForm } from "./review-form";
 
@@ -10,7 +11,8 @@ export function reviewStats(product: CatalogProduct, reviews: Review[]) {
   return { average: Math.round(average * 10) / 10, count };
 }
 
-export function ReviewsSection({ product, reviews }: { product: CatalogProduct; reviews: Review[] }) {
+export async function ReviewsSection({ product, reviews }: { product: CatalogProduct; reviews: Review[] }) {
+  const site = await getSiteInfo(); // the current store's own name
   const { average, count } = reviewStats(product, reviews);
   const dist = [5, 4, 3, 2, 1].map((star) => ({ star, n: reviews.filter((r) => Math.round(r.rating) === star).length }));
   const max = Math.max(1, reviews.length);
@@ -105,7 +107,7 @@ export function ReviewsSection({ product, reviews }: { product: CatalogProduct; 
               <MessageSquareText className="size-6 text-violet-400" aria-hidden="true" />
             </span>
             <p className="font-semibold text-fg">Be the first to review this product</p>
-            <p className="max-w-sm text-sm text-muted">Bought this from Urko Tech Store? Tell other shoppers how it&apos;s working for you.</p>
+            <p className="max-w-sm text-sm text-muted">Bought this from {site.name}? Tell other shoppers how it&apos;s working for you.</p>
           </div>
         )}
       </div>

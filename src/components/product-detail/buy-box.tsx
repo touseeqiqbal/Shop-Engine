@@ -7,7 +7,8 @@ import {
 } from "lucide-react";
 import type { CatalogProduct, UpgradeOption } from "@/lib/types";
 import { cn, effectivePrice, formatPKR, stockLabel } from "@/lib/utils";
-import { absoluteUrl, waLink } from "@/lib/site";
+import { waLink } from "@/lib/site";
+import { primaryPhone } from "@/lib/site-info";
 import { useSiteInfo } from "@/components/providers/site-info";
 import { CITY_KEY, PAKISTAN_CITIES, deliveryEstimate, freeDeliveryAbove, type DeliveryInfo } from "@/lib/cities";
 import { Price } from "@/components/ui/price";
@@ -23,6 +24,7 @@ import { VariantPicker, initialPick, matchVariant } from "./variant-picker";
 
 export function BuyBox({ product: main, delivery }: { product: CatalogProduct; delivery: DeliveryInfo }) {
   const site = useSiteInfo(); // live business profile (/cms → Settings → Store details)
+  const phone = primaryPhone(site);
   const router = useRouter();
   const idPrefix = useId();
   const add = useCart((s) => s.add);
@@ -92,6 +94,8 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
     router.push("/checkout");
   };
 
+  // links on the current store's own address (not the main site's)
+  const productUrl = `${site.url}${p.url}`;
   const waText = [
     `Hi ${site.name}! I'd like to order:`,
     ``,
@@ -102,13 +106,13 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
     `Price: ${formatPKR(total)}${qty > 1 ? ` (${formatPKR(unit)} each)` : ""}`,
     `Delivery city: ${city}`,
     ``,
-    absoluteUrl(p.url),
+    productUrl,
   ]
     .filter((l): l is string => l !== null)
     .join("\n");
 
   const share = async () => {
-    const url = absoluteUrl(p.url);
+    const url = productUrl;
     try {
       if (navigator.share) {
         await navigator.share({ title: p.name, text: `${p.name} – ${formatPKR(base)} at ${site.name}`, url });
@@ -221,7 +225,7 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
         </div>
 
         <a
-          href={waLink(site.phones[0].wa, waText)}
+          href={waLink(phone.wa, waText)}
           target="_blank"
           rel="noopener noreferrer"
           onClick={() => trackEvent("whatsapp_order", { item_id: p.sku, value: total })}
@@ -272,7 +276,7 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
             {comparing ? "Comparing" : "Compare"}
           </button>
           <a
-            href={`https://wa.me/?text=${encodeURIComponent(`${p.name} – ${formatPKR(base)}\n${absoluteUrl(p.url)}`)}`}
+            href={`https://wa.me/?text=${encodeURIComponent(`${p.name} – ${formatPKR(base)}\n${productUrl}`)}`}
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => trackEvent("share", { method: "whatsapp", item_id: p.id })}
@@ -342,7 +346,7 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
         total={total}
         outOfStock={outOfStock}
         onAdd={() => addToCart()}
-        waHref={waLink(site.phones[0].wa, waText)}
+        waHref={waLink(phone.wa, waText)}
       />
     </div>
   );

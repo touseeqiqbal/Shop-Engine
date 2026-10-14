@@ -1,6 +1,6 @@
 "use server";
 import { z } from "zod";
-import { checkCoupon } from "@/lib/coupons";
+import { resolveDiscounts } from "@/lib/coupons";
 import { priceCart } from "@/lib/cart-pricing";
 import { rateLimit } from "@/lib/rate-limit";
 import { getProductsByIds } from "@/lib/repo/catalog";
@@ -28,24 +28,36 @@ export async function repriceCart(input: { productId: string; qty: number; upgra
   if (!parsed.success) return [];
   const products = await getProductsByIds([...new Set(parsed.data.map((l) => l.productId))]);
   const byId = new Map(products.map((p) => [p.id, p]));
+  // a variant offers its main product's upgrades (unless it has its own)
+  const parentIds = [...new Set(products.map((p) => p.variantOf).filter((id): id is string => Boolean(id) && !byId.has(id!)))];
+  for (const p of parentIds.length ? await getProductsByIds(parentIds) : []) byId.set(p.id, p);
   return parsed.data.map((l) => {
     const key = [l.productId, ...[...l.upgradeIds].sort()].join("|");
     const p = byId.get(l.productId);
-    const ups = p ? l.upgradeIds.map((id) => p.upgrades.find((u) => u.id === id)) : [];
+    const pool = p ? (p.upgrades.length || !p.variantOf ? p.upgrades : (byId.get(p.variantOf)?.upgrades ?? [])) : [];
+    const ups = p ? l.upgradeIds.map((id) => pool.find((u) => u.id === id)) : [];
     if (!p || p.priceOnRequest || ups.some((u) => !u)) return { key, available: false, unitPrice: 0, basePrice: 0, stock: 0 };
     const base = effectivePrice(p);
     return { key, available: p.stock > 0, basePrice: base, unitPrice: base + ups.reduce((s, u) => s + (u?.price ?? 0), 0), stock: p.stock };
   });
 }
 
-export type CouponResult = { ok: true; code: string; discount: number; message: string } | { ok: false; code: string; message: string };
+export type CouponResult =
+  | { ok: true; code: string; discount: number; freeShipping: boolean; message: string; applied: { code: string; label: string; automatic: boolean; amount: number }[] }
+  | { ok: false; code: string; message: string };
 
-/** Validates a coupon against the server-priced cart. Used by the cart page and the checkout summary. */
+/**
+ * The discounts of the server-priced cart: the typed code (if any) and the store's best automatic discount.
+ * Used by the cart page and the checkout summary (the checkout itself works it out again).
+ */
 export async function applyCoupon(input: { code: string; lines: { productId: string; qty: number; upgradeIds: string[] }[] }): Promise<CouponResult> {
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { ok: false, code: "", message: "Invalid request" };
-  if (!(await rateLimit("coupon", 30, 10 * 60_000))) return { ok: false, code: parsed.data.code, message: "Too many attempts – please wait a few minutes." };
-  const { subtotal } = await priceCart(parsed.data.lines);
-  const res = await checkCoupon(parsed.data.code, subtotal);
-  return res.ok ? { ok: true, code: res.code, discount: res.discount, message: res.message } : res;
+  if (parsed.data.code && !(await rateLimit("coupon", 30, 10 * 60_000))) return { ok: false, code: parsed.data.code, message: "Too many attempts – please wait a few minutes." };
+  const priced = await priceCart(parsed.data.lines);
+  const res = await resolveDiscounts(parsed.data.code, { lines: priced.items, products: priced.products, subtotal: priced.subtotal });
+  if (!res.ok) return res;
+  const auto = res.applied.find((a) => a.automatic);
+  const message = res.applied.map((a) => (a.automatic ? `${a.code}: ${a.label}` : `${a.code} applied – ${a.label}`)).join(" · ");
+  return { ok: true, code: res.code ?? "", discount: res.discount, freeShipping: res.freeShipping, message: message || (auto ? auto.label : ""), applied: res.applied };
 }

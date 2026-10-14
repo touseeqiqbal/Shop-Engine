@@ -35,6 +35,8 @@ import {
   getStoreSettings,
 } from "@/lib/repo/catalog";
 import { pageMetadata, productJsonLd } from "@/lib/seo";
+import { getSiteInfo } from "@/lib/repo/site-content";
+import { storePlace, type SiteInfo } from "@/lib/site-info";
 import { getReturnsPolicy } from "@/lib/cms/aftersales";
 import { getConversionSettings, getProductQuestions } from "@/lib/cms/engagement";
 import { EmiBlock, ProductQuestions, StockPriceAlert } from "@/components/product-detail/product-extras";
@@ -63,24 +65,26 @@ async function resolveProduct(params: Params): Promise<CatalogProduct> {
 }
 
 /** Search results show ~60 characters: the name and "Price in Pakistan" come first; condition and store name only if they fit. */
-function metaTitle(p: CatalogProduct) {
+function metaTitle(p: CatalogProduct, site: SiteInfo) {
   if (p.seoTitle) return p.seoTitle;
-  const SUFFIX = " | Urko Tech Store";
+  const SUFFIX = ` | ${site.name}`;
   const fit = (base: string, ...extra: string[]) => extra.reduce((t, part) => ((t + part).length <= 65 ? t + part : t), base);
   if (p.priceOnRequest) return fit(p.name, " – Wholesale Price on Request", SUFFIX);
   const cond = p.condition ? ` – ${conditionMeta[p.condition].label}` : "";
   return fit(`${p.name} Price in Pakistan`, cond, SUFFIX);
 }
 
-function metaDescription(p: CatalogProduct) {
+function metaDescription(p: CatalogProduct, site: SiteInfo) {
   if (p.seoDescription) return p.seoDescription;
+  // "<store name>, <area> <city>" – the store's own name and place (Settings → Store details)
+  const from = [site.name, storePlace(site, " ")].filter(Boolean).join(", ");
   const cond = p.condition && p.condition !== "new" ? ` (${conditionMeta[p.condition].label})` : "";
   const lead = p.priceOnRequest
     ? `${p.name}${cond} – wholesale price on request.`
     : `Buy ${p.name}${cond} at ${formatPKR(effectivePrice(p))} in Pakistan.`;
   const tail = p.priceOnRequest
-    ? ` Request a bulk quote from Urko Tech Store, Saddar Karachi – delivery all over Pakistan.`
-    : ` Cash on Delivery & delivery all over Pakistan from Urko Tech Store, Saddar Karachi.`;
+    ? ` Request a bulk quote from ${from} – delivery all over Pakistan.`
+    : ` Cash on Delivery & delivery all over Pakistan from ${from}.`;
   const budget = 300 - lead.length - tail.length;
   const mid = budget > 40 ? ` ${truncate(p.shortDescription, budget)}` : "";
   return `${lead}${mid}${tail}`;
@@ -88,9 +92,9 @@ function metaDescription(p: CatalogProduct) {
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { product: slug } = await params;
-  const p = await getProductBySlug(slug);
-  if (!p) return { title: { absolute: "Product not found | Urko Tech Store" }, robots: { index: false, follow: true } };
-  return pageMetadata({ title: metaTitle(p), description: metaDescription(p), path: p.url, image: p.images[0], noindex: p.seoNoindex, canonical: p.seoCanonical });
+  const [p, site] = await Promise.all([getProductBySlug(slug), getSiteInfo()]);
+  if (!p) return { title: { absolute: `Product not found | ${site.name}` }, robots: { index: false, follow: true } };
+  return pageMetadata({ title: metaTitle(p, site), description: metaDescription(p, site), path: p.url, image: p.images[0], noindex: p.seoNoindex, canonical: p.seoCanonical });
 }
 
 export default async function ProductPage({ params }: { params: Params }) {

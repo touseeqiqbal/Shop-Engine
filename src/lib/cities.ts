@@ -126,9 +126,9 @@ export function deliveryInfo(settings: StoreSettings): DeliveryInfo {
 /** Cash-on-delivery handling fee (0 unless set in /cms → Settings → Payments). */
 export const codFee = (settings: StoreSettings) => settings.payments?.cod.fee ?? 0;
 
-/** Is a payment method offered? Cards stay "coming soon" until a payment gateway is integrated. */
+/** Is a payment method offered? Cards only once the store's online payment account is connected and switched on. */
 export function paymentEnabled(method: "cod" | "jazzcash" | "easypaisa" | "bank" | "card", settings: StoreSettings) {
-  if (method === "card") return false;
+  if (method === "card") return Boolean(settings.cardReady && settings.payments?.card?.enabled);
   const on = settings.payments ? settings.payments[method].enabled : true;
   if (!on) return false;
   // never show a payment method without real account details (customers would send money nowhere)

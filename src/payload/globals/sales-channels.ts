@@ -1,5 +1,6 @@
 import type { GlobalConfig } from "payload";
-import { managers, staff } from "../access";
+import { platformAdmins } from "../access";
+import { sameStore } from "../tenancy";
 import { dbName } from "../fields";
 import { revalidate } from "../revalidate";
 
@@ -9,7 +10,7 @@ export const SalesChannels: GlobalConfig = {
   dbName: dbName("sales-channels"),
   label: "Sales channels (product feeds)",
   admin: { group: "Settings", description: "Paste a feed address into Google Merchant Center, Meta Commerce Manager or TikTok Catalog Manager as a scheduled feed (daily). The feeds update by themselves when you change products." },
-  access: { read: staff, update: managers },
+  access: { read: platformAdmins, update: platformAdmins },
   hooks: { afterChange: [({ doc }) => (revalidate(["settings", "catalog"], ["/feeds/google.xml", "/feeds/meta.xml", "/feeds/tiktok.csv"]), doc)] },
   fields: [
     { name: "feedUrls", type: "ui", admin: { components: { Field: "/payload/admin/FeedUrls#FeedUrls" } } },
@@ -19,8 +20,8 @@ export const SalesChannels: GlobalConfig = {
       { name: "tiktok", type: "checkbox", defaultValue: true, label: "TikTok feed", admin: { width: "34%" } },
     ] },
     { name: "includeOutOfStock", type: "checkbox", defaultValue: true, label: "Include out-of-stock products (shown as “out of stock”)" },
-    { name: "excludeCategories", type: "relationship", relationTo: "categories", hasMany: true, label: "Leave out these categories" },
-    { name: "excludeProducts", type: "relationship", relationTo: "products", hasMany: true, label: "Leave out these products" },
+    { name: "excludeCategories", type: "relationship", relationTo: "categories", hasMany: true, filterOptions: sameStore, label: "Leave out these categories" },
+    { name: "excludeProducts", type: "relationship", relationTo: "products", hasMany: true, filterOptions: sameStore, label: "Leave out these products" },
     { name: "shippingPrice", type: "number", min: 0, label: "Delivery price shown in feeds (Rs)", admin: { description: "Empty = the “charge when no zone matches” from Delivery charges. Free above the free-delivery amount." } },
   ],
 };

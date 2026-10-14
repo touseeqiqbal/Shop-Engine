@@ -5,7 +5,7 @@ import { RenderBlocks } from "@/components/blocks/render-blocks";
 import { LivePreview } from "@/components/blocks/live-preview";
 import { getPage } from "@/lib/cms/pages";
 import { pageMetadata } from "@/lib/seo";
-import { site } from "@/lib/site";
+import { getSiteInfo } from "@/lib/repo/site-content";
 
 /** Pages built in /cms → Online store → Pages (any handle except “home”, which is the home page). */
 
@@ -15,7 +15,7 @@ type Props = { params: Promise<{ slug: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const page = await getPage(slug);
+  const [page, site] = await Promise.all([getPage(slug), getSiteInfo()]);
   if (!page) return {};
   return pageMetadata({
     title: page.meta.title || `${page.title} | ${site.name}`,

@@ -1,5 +1,5 @@
 import type { GlobalConfig } from "payload";
-import { managers, staff } from "../access";
+import { adminUsers, platformAdmins } from "../access";
 import { dbName } from "../fields";
 
 /** Short how-to guides for the team, shown at /cms/help (editable here). One step per line. */
@@ -47,7 +47,7 @@ export const StaffGuide: GlobalConfig = {
   dbName: dbName("staff-guide"),
   label: "Staff guide",
   admin: { group: "Settings", description: "The how-to guides on the Help page (/cms/help). One step per line." },
-  access: { read: staff, update: managers },
+  access: { read: adminUsers, update: platformAdmins },
   fields: [
     {
       name: "sections",

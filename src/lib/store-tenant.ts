@@ -1,8 +1,24 @@
 import "server-only";
 
+import type { Payload, Where } from "payload";
 import { getSessionUser } from "@/lib/auth";
 import { payloadClient } from "@/lib/cms/catalog-source";
-import { isDatabaseConfigured } from "@/lib/db/config";
+import { byStorefrontId } from "@/lib/cms/sales";
+import { isCmsConfigured } from "@/lib/db/config";
+import { rateLimitKey } from "@/lib/rate-limit";
+import { log } from "@/lib/log";
+
+/**
+ * Merchant self-service (Account → Stores): open a store, choose a plan, accept team invitations, publish.
+ *
+ * Rules (server-side, whatever the browser sends):
+ *  - only a signed-in account with a CONFIRMED email opens stores; at most MAX_STORES_PER_USER (default 3) each, and a
+ *    few per day (abuse);
+ *  - a new store starts as a DRAFT with its owner as the only member (store_owner) – it has no rights anywhere else;
+ *  - plans: only active ones; the free trial once per store; paid plans go through billing (src/lib/billing.ts);
+ *  - publishing: the owner, from draft only, with a plan that is active / trialing;
+ *  - invitations: accepted by the invited email's own (confirmed) account – by link token or from the list.
+ */
 
 export type StoreTenantInput = {
   name: string;
@@ -22,14 +38,39 @@ export type SubscriptionPlanOption = {
   name: string;
   description?: string | null;
   priceMonthly?: number;
+  priceAnnual?: number;
+  currency?: string;
   trialDays?: number;
+  highlight?: string | null;
+  maxProducts?: number;
+  maxStaffMembers?: number;
+  features?: string[];
 };
 
-const DEFAULT_SUBSCRIPTION_PLANS = [
-  { name: "Starter", description: "Launch a single storefront with core commerce essentials.", priceMonthly: 0, trialDays: 14, maxProducts: 200, maxStaffMembers: 3, maxStorageGb: 5 },
-  { name: "Growth", description: "Scale your storefront with more products, staff, and automation.", priceMonthly: 9999, trialDays: 14, maxProducts: 2000, maxStaffMembers: 10, maxStorageGb: 25 },
-  { name: "Scale", description: "Advanced operations for larger merchants and high-volume teams.", priceMonthly: 29999, trialDays: 14, maxProducts: 10000, maxStaffMembers: 50, maxStorageGb: 100 },
-] as const;
+export type MyStore = {
+  id: number;
+  name: string;
+  slug: string;
+  status: string;
+  role: string;
+  subdomain: string | null;
+  customDomain: string | null;
+  domainVerified: boolean;
+  domainToken: string | null;
+  planName: string | null;
+  planId: number | null;
+  subscriptionStatus: string;
+  trialEndsAt: string | null;
+  graceEndsAt: string | null;
+  trialUsed: boolean;
+  paymentsConnected: boolean;
+  paymentsReady: boolean;
+};
+
+type Doc = Record<string, unknown>;
+type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
+const relId = (v: unknown) => (v && typeof v === "object" ? Number((v as Doc).id) : v == null ? null : Number(v));
+const MAX_STORES = () => Math.max(1, Number(process.env.MAX_STORES_PER_USER ?? 3));
 
 const normalizeSlug = (value: string | null | undefined, fallback = "store") => {
   const slug = (value ?? "")
@@ -43,479 +84,348 @@ const normalizeSlug = (value: string | null | undefined, fallback = "store") => 
 
 export const buildStoreSlug = (value: string | null | undefined) => normalizeSlug(value, "store");
 
-export async function listStoresForUser(userId: string) {
-  if (!userId || !isDatabaseConfigured) return [] as Array<{ id: string | number; name: string; slug?: string; status?: string; owner?: unknown }>;
-  const payload = await payloadClient();
-  const docs = (
-    await payload.find({
-      collection: "stores" as never,
-      where: {
-        or: [{ owner: { equals: userId } }, { members: { in: [userId] } }],
-      },
-      depth: 0,
-      limit: 50,
-      overrideAccess: true,
-      sort: "createdAt",
-    })
-  ).docs as Array<{ id: string | number; name: string; slug?: string; status?: string; owner?: unknown }>;
-  return docs;
+/** The Payload user behind a storefront session id (a migrated account's id is its legacy id). */
+async function userDoc(payload: Payload, sessionUserId: string): Promise<Doc | null> {
+  const res = await payload.find({ collection: "users", where: byStorefrontId(sessionUserId), limit: 1, depth: 0, overrideAccess: true, showHiddenFields: true });
+  return (res.docs[0] as unknown as Doc | undefined) ?? null;
 }
 
-export async function listPendingStoreInvitations(userId: string) {
-  if (!userId || !isDatabaseConfigured) return [] as Array<{ id: string | number; store?: { id: string | number; name?: string; slug?: string } | null; role?: string }>;
+/** The person's active role in a store (null = none). */
+async function roleIn(payload: Payload, userId: number, storeId: number): Promise<string | null> {
+  const m = (await payload.find({ collection: "store-memberships", where: { and: [{ store: { equals: storeId } }, { user: { equals: userId } }, { status: { equals: "active" } }] }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
+  return m ? String(m.role) : null;
+}
+
+/** The stores this account works in (active memberships), with what Account → Stores shows about each. */
+export async function listStoresForUser(sessionUserId: string): Promise<MyStore[]> {
+  if (!sessionUserId || !isCmsConfigured) return [];
   const payload = await payloadClient();
+  const user = await userDoc(payload, sessionUserId);
+  if (!user) return [];
+  const memberships = (await payload.find({ collection: "store-memberships", where: { and: [{ user: { equals: user.id } }, { status: { equals: "active" } }] }, depth: 0, limit: 100, overrideAccess: true })).docs as unknown as Doc[];
+  const roles = new Map(memberships.map((m) => [relId(m.store), String(m.role)]));
+  if (!roles.size) return [];
+  const stores = (await payload.find({ collection: "stores", where: { id: { in: [...roles.keys()] } }, depth: 1, limit: 100, overrideAccess: true, sort: "createdAt", showHiddenFields: true })).docs as unknown as Doc[];
+  return stores.map((s) => {
+    const plan = s.plan && typeof s.plan === "object" ? (s.plan as Doc) : null;
+    const role = roles.get(Number(s.id)) ?? "store_staff";
+    return {
+      id: Number(s.id),
+      name: String(s.name ?? ""),
+      slug: String(s.slug ?? ""),
+      status: String(s.status ?? "draft"),
+      role,
+      subdomain: (s.subdomain as string) || null,
+      customDomain: (s.customDomain as string) || null,
+      domainVerified: Boolean(s.domainVerifiedAt),
+      // the DNS record to add – only the owner needs it
+      domainToken: role === "store_owner" ? ((s.domainVerificationToken as string) || null) : null,
+      planName: plan ? String(plan.name ?? "") : null,
+      planId: plan ? Number(plan.id) : relId(s.plan),
+      subscriptionStatus: String(s.subscriptionStatus ?? "trialing"),
+      trialEndsAt: (s.trialEndsAt as string) || null,
+      graceEndsAt: (s.graceEndsAt as string) || null,
+      trialUsed: s.trialUsed === true,
+      paymentsConnected: Boolean(s.paymentsAccountId),
+      paymentsReady: s.paymentsChargesEnabled === true,
+    };
+  });
+}
+
+/** Invitations waiting for this account (sent to its email address). */
+export async function listPendingStoreInvitations(sessionUserId: string) {
+  if (!sessionUserId || !isCmsConfigured) return [] as Array<{ id: number; store: { id: number; name: string } | null; role: string; expiresAt: string | null }>;
+  const payload = await payloadClient();
+  const user = await userDoc(payload, sessionUserId);
+  if (!user?.email) return [];
   const docs = (
     await payload.find({
-      collection: "store-memberships" as never,
-      where: {
-        and: [{ user: { equals: userId } }, { status: { equals: "invited" } }],
-      },
+      collection: "store-memberships",
+      where: { and: [{ email: { equals: String(user.email).toLowerCase() } }, { status: { equals: "invited" } }, { or: [{ inviteExpiresAt: { exists: false } }, { inviteExpiresAt: { greater_than: new Date().toISOString() } }] }] },
       depth: 1,
       limit: 50,
       overrideAccess: true,
       sort: "createdAt",
     })
-  ).docs as Array<{ id: string | number; store?: { id: string | number; name?: string; slug?: string } | null; role?: string }>;
-  return docs;
+  ).docs as unknown as Doc[];
+  return docs.map((m) => {
+    const s = m.store && typeof m.store === "object" ? (m.store as Doc) : null;
+    return { id: Number(m.id), store: s ? { id: Number(s.id), name: String(s.name ?? "") } : null, role: String(m.role), expiresAt: (m.inviteExpiresAt as string) || null };
+  });
 }
 
-async function ensureDefaultSubscriptionPlans(payload: Awaited<ReturnType<typeof payloadClient>>) {
-  const existing = (await payload.find({
-    collection: "subscription-plans" as never,
-    depth: 0,
-    limit: 50,
-    overrideAccess: true,
-    sort: "priceMonthly",
-  })).docs as Array<{ id: string | number; slug?: string; name?: string; description?: string | null; priceMonthly?: number; trialDays?: number; status?: string }>;
-
-  if (existing.length > 0) return existing;
-
-  const created = [] as Array<{ id: string | number; slug?: string; name?: string; description?: string | null; priceMonthly?: number; trialDays?: number; status?: string }>;
-  for (const plan of DEFAULT_SUBSCRIPTION_PLANS) {
-    const record = (await payload.create({
-      collection: "subscription-plans" as never,
-      data: {
-        name: plan.name,
-        description: plan.description,
-        status: "active",
-        priceMonthly: plan.priceMonthly,
-        priceAnnual: plan.priceMonthly * 12,
-        trialDays: plan.trialDays,
-        maxProducts: plan.maxProducts,
-        maxStaffMembers: plan.maxStaffMembers,
-        maxStorageGb: plan.maxStorageGb,
-        features: ["Storefront", "Orders", "Customers", "Analytics"],
-        highlight: plan.name,
-      } as never,
-      depth: 0,
-      overrideAccess: true,
-    })) as { id: string | number; slug?: string; name?: string; description?: string | null; priceMonthly?: number; trialDays?: number; status?: string };
-    created.push(record);
-  }
-  return created;
-}
-
-export async function listSubscriptionPlans() {
-  if (!isDatabaseConfigured) return [] as SubscriptionPlanOption[];
+/** Active plans, cheapest first (the pricing list; archived plans are never offered). */
+export async function listSubscriptionPlans(): Promise<SubscriptionPlanOption[]> {
+  if (!isCmsConfigured) return [];
   const payload = await payloadClient();
-  const plans = await ensureDefaultSubscriptionPlans(payload);
-
-  return plans.map((plan) => ({
-    id: String(plan.id),
-    slug: plan.slug ?? String(plan.id),
-    name: plan.name ?? "Plan",
-    description: plan.description ?? null,
-    priceMonthly: Number(plan.priceMonthly ?? 0),
-    trialDays: Number(plan.trialDays ?? 0),
-  }));
+  const plans = (await payload.find({ collection: "subscription-plans", where: { status: { equals: "active" } }, depth: 0, limit: 50, overrideAccess: true, sort: "sortOrder" })).docs as unknown as Doc[];
+  return plans
+    .map((plan) => ({
+      id: String(plan.id),
+      slug: (plan.slug as string) ?? String(plan.id),
+      name: String(plan.name ?? "Plan"),
+      description: (plan.description as string) ?? null,
+      priceMonthly: Number(plan.priceMonthly ?? 0),
+      priceAnnual: Number(plan.priceAnnual ?? 0),
+      currency: String(plan.currency ?? "PKR"),
+      trialDays: Number(plan.trialDays ?? 0),
+      highlight: (plan.highlight as string) ?? null,
+      maxProducts: Number(plan.maxProducts ?? 0),
+      maxStaffMembers: Number(plan.maxStaffMembers ?? 0),
+      features: Array.isArray(plan.features) ? (plan.features as string[]) : [],
+    }))
+    .sort((a, b) => a.priceMonthly - b.priceMonthly);
 }
 
-export async function createStoreForUser(userId: string, input: StoreTenantInput) {
-  if (!userId || !isDatabaseConfigured) {
-    return { ok: false as const, error: "Store creation requires the database to be connected." };
-  }
+export async function createStoreForUser(sessionUserId: string, input: StoreTenantInput): Promise<Result<{ storeId: string; checkoutUrl?: string }>> {
+  if (!sessionUserId || !isCmsConfigured) return { ok: false, error: "Store creation requires the database to be connected." };
+  const payload = await payloadClient();
+  const user = await userDoc(payload, sessionUserId);
+  if (!user) return { ok: false, error: "Please sign in again." };
+  if (user.blocked === true) return { ok: false, error: "This account can't open stores." };
+  if (user.emailVerified !== true) return { ok: false, error: "Please confirm your email address first (open the link we sent you), then create your store." };
 
   const name = input.name.trim();
   const slug = normalizeSlug(input.slug || input.name, "store");
   const subdomain = normalizeSlug(input.subdomain || slug, "store");
+  if (name.length < 2) return { ok: false, error: "Store name must be at least 2 characters long." };
+  if (slug.length < 3) return { ok: false, error: "Please choose a store address of at least 3 letters or numbers." };
 
-  if (name.length < 2) {
-    return { ok: false as const, error: "Store name must be at least 2 characters long." };
-  }
-  if (slug.length < 2) {
-    return { ok: false as const, error: "Please choose a valid store slug." };
-  }
+  // how many stores this account already owns
+  const owned = await payload.count({ collection: "store-memberships", where: { and: [{ user: { equals: user.id } }, { role: { equals: "store_owner" } }] }, overrideAccess: true });
+  if (owned.totalDocs >= MAX_STORES()) return { ok: false, error: `You can own up to ${MAX_STORES()} stores. Contact ShopEngine support for more.` };
+  if (!rateLimitKey(`store-create:${user.id}`, 3, 24 * 60 * 60_000)) return { ok: false, error: "You've created several stores today – please try again tomorrow." };
 
-  const payload = await payloadClient();
-  const exists = await payload.find({
-    collection: "stores" as never,
-    where: {
-      or: [{ slug: { equals: slug } }, { subdomain: { equals: subdomain } }],
-    },
-    limit: 1,
-    depth: 0,
-    overrideAccess: true,
-  });
-  if (exists.docs.length > 0) {
-    return { ok: false as const, error: "This store URL is already taken. Please choose another one." };
-  }
+  const exists = await payload.count({ collection: "stores", where: { or: [{ slug: { equals: slug } }, { subdomain: { equals: subdomain } }] }, overrideAccess: true });
+  if (exists.totalDocs > 0) return { ok: false, error: "This store address is already taken. Please choose another one." };
 
-  const planIdentifier = input.planId?.trim();
-  let selectedPlanDoc: { id?: string | number; name?: string; priceMonthly?: number; trialDays?: number; slug?: string } | undefined;
+  // only an ACTIVE plan can be chosen (else the cheapest active one)
+  const plans = await listSubscriptionPlans();
+  const plan = (input.planId ? plans.find((p) => p.id === input.planId || p.slug === input.planId) : undefined) ?? plans[0];
+  if (input.planId && !plans.some((p) => p.id === input.planId || p.slug === input.planId)) return { ok: false, error: "This plan isn't available. Please choose another." };
 
-  if (planIdentifier) {
-    const found = await payload.find({
-      collection: "subscription-plans" as never,
-      where: {
-        or: [{ id: { equals: planIdentifier } }, { slug: { equals: planIdentifier } }],
-      },
-      limit: 1,
+  const country = input.country?.trim() || "Pakistan";
+  const currency = (input.currency?.trim() || "PKR").toUpperCase().slice(0, 3);
+  const timezone = input.timezone?.trim() || "Asia/Karachi";
+  const language = input.defaultLanguage?.trim() || "en";
+  let store: Doc;
+  try {
+    store = (await payload.create({
+      collection: "stores",
+      data: {
+        name,
+        slug,
+        businessName: input.businessName?.trim() || name,
+        subdomain,
+        country,
+        currency,
+        timezone,
+        defaultLanguage: language,
+        status: "draft",
+        owner: user.id,
+        billingEmail: user.email,
+        subscriptionStatus: plan ? "trialing" : "expired",
+      } as never,
       depth: 0,
       overrideAccess: true,
-    });
-    selectedPlanDoc = found.docs[0] as { id?: string | number; name?: string; priceMonthly?: number; trialDays?: number; slug?: string } | undefined;
+      context: { system: true },
+    })) as unknown as Doc;
+  } catch (e) {
+    const msg = String((e as Error)?.message ?? e);
+    // the Stores rules (reserved names, format) explain themselves
+    if (/reserved|not allowed|taken|unique|already/i.test(msg)) return { ok: false, error: msg.replace(/^.*?:\s*/, "") || "This store address can't be used." };
+    log.error("stores.create_failed", e);
+    return { ok: false, error: "We couldn't create the store. Please try again." };
   }
-
-  if (!selectedPlanDoc) {
-    const seededPlans = await ensureDefaultSubscriptionPlans(payload);
-    const fallback = seededPlans[0];
-    selectedPlanDoc = fallback as { id?: string | number; name?: string; priceMonthly?: number; trialDays?: number; slug?: string } | undefined;
-  }
-
-  const trialEndsAt = selectedPlanDoc?.trialDays ? new Date(Date.now() + Number(selectedPlanDoc.trialDays) * 86400000).toISOString() : undefined;
-
-  const store = (await payload.create({
-    collection: "stores" as never,
-    data: {
-      name,
-      slug,
-      businessName: input.businessName?.trim() || name,
-      subdomain,
-      country: input.country?.trim() || "Pakistan",
-      currency: input.currency?.trim() || "PKR",
-      timezone: input.timezone?.trim() || "Asia/Karachi",
-      defaultLanguage: input.defaultLanguage?.trim() || "en",
-      status: "draft",
-      owner: userId,
-      members: [userId],
-      plan: selectedPlanDoc?.id ? selectedPlanDoc.id : undefined,
-      subscriptionStatus: selectedPlanDoc ? "trialing" : "draft",
-      trialEndsAt,
-      billingEmail: undefined,
-      settings: {
-        country: input.country?.trim() || "Pakistan",
-        currency: input.currency?.trim() || "PKR",
-        timezone: input.timezone?.trim() || "Asia/Karachi",
-        defaultLanguage: input.defaultLanguage?.trim() || "en",
-      },
-    } as never,
-    depth: 0,
-    overrideAccess: true,
-  })) as { id: string | number };
+  const storeId = Number(store.id);
 
   await payload.create({
-    collection: "store-memberships" as never,
-    data: {
-      store: store.id,
-      user: userId,
-      role: "store_owner",
-      status: "active",
-      invitedAt: new Date().toISOString(),
-      acceptedAt: new Date().toISOString(),
-    } as never,
+    collection: "store-memberships",
+    data: { store: storeId, user: user.id, email: String(user.email).toLowerCase(), role: "store_owner", status: "active", invitedAt: new Date().toISOString(), acceptedAt: new Date().toISOString() } as never,
     depth: 0,
     overrideAccess: true,
+    context: { system: true },
   });
 
-  if (selectedPlanDoc?.id) {
-    await payload.create({
-      collection: "store-subscriptions" as never,
-      data: {
-        storeId: store.id,
-        plan: selectedPlanDoc.id,
-        status: "trialing",
-        billingCycle: "monthly",
-        trialEndsAt,
-        currentPeriodStart: new Date().toISOString(),
-        currentPeriodEnd: trialEndsAt,
-        amount: Number(selectedPlanDoc.priceMonthly ?? 0),
-        currency: input.currency?.trim() || "PKR",
-        paymentProvider: "manual",
-      } as never,
-      depth: 0,
-      overrideAccess: true,
+  // the store's own settings pages, filled with its details
+  const { ensureStoreSettings } = await import("@/payload/store-settings");
+  await ensureStoreSettings(payload, storeId, {
+    "store-info": { name, shortName: name, email: user.email },
+    "seo-settings": { titleTemplate: `%s | ${name}`, defaultTitle: name },
+  }).catch((e) => log.error("stores.settings_failed", e, { store: storeId }));
+
+  // its plan: free → active; paid → the one free trial, or the payment page
+  let checkoutUrl: string | undefined;
+  if (plan) {
+    const { choosePlan } = await import("@/lib/billing");
+    const r = await choosePlan(payload, { storeId, planId: Number(plan.id), cycle: "monthly", email: String(user.email), returnUrl: billingReturnUrl() }).catch((e) => {
+      log.error("stores.plan_failed", e, { store: storeId });
+      return { ok: false as const, error: "plan" };
     });
+    if (r.ok) checkoutUrl = r.checkoutUrl;
   }
 
-  const user = (await payload.find({
-    collection: "users" as never,
-    where: { id: { equals: userId } },
-    limit: 1,
-    depth: 0,
-    overrideAccess: true,
-  })).docs[0] as { stores?: Array<string | number | { id?: string | number }> | null; currentStore?: string | number | null } | undefined;
-
-  const nextStores = Array.from(
-    new Set([...(Array.isArray(user?.stores) ? user.stores : []), store.id].map((item) => (typeof item === "object" && item && "id" in item ? String(item.id) : String(item))))
-  );
-
+  // the new store is where the owner works from now on (/cms opens it)
   await payload.update({
-    collection: "users" as never,
-    id: userId,
-    data: {
-      stores: nextStores,
-      currentStore: store.id,
-      platformRole: "merchant_owner",
-    } as never,
+    collection: "users",
+    id: Number(user.id),
+    data: { currentStore: storeId, ...(user.platformRole === "customer" || !user.platformRole ? { platformRole: "merchant_owner" } : {}) } as never,
     depth: 0,
     overrideAccess: true,
+    context: { system: true },
   });
 
-  return { ok: true as const, storeId: String(store.id), planId: selectedPlanDoc?.id ? String(selectedPlanDoc.id) : undefined };
+  log.info("stores.created", { store: storeId, by: user.id, plan: plan?.id ?? null });
+  return { ok: true, storeId: String(storeId), ...(checkoutUrl ? { checkoutUrl } : {}) };
 }
 
-export async function acceptStoreInvitation(userId: string, membershipId: string) {
-  if (!userId || !membershipId || !isDatabaseConfigured) {
-    return { ok: false as const, error: "This invitation could not be accepted." };
-  }
+const billingReturnUrl = () => `${(process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/+$/, "")}/account/stores`;
 
+/** Accept an invitation (from the list, or the emailed link's token) – only by the account with the invited email. */
+export async function acceptStoreInvitation(sessionUserId: string, ref: { membershipId?: string; token?: string }): Promise<Result<{ storeId: number }>> {
+  if (!sessionUserId || !isCmsConfigured || (!ref.membershipId && !ref.token)) return { ok: false, error: "This invitation could not be accepted." };
   const payload = await payloadClient();
-  const membership = (await payload.find({
-    collection: "store-memberships" as never,
-    where: { and: [{ id: { equals: membershipId } }, { user: { equals: userId } }] },
-    limit: 1,
-    depth: 1,
-    overrideAccess: true,
-  })).docs[0] as { id: string | number; store?: { id: string | number } | null; status?: string } | undefined;
-
-  if (!membership) {
-    return { ok: false as const, error: "Invitation not found." };
+  const user = await userDoc(payload, sessionUserId);
+  if (!user) return { ok: false, error: "Please sign in again." };
+  if (user.emailVerified !== true) return { ok: false, error: "Please confirm your email address first, then accept the invitation." };
+  const { hashInviteToken } = await import("@/payload/collections/StoreMemberships");
+  const where: Where = ref.token ? { inviteTokenHash: { equals: hashInviteToken(ref.token) } } : { id: { equals: Number(ref.membershipId) } };
+  const m = (await payload.find({ collection: "store-memberships", where: { and: [where, { status: { equals: "invited" } }] }, limit: 1, depth: 0, overrideAccess: true, showHiddenFields: true })).docs[0] as unknown as Doc | undefined;
+  if (!m) return { ok: false, error: "Invitation not found – it may have been accepted or withdrawn already." };
+  if (String(m.email ?? "").toLowerCase() !== String(user.email ?? "").toLowerCase()) return { ok: false, error: `This invitation was sent to another email address. Sign in with that address to accept it.` };
+  if (m.inviteExpiresAt && Date.parse(String(m.inviteExpiresAt)) < Date.now()) return { ok: false, error: "This invitation has expired – ask the store to send a new one." };
+  const storeId = Number(relId(m.store));
+  // already in this store under another record (e.g. invited twice): keep the existing one
+  if (await roleIn(payload, Number(user.id), storeId)) {
+    await payload.delete({ collection: "store-memberships", id: Number(m.id), overrideAccess: true, context: { system: true } }).catch(() => undefined);
+    return { ok: true, storeId };
   }
-
   await payload.update({
-    collection: "store-memberships" as never,
-    id: membership.id,
-    data: { status: "active", acceptedAt: new Date().toISOString() } as never,
+    collection: "store-memberships",
+    id: Number(m.id),
+    data: { user: user.id, status: "active", acceptedAt: new Date().toISOString(), inviteTokenHash: null } as never,
     depth: 0,
     overrideAccess: true,
+    context: { system: true },
   });
-
-  const storeId = membership.store?.id ?? membership.store;
-  if (typeof storeId !== "undefined" && storeId !== null) {
-    const user = (await payload.find({
-      collection: "users" as never,
-      where: { id: { equals: userId } },
-      limit: 1,
-      depth: 0,
-      overrideAccess: true,
-    })).docs[0] as { stores?: Array<string | number | { id?: string | number }> | null; currentStore?: string | number | null } | undefined;
-
-    const nextStores = Array.from(
-      new Set([...(Array.isArray(user?.stores) ? user.stores : []), storeId].map((item) => (typeof item === "object" && item && "id" in item ? String(item.id) : String(item))))
-    );
-
-    await payload.update({
-      collection: "users" as never,
-      id: userId,
-      data: {
-        stores: nextStores,
-        currentStore: storeId,
-        platformRole: "merchant_staff",
-      } as never,
-      depth: 0,
-      overrideAccess: true,
-    });
-  }
-
-  return { ok: true as const };
+  await payload.update({ collection: "users", id: Number(user.id), data: { currentStore: storeId } as never, depth: 0, overrideAccess: true, context: { system: true } });
+  log.info("stores.invite_accepted", { store: storeId, user: user.id, role: m.role });
+  return { ok: true, storeId };
 }
 
-export async function publishStore(userId: string, storeId: string) {
-  if (!userId || !storeId || !isDatabaseConfigured) {
-    return { ok: false as const, error: "Store could not be published." };
-  }
-
+/** The owner opens a draft store to shoppers (needs an active or trialing plan). */
+export async function publishStore(sessionUserId: string, storeIdRaw: string): Promise<Result> {
+  if (!sessionUserId || !storeIdRaw || !isCmsConfigured) return { ok: false, error: "Store could not be published." };
   const payload = await payloadClient();
-  const store = (await payload.find({
-    collection: "stores" as never,
-    where: { and: [{ id: { equals: storeId } }, { owner: { equals: userId } }] },
-    limit: 1,
-    depth: 0,
-    overrideAccess: true,
-  })).docs[0] as { id: string | number; status?: string; plan?: { id?: string | number } | string | number | null; trialEndsAt?: string | Date | null } | undefined;
-
-  if (!store) {
-    return { ok: false as const, error: "You do not have permission to publish this store." };
-  }
-
-  const planId = typeof store.plan === "object" && store.plan && "id" in store.plan ? store.plan.id : store.plan;
-  if (planId) {
-    const plan = (await payload.find({
-      collection: "subscription-plans" as never,
-      where: { id: { equals: String(planId) } },
-      limit: 1,
-      depth: 0,
-      overrideAccess: true,
-    })).docs[0] as { id?: string | number; trialDays?: number } | undefined;
-
-    const trialEndsAt = plan?.trialDays ? new Date(Date.now() + Number(plan.trialDays) * 86400000).toISOString() : store.trialEndsAt ? new Date(store.trialEndsAt).toISOString() : undefined;
-
-    await payload.update({
-      collection: "stores" as never,
-      id: store.id,
-      data: {
-        status: "active",
-        subscriptionStatus: "trialing",
-        trialEndsAt,
-      } as never,
-      depth: 0,
-      overrideAccess: true,
-    });
-
-    const existingSub = (await payload.find({
-      collection: "store-subscriptions" as never,
-      where: { and: [{ storeId: { equals: String(store.id) } }, { plan: { equals: String(planId) } }] },
-      limit: 1,
-      depth: 0,
-      overrideAccess: true,
-    })).docs[0] as { id?: string | number } | undefined;
-
-    if (!existingSub) {
-      await payload.create({
-        collection: "store-subscriptions" as never,
-        data: {
-          storeId: store.id,
-          plan: planId,
-          status: "trialing",
-          billingCycle: "monthly",
-          trialEndsAt,
-          currentPeriodStart: new Date().toISOString(),
-          currentPeriodEnd: trialEndsAt,
-          amount: 0,
-          currency: "PKR",
-          paymentProvider: "manual",
-        } as never,
-        depth: 0,
-        overrideAccess: true,
-      });
-    }
-
-    return { ok: true as const };
-  }
-
-  await payload.update({
-    collection: "stores" as never,
-    id: store.id,
-    data: { status: "active" } as never,
-    depth: 0,
-    overrideAccess: true,
-  });
-
-  return { ok: true as const };
+  const user = await userDoc(payload, sessionUserId);
+  const storeId = Number(storeIdRaw);
+  if (!user || !Number.isFinite(storeId) || (await roleIn(payload, Number(user.id), storeId)) !== "store_owner") return { ok: false, error: "Only the store's owner can publish it." };
+  const store = (await payload.findByID({ collection: "stores", id: storeId, depth: 0, overrideAccess: true })) as unknown as Doc;
+  if (store.status !== "draft") return { ok: false, error: store.status === "active" ? "This store is already live." : "This store can't be published – contact ShopEngine support." };
+  if (!["active", "trialing"].includes(String(store.subscriptionStatus))) return { ok: false, error: "Choose a plan (or pay for it) before publishing." };
+  const products = await payload.count({ collection: "products", where: { and: [{ store: { equals: storeId } }, { status: { equals: "active" } }] }, overrideAccess: true });
+  if (!products.totalDocs) return { ok: false, error: "Add at least one active product in /cms before publishing." };
+  await payload.update({ collection: "stores", id: storeId, data: { status: "active" } as never, depth: 0, overrideAccess: true, context: { system: true } });
+  log.info("stores.published", { store: storeId, by: user.id });
+  return { ok: true };
 }
 
-export async function setStorePlanForUser(userId: string, storeId: string, planId: string) {
-  if (!userId || !storeId || !planId || !isDatabaseConfigured) {
-    return { ok: false as const, error: "A valid plan selection is required." };
-  }
-
+/** The owner chooses (or changes) the store's plan. Paid plans may return a payment page to open. */
+export async function setStorePlanForUser(sessionUserId: string, storeIdRaw: string, planId: string, cycle: "monthly" | "annual" = "monthly"): Promise<Result<{ checkoutUrl?: string }>> {
+  if (!sessionUserId || !storeIdRaw || !planId || !isCmsConfigured) return { ok: false, error: "A valid plan selection is required." };
   const payload = await payloadClient();
-  const store = (await payload.find({
-    collection: "stores" as never,
-    where: { and: [{ id: { equals: storeId } }, { owner: { equals: userId } }] },
-    limit: 1,
-    depth: 0,
-    overrideAccess: true,
-  })).docs[0] as { id: string | number; plan?: { id?: string | number } | string | number | null } | undefined;
-
-  if (!store) {
-    return { ok: false as const, error: "You do not have permission to update this store plan." };
+  const user = await userDoc(payload, sessionUserId);
+  const storeId = Number(storeIdRaw);
+  if (!user || (await roleIn(payload, Number(user.id), storeId)) !== "store_owner") return { ok: false, error: "Only the store's owner can change its plan." };
+  const { choosePlan } = await import("@/lib/billing");
+  try {
+    const r = await choosePlan(payload, { storeId, planId: Number(planId), cycle, email: String(user.email), returnUrl: billingReturnUrl() });
+    return r.ok ? { ok: true, ...(r.checkoutUrl ? { checkoutUrl: r.checkoutUrl } : {}) } : r;
+  } catch (e) {
+    log.error("stores.plan_change_failed", e, { store: storeId });
+    return { ok: false, error: "We couldn't change the plan right now. Please try again." };
   }
-
-  const plan = (await payload.find({
-    collection: "subscription-plans" as never,
-    where: { id: { equals: planId } },
-    limit: 1,
-    depth: 0,
-    overrideAccess: true,
-  })).docs[0] as { id?: string | number; name?: string; priceMonthly?: number; trialDays?: number } | undefined;
-
-  if (!plan) {
-    return { ok: false as const, error: "This plan could not be found." };
-  }
-
-  const trialEndsAt = plan.trialDays ? new Date(Date.now() + Number(plan.trialDays) * 86400000).toISOString() : undefined;
-
-  await payload.update({
-    collection: "stores" as never,
-    id: store.id,
-    data: {
-      plan: plan.id,
-      subscriptionStatus: "trialing",
-      trialEndsAt,
-    } as never,
-    depth: 0,
-    overrideAccess: true,
-  });
-
-  const existing = (await payload.find({
-    collection: "store-subscriptions" as never,
-    where: { storeId: { equals: String(store.id) } },
-    limit: 20,
-    depth: 0,
-    overrideAccess: true,
-  })).docs[0] as { id?: string | number } | undefined;
-
-  if (existing?.id) {
-    await payload.update({
-      collection: "store-subscriptions" as never,
-      id: existing.id,
-      data: {
-        plan: plan.id,
-        status: "trialing",
-        billingCycle: "monthly",
-        trialEndsAt,
-        currentPeriodStart: new Date().toISOString(),
-        currentPeriodEnd: trialEndsAt,
-        amount: Number(plan.priceMonthly ?? 0),
-      } as never,
-      depth: 0,
-      overrideAccess: true,
-    });
-  } else {
-    await payload.create({
-      collection: "store-subscriptions" as never,
-      data: {
-        storeId: store.id,
-        plan: plan.id,
-        status: "trialing",
-        billingCycle: "monthly",
-        trialEndsAt,
-        currentPeriodStart: new Date().toISOString(),
-        currentPeriodEnd: trialEndsAt,
-        amount: Number(plan.priceMonthly ?? 0),
-        currency: "PKR",
-        paymentProvider: "manual",
-      } as never,
-      depth: 0,
-      overrideAccess: true,
-    });
-  }
-
-  return { ok: true as const, planId: String(plan.id) };
 }
 
-export async function getCurrentStoreForUser(userId: string) {
-  if (!userId || !isDatabaseConfigured) return null;
+/** Cancels the plan at the end of the paid period (owner). */
+export async function cancelStorePlanForUser(sessionUserId: string, storeIdRaw: string): Promise<Result> {
   const payload = await payloadClient();
-  const user = (await payload.find({
-    collection: "users" as never,
-    where: { id: { equals: userId } },
-    limit: 1,
-    depth: 1,
-    overrideAccess: true,
-  })).docs[0] as { currentStore?: { id?: string | number; name?: string; slug?: string } | null } | undefined;
-  return user?.currentStore ?? null;
+  const user = await userDoc(payload, sessionUserId);
+  const storeId = Number(storeIdRaw);
+  if (!user || (await roleIn(payload, Number(user.id), storeId)) !== "store_owner") return { ok: false, error: "Only the store's owner can cancel its plan." };
+  const { cancelPlan } = await import("@/lib/billing");
+  const r = await cancelPlan(payload, storeId);
+  return r.ok ? { ok: true } : { ok: false, error: r.error ?? "Couldn't cancel." };
+}
+
+/** The owner connects the store's card payment account (Stripe Connect onboarding link). */
+export async function paymentsLinkForUser(sessionUserId: string, storeIdRaw: string): Promise<Result<{ url: string }>> {
+  const payload = await payloadClient();
+  const user = await userDoc(payload, sessionUserId);
+  const storeId = Number(storeIdRaw);
+  if (!user || (await roleIn(payload, Number(user.id), storeId)) !== "store_owner") return { ok: false, error: "Only the store's owner can connect payments." };
+  const { stripeConfigured } = await import("@/lib/payments/stripe");
+  if (!stripeConfigured()) return { ok: false, error: "Card payments aren't available on this platform yet." };
+  const { hasFeature, storeLimits } = await import("@/lib/billing");
+  if (!hasFeature(await storeLimits(payload, storeId), "online_payments")) return { ok: false, error: "Your plan doesn't include online card payments – upgrade to use them." };
+  const store = (await payload.findByID({ collection: "stores", id: storeId, depth: 0, overrideAccess: true })) as unknown as Doc;
+  const { paymentsOnboardingLink } = await import("@/lib/payments");
+  try {
+    return { ok: true, url: await paymentsOnboardingLink(payload, { storeId, email: String(store.billingEmail || user.email), country: null, returnUrl: `${billingReturnUrl()}?payments=${storeId}` }) };
+  } catch (e) {
+    log.error("stores.payments_link_failed", e, { store: storeId });
+    return { ok: false, error: "We couldn't open the payment setup. Please try again." };
+  }
+}
+
+/** After returning from payment onboarding: re-check whether the account can take cards. */
+export async function refreshPaymentsForUser(sessionUserId: string, storeIdRaw: string): Promise<Result<{ ready: boolean }>> {
+  const payload = await payloadClient();
+  const user = await userDoc(payload, sessionUserId);
+  const storeId = Number(storeIdRaw);
+  if (!user || !(await roleIn(payload, Number(user.id), storeId))) return { ok: false, error: "Not your store." };
+  const { refreshPaymentsAccount } = await import("@/lib/payments");
+  try {
+    return { ok: true, ready: await refreshPaymentsAccount(payload, storeId) };
+  } catch (e) {
+    log.error("stores.payments_refresh_failed", e, { store: storeId });
+    return { ok: false, error: "Couldn't check the payment account right now." };
+  }
+}
+
+/** The owner sets a custom domain (verified separately with a DNS TXT record). */
+export async function setCustomDomainForUser(sessionUserId: string, storeIdRaw: string, domain: string): Promise<Result> {
+  const payload = await payloadClient();
+  const user = await userDoc(payload, sessionUserId);
+  const storeId = Number(storeIdRaw);
+  if (!user || (await roleIn(payload, Number(user.id), storeId)) !== "store_owner") return { ok: false, error: "Only the store's owner can change its domain." };
+  const { hasFeature, storeLimits } = await import("@/lib/billing");
+  if (domain && !hasFeature(await storeLimits(payload, storeId), "custom_domain")) return { ok: false, error: "Your plan doesn't include a custom domain – upgrade to use one." };
+  try {
+    await payload.update({ collection: "stores", id: storeId, data: { customDomain: domain.trim().toLowerCase() || null } as never, depth: 0, overrideAccess: true, context: { system: true } });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e as Error)?.message ?? "This domain can't be used.").replace(/^.*?:\s*/, "") };
+  }
+}
+
+/** Checks the store's DNS TXT record (`_shopengine.<domain>` = its verification token) and marks the domain verified. */
+export async function verifyCustomDomainForUser(sessionUserId: string, storeIdRaw: string): Promise<Result<{ verified: boolean }>> {
+  const payload = await payloadClient();
+  const user = await userDoc(payload, sessionUserId);
+  const storeId = Number(storeIdRaw);
+  if (!user || (await roleIn(payload, Number(user.id), storeId)) !== "store_owner") return { ok: false, error: "Only the store's owner can verify its domain." };
+  if (!rateLimitKey(`domain-verify:${storeId}`, 10, 60 * 60_000)) return { ok: false, error: "Too many checks – please wait a while (DNS changes can take up to an hour)." };
+  const store = (await payload.findByID({ collection: "stores", id: storeId, depth: 0, overrideAccess: true, showHiddenFields: true })) as unknown as Doc;
+  const domain = String(store.customDomain ?? "");
+  const token = String(store.domainVerificationToken ?? "");
+  if (!domain || !token) return { ok: false, error: "Set a custom domain first." };
+  const { resolveTxt } = await import("node:dns/promises");
+  // the TXT record may be on the domain itself or on _shopengine.<domain>
+  const records = (await Promise.all([domain, `_shopengine.${domain}`].map((name) => resolveTxt(name).catch(() => [] as string[][])))).flat();
+  const verified = records.some((r) => r.join("").trim() === token);
+  if (verified && !store.domainVerifiedAt) await payload.update({ collection: "stores", id: storeId, data: { domainVerifiedAt: new Date().toISOString() } as never, depth: 0, overrideAccess: true, context: { system: true } });
+  return { ok: true, verified };
 }
 
 export async function requireMerchantSession() {

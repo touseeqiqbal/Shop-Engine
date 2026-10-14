@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getBrand, getBrands } from "@/lib/repo/catalog";
 import { getPageMeta } from "@/lib/page-seo";
+import { getSiteInfo } from "@/lib/repo/site-content";
 import { PageHero } from "@/components/shop/page-hero";
 import { ProductListing } from "@/components/shop/product-listing";
 import { getBrandCounts } from "@/components/shop/data";
@@ -19,14 +20,15 @@ export async function generateStaticParams() {
 
 export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const [{ slug }, sp] = await Promise.all([params, searchParams]);
-  const brand = await getBrand(slug);
+  const [brand, site] = await Promise.all([getBrand(slug), getSiteInfo()]);
   if (!brand) return { title: "Brand not found", robots: { index: false } };
   const what = LAPTOP_BRANDS.has(brand.slug) ? "Laptops & Accessories" : "Accessories";
+  const from = site.address.city ? ` from ${site.address.city}` : "";
   // /cms → Online store → Page texts → "Brand pages" can override these with a {brand} template.
   return getPageMeta("/brands/{brand}", {
     vars: { brand: brand.name },
-    title: `${brand.name} ${what} Price in Pakistan | Urko Tech Store`,
-    description: `Buy genuine ${brand.name} ${what.toLowerCase()} at the best price in Pakistan. New, used & refurbished stock with warranty, Cash on Delivery and fast delivery from Karachi to all cities.`,
+    title: `${brand.name} ${what} Price in Pakistan | ${site.name}`,
+    description: `Buy genuine ${brand.name} ${what.toLowerCase()} at the best price in Pakistan. New, used & refurbished stock with warranty, Cash on Delivery and fast delivery${from} to all cities.`,
     path: `/brands/${brand.slug}`,
     image: brand.logo,
     noindex: shouldNoindex(sp),
@@ -37,7 +39,7 @@ export default async function BrandPage({ params, searchParams }: Props) {
   const [{ slug }, sp] = await Promise.all([params, searchParams]);
   const brand = await getBrand(slug);
   if (!brand) notFound();
-  const counts = await getBrandCounts();
+  const [counts, site] = await Promise.all([getBrandCounts(), getSiteInfo()]);
   const laptops = LAPTOP_BRANDS.has(brand.slug);
 
   return (
@@ -65,7 +67,7 @@ export default async function BrandPage({ params, searchParams }: Props) {
         basePath={`/brands/${brand.slug}`}
         searchParams={sp}
         base={{ brand: [brand.slug] }}
-        listName={`${brand.name} products – Urko Tech Store`}
+        listName={`${brand.name} products – ${site.name}`}
       />
     </div>
   );

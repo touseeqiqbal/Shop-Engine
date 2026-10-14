@@ -1,8 +1,7 @@
 import { amountToCollect, creditedAdvance, paymentBlocksShipping } from "@/lib/order-money";
-import { getPayload } from "payload";
-import config from "@payload-config";
-import { isStaffUser } from "@/payload/access";
+import { adminRequest, canSeeStore } from "@/payload/route-access";
 import { getSiteInfo } from "@/lib/repo/site-content";
+import { storeIdOf } from "@/payload/tenancy";
 
 export const dynamic = "force-dynamic";
 
@@ -30,13 +29,12 @@ const METHOD: Record<string, string> = { cod: "Cash on delivery", jazzcash: "Jaz
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const payload = await getPayload({ config });
-  const { user } = await payload.auth({ headers: req.headers });
-  // full staff rights only (owners/managers must have 2-step on – same rule as the rest of /cms)
-  if (!isStaffUser(user as never)) return new Response("Please sign in to /cms first.", { status: 401 });
+  // the store's team only (owners/managers must have 2-step on – same rule as the rest of /cms)
+  const { payload, t } = await adminRequest(req);
+  if (!t.platformAdmin && !t.roles.size) return new Response("Please sign in to /cms first.", { status: 401 });
   if (!/^\d+$/.test(id)) return new Response("Invalid order", { status: 400 });
-  const o = (await payload.findByID({ collection: "orders", id: Number(id), depth: 0, overrideAccess: true }).catch(() => null)) as Order | null;
-  if (!o) return new Response("Order not found", { status: 404 });
+  const o = (await payload.findByID({ collection: "orders", id: Number(id), depth: 0, overrideAccess: true }).catch(() => null)) as (Order & { store?: unknown }) | null;
+  if (!o || !canSeeStore(t, o.store)) return new Response("Order not found", { status: 404 });
 
   const slip = new URL(req.url).searchParams.get("type") === "slip";
   // serial numbers of the laptops reserved / sold for this order (by product)
@@ -45,7 +43,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     const pid = product && typeof product === "object" ? (product as { id: number }).id : product;
     return units.filter((u) => (typeof u.product === "object" ? u.product?.id : u.product) === pid).map((u) => u.serial).filter(Boolean).join(", ");
   };
-  const site = await getSiteInfo().catch(() => null);
+  const site = await getSiteInfo(storeIdOf(o.store)).catch(() => null);
   const toCollect = amountToCollect(o);
   const advance = creditedAdvance(o);
   const unverified = paymentBlocksShipping(o);
@@ -83,7 +81,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px 6px;
 @media print{.bar{display:none}body{padding:0}}
 </style></head><body>
 <div class="bar"><button onclick="window.print()">Print</button></div>
-<header><div><h1>${esc(site?.name ?? "Urko Tech Store")}</h1><div class="muted">${esc(site?.address.full ?? "")}</div><div class="muted">${esc(site?.phones?.[0]?.display ?? "")} ${esc(site?.email ?? "")}</div></div>
+<header><div><h1>${esc(site?.name ?? "")}</h1><div class="muted">${esc(site?.address.full ?? "")}</div><div class="muted">${esc(site?.phones?.[0]?.display ?? "")} ${esc(site?.email ?? "")}</div></div>
 <div style="text-align:right"><h1>${slip ? "Packing slip" : "Invoice"}</h1><div><strong>${esc(o.orderNumber)}</strong></div><div class="muted">${esc(date)}</div></div></header>
 <div class="cols"><div><h2>Deliver to</h2><strong>${esc(c.name)}</strong><br>${esc(c.address)}${c.landmark ? ` (near ${esc(c.landmark)})` : ""}<br>${esc(c.city)}<br>${esc(c.phone)}</div>
 <div><h2>Payment</h2>${esc(METHOD[o.paymentMethod ?? ""] ?? o.paymentMethod)}${o.courier ? `<h2 style="margin-top:12px">Courier</h2>${esc(o.courier)} ${esc(o.trackingNumber ?? "")}` : ""}</div></div>

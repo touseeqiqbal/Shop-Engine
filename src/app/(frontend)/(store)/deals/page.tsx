@@ -48,7 +48,7 @@ export default async function DealsPage() {
         }
         icon={<Flame className="size-7" aria-hidden="true" />}
       />
-      {deals.length > 0 && <JsonLd data={itemListJsonLd(deals, "Hot deals – Urko Tech Store")} />}
+      {deals.length > 0 && <JsonLd data={itemListJsonLd(deals, `Hot deals – ${c.info.name}`)} />}
 
       {sale && flash.length > 0 && (
         <Reveal as="section" className="relative mb-12 overflow-hidden rounded-[1.75rem] border border-orange-500/25 bg-gradient-to-br from-orange-500/15 via-rose-500/5 to-violet-500/10 p-4 sm:p-8">

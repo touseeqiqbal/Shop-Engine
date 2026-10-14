@@ -5,16 +5,20 @@ import { AccountNav, DemoBanner, FindOrdersByPhone, OrderRows } from "@/componen
 import { getSessionUser } from "@/lib/auth";
 import { isDatabaseConfigured } from "@/lib/db/config";
 import { pageMetadata } from "@/lib/seo";
+import { getSiteInfo } from "@/lib/repo/site-content";
 import { loadCustomerOrders } from "./load";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = pageMetadata({
-  title: "My Orders | Urko Tech Store",
-  description: "Your order history and delivery status.",
-  path: "/account/orders",
-  noindex: true,
-});
+export async function generateMetadata(): Promise<Metadata> {
+  const { name } = await getSiteInfo(); // the current store's own name
+  return pageMetadata({
+    title: `My Orders | ${name}`,
+    description: "Your order history and delivery status.",
+    path: "/account/orders",
+    noindex: true,
+  });
+}
 
 export default async function OrdersPage() {
   const heading = (

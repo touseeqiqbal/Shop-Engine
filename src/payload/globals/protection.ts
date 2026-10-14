@@ -1,6 +1,7 @@
 import type { CollectionConfig, GlobalConfig } from "payload";
-import { managers, staff } from "../access";
-import { dbName } from "../fields";
+import { platformAdmins } from "../access";
+import { assignStore, storeAccess, storeField } from "../tenancy";
+import { dbName, perStoreUnique, uniqueInStore } from "../fields";
 import { revalidate } from "../revalidate";
 const SETTINGS_TAG = "settings";
 
@@ -14,7 +15,7 @@ export const OrderProtection: GlobalConfig = {
   dbName: dbName("order-protection"),
   label: "Fake order protection",
   admin: { group: "Settings", description: "Stop fake and prank cash-on-delivery orders before you pay for delivery." },
-  access: { read: staff, update: managers },
+  access: { read: platformAdmins, update: platformAdmins },
   hooks: { afterChange: [({ doc }) => (revalidate([SETTINGS_TAG]), doc)] },
   fields: [
     {
@@ -65,13 +66,15 @@ export const BlockedPhones: CollectionConfig = {
   dbName: dbName("blocked-phones"),
   labels: { singular: "Blocked number", plural: "Blocked numbers" },
   admin: { useAsTitle: "phone", group: "Settings", defaultColumns: ["phone", "action", "reason", "updatedAt"], description: "Checked at checkout. Add a number from an order page with “Block this number”." },
-  access: { read: staff, create: staff, update: staff, delete: managers },
+  access: storeAccess("store_staff"),
+  indexes: perStoreUnique("phone"),
   hooks: {
-    beforeChange: [({ data }) => (data.phone ? { ...data, phone: String(data.phone).replace(/\D/g, "").replace(/^92/, "0") } : data)],
+    beforeValidate: [assignStore(), ({ data }) => (data?.phone ? { ...data, phone: String(data.phone).replace(/\D/g, "").replace(/^92/, "0") } : data)],
   },
   fields: [
+    storeField(),
     { type: "row", fields: [
-      { name: "phone", type: "text", required: true, unique: true, index: true, admin: { width: "50%", description: "e.g. 03001234567" } },
+      { name: "phone", type: "text", required: true, index: true, validate: uniqueInStore("phone", "This number is already on the list."), admin: { width: "50%", description: "e.g. 03001234567" } },
       { name: "action", type: "select", required: true, defaultValue: "block", options: [
         { label: "Block online orders", value: "block" },
         { label: "Allow only with advance payment", value: "advance" },

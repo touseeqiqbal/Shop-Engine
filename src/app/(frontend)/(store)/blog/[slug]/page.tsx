@@ -12,6 +12,7 @@ import { ShareButtons } from "@/components/blog/share-buttons";
 import { PostCard } from "@/components/blog/post-card";
 import { WhatsAppCta } from "@/components/content/whatsapp-cta";
 import { getBlogPost, getBlogPosts, getCategories, getProductsBySlugs } from "@/lib/repo/catalog";
+import { getSiteInfo } from "@/lib/repo/site-content";
 import { blogCategoryHref, blogTagHref, renderArticle } from "@/lib/blog";
 import { absoluteUrl } from "@/lib/site";
 import { articleJsonLd, pageMetadata } from "@/lib/seo";
@@ -27,10 +28,10 @@ export async function generateStaticParams() {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const post = await getBlogPost(slug);
+  const [post, site] = await Promise.all([getBlogPost(slug), getSiteInfo()]);
   if (!post) return {};
   return pageMetadata({
-    title: post.seoTitle || `${post.title} | Urko Tech Store`,
+    title: post.seoTitle || `${post.title} | ${site.name}`,
     description: post.seoDescription || post.excerpt,
     path: `/blog/${post.slug}`,
     image: `/og/blog/${post.slug}`,
@@ -47,7 +48,7 @@ export default async function BlogPostPage({ params }: Props) {
   const post = await getBlogPost(slug);
   if (!post) notFound();
 
-  const [all, products, categories] = await Promise.all([getBlogPosts(), getProductsBySlugs(post.relatedProducts), getCategories()]);
+  const [all, products, categories, site] = await Promise.all([getBlogPosts(), getProductsBySlugs(post.relatedProducts), getCategories(), getSiteInfo()]);
   const { html, headings } = renderArticle(post.content);
   const minutes = readingTime(post.content);
   const idx = all.findIndex((p) => p.slug === post.slug);
@@ -63,7 +64,7 @@ export default async function BlogPostPage({ params }: Props) {
 
   return (
     <div className="pb-16">
-      <JsonLd data={articleJsonLd(post)} />
+      <JsonLd data={articleJsonLd(post, site.name)} />
 
       {/* Header */}
       <header className="relative overflow-hidden border-b border-border">
@@ -222,7 +223,7 @@ export default async function BlogPostPage({ params }: Props) {
         <WhatsAppCta
           title="Still not sure what to buy?"
           text="Send us your budget, city and use case on WhatsApp – we'll shortlist the best options honestly, with Cash on Delivery all over Pakistan."
-          message={`Hi Urko Tech Store! I just read “${post.title}” and need some advice.`}
+          message={`Hi {store}! I just read “${post.title}” and need some advice.`}
         />
 
         {morePosts.length > 0 && (

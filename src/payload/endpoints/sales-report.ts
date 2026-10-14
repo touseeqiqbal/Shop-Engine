@@ -1,5 +1,6 @@
 import type { Endpoint, PayloadRequest } from "payload";
-import { isManagerUser, isOwnerUser } from "../access";
+import { storeGate } from "./guard";
+import { hasStoreRole } from "../tenancy";
 
 /**
  * GET /cms-api/reports/sales?from=YYYY-MM-DD&to=YYYY-MM-DD&basis=booked|delivered   (owners and managers)
@@ -36,25 +37,30 @@ export const salesReportEndpoint: Endpoint = {
   path: "/reports/sales",
   method: "get",
   handler: async (req: PayloadRequest) => {
-    if (!isManagerUser(req.user as never)) return Response.json({ error: "Only owners and managers can see sales reports." }, { status: 403 });
-    const owner = isOwnerUser(req.user as never);
+    const gate = await storeGate(req, "store_manager", { allowAll: true, feature: "reports" });
+    if (gate instanceof Response) return gate;
+    const { inStore } = gate;
+    // costs and profit: the store's owner (or a platform admin)
+    const owner = gate.t.platformAdmin || hasStoreRole(gate.t, gate.store, "store_owner");
     const url = new URL(req.url ?? "", "http://x");
     const today = pktDay(Date.now());
     const to = DAY_RE.test(url.searchParams.get("to") ?? "") ? url.searchParams.get("to")! : today;
-    const from = DAY_RE.test(url.searchParams.get("from") ?? "") ? url.searchParams.get("from")! : pktDay(pktStart(to) - 29 * 864e5);
+    let from = DAY_RE.test(url.searchParams.get("from") ?? "") ? url.searchParams.get("from")! : pktDay(pktStart(to) - 29 * 864e5);
+    if (from > to) from = to;
     const basis = url.searchParams.get("basis") === "delivered" ? "delivered" : "booked";
     const start = new Date(pktStart(from)).toISOString();
     const end = new Date(pktStart(to) + 864e5).toISOString();
     const { payload } = req;
 
     const [ordersRes, posRes, refundsRes, catsRes, brandsRes] = await Promise.all([
-      payload.find({ collection: "orders", where: { and: [{ placedAt: { greater_than_equal: start } }, { placedAt: { less_than: end } }] }, limit: 0, pagination: false, depth: 0, overrideAccess: true }),
-      payload.find({ collection: "pos-sales", where: { and: [{ createdAt: { greater_than_equal: start } }, { createdAt: { less_than: end } }, { status: { equals: "completed" } }] }, limit: 0, pagination: false, depth: 0, overrideAccess: true }),
+      payload.find({ collection: "orders", where: { and: [{ placedAt: { greater_than_equal: start } }, { placedAt: { less_than: end } }, ...inStore] }, limit: 0, pagination: false, depth: 0, overrideAccess: true }),
+      payload.find({ collection: "pos-sales", where: { and: [{ createdAt: { greater_than_equal: start } }, { createdAt: { less_than: end } }, { status: { equals: "completed" } }, ...inStore] }, limit: 0, pagination: false, depth: 0, overrideAccess: true }),
       // refunds belong to the day the credit note was made (not the day the return was last edited)
       payload.find({
         collection: "return-requests",
         where: {
           and: [
+            ...inStore,
             { status: { equals: "refunded" } },
             { or: [{ and: [{ creditNoteDate: { greater_than_equal: start } }, { creditNoteDate: { less_than: end } }] }, { and: [{ creditNoteDate: { exists: false } }, { updatedAt: { greater_than_equal: start } }, { updatedAt: { less_than: end } }] }] },
           ],
@@ -64,8 +70,8 @@ export const salesReportEndpoint: Endpoint = {
         depth: 0,
         overrideAccess: true,
       }),
-      payload.find({ collection: "categories", limit: 0, pagination: false, depth: 0, overrideAccess: true }),
-      payload.find({ collection: "brands", limit: 0, pagination: false, depth: 0, overrideAccess: true }),
+      payload.find({ collection: "categories", where: { and: inStore }, limit: 0, pagination: false, depth: 0, overrideAccess: true }),
+      payload.find({ collection: "brands", where: { and: inStore }, limit: 0, pagination: false, depth: 0, overrideAccess: true }),
     ]);
     const orders = ordersRes.docs as unknown as Doc[];
     const posSales = posRes.docs as unknown as Doc[];
@@ -179,7 +185,7 @@ export const salesReportEndpoint: Endpoint = {
       const back = refundDocs.filter((r) => r.restocked).flatMap((r) => (Array.isArray(r.items) ? (r.items as Doc[]) : []));
       const serials = back.map((i) => str(i.serial)).filter(Boolean);
       const unitCostBySerial = new Map(
-        serials.length ? ((await payload.find({ collection: "units", where: { serial: { in: serials } }, limit: 0, pagination: false, depth: 0, overrideAccess: true })).docs as unknown as Doc[]).map((u) => [str(u.serial), u.costPrice]) : [],
+        serials.length ? ((await payload.find({ collection: "units", where: { and: [{ serial: { in: serials } }, ...inStore] }, limit: 0, pagination: false, depth: 0, overrideAccess: true })).docs as unknown as Doc[]).map((u) => [str(u.serial), u.costPrice]) : [],
       );
       const missing = [...new Set(back.map((i) => relId(i.product)).filter((id): id is number => Boolean(id) && !products.has(id!)))];
       if (missing.length) for (const p of (await payload.find({ collection: "products", where: { id: { in: missing } }, limit: 0, pagination: false, depth: 0, overrideAccess: true })).docs as unknown as Doc[]) products.set(Number(p.id), p);

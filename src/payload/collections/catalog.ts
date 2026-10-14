@@ -1,7 +1,8 @@
-import { ValidationError, type CollectionAfterChangeHook, type CollectionAfterDeleteHook, type CollectionBeforeChangeHook, type CollectionBeforeDeleteHook, type CollectionConfig, type Endpoint, type PayloadRequest } from "payload";
-import { activeOrStaff, anyone, isStaffUser, managerField, managers, ownerField, staff, staffField, storeWriteAccess } from "../access";
-import { dbName, legacyIdField, slugField, copyTag, onCopy } from "../fields";
+import { commitTransaction, initTransaction, killTransaction, ValidationError, type CollectionAfterChangeHook, type CollectionAfterDeleteHook, type CollectionBeforeChangeHook, type CollectionBeforeDeleteHook, type CollectionConfig, type Endpoint, type PayloadRequest, type Where } from "payload";
+import { assignStore, canWriteStore, createFor, getTenant, publicOrStore, readFor, sameStore, storeField, storeIdOf, storeRoleField, writeFor } from "../tenancy";
+import { dbName, legacyIdField, slugField, copyTag, onCopy, perStoreUnique, uniqueInStore } from "../fields";
 import { slugify } from "@/lib/utils";
+import { productLimit } from "../entitlements";
 import { REVIEWS_TAG, revalidate, revalidateCatalog } from "../revalidate";
 import { productDeletedRedirect, slugRedirect } from "../slug-redirects";
 import { userError } from "../errors";
@@ -44,10 +45,11 @@ const createVariantsEndpoint: Endpoint = {
   path: "/:id/create-variants",
   method: "post",
   handler: async (req) => {
-    if (!isStaffUser(req.user as never)) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    if (!req.user) return Response.json({ error: "Unauthorized" }, { status: 401 });
     const id = Number(req.routeParams?.id);
     const parent = (await req.payload.findByID({ collection: "products", id, draft: true, depth: 0, overrideAccess: true, req }).catch(() => null)) as Record<string, unknown> | null;
-    if (!parent) return Response.json({ error: "Product not found." }, { status: 404 });
+    // only the product's own store team (a product of another store looks like it doesn't exist)
+    if (!parent || !canWriteStore(await getTenant(req), storeIdOf(parent.store), "store_staff")) return Response.json({ error: "Product not found." }, { status: 404 });
     if (parent.variantOf) return Response.json({ error: "This product is itself a variant – add options on its main product." }, { status: 400 });
     const options = ((parent.variantOptions as { name?: string; values?: string[] }[] | undefined) ?? [])
       .map((o) => ({ name: String(o.name ?? "").trim(), values: [...new Set((o.values ?? []).map((v) => String(v).trim()).filter(Boolean))] }))
@@ -60,38 +62,52 @@ const createVariantsEndpoint: Endpoint = {
     const key = (v: Record<string, string>) => options.map((o) => `${o.name}=${v[o.name] ?? ""}`).join("|");
     const have = new Set(existing.map((e) => key(e.optionValues ?? {})));
     const images = ((parent.images as unknown[] | undefined) ?? []).map((m) => (m && typeof m === "object" ? (m as { id: number }).id : m));
-    const canGoLive = images.length > 0 && Number(parent.price) > 0;
+    // a variant goes on the store only when its main product is on the store
+    const canGoLive = images.length > 0 && Number(parent.price) > 0 && parent.status === "active";
     const created: string[] = [];
-    for (const combo of combos) {
-      if (have.has(key(combo))) continue;
-      const values = options.map((o) => combo[o.name]);
-      const doc = (await req.payload.create({
-        collection: "products",
-        data: {
-          title: `${String(parent.title)} – ${values.join(" / ")}`,
-          variantOf: id,
-          optionValues: combo,
-          brand: parent.brand,
-          category: parent.category,
-          price: parent.price,
-          compareAtPrice: parent.compareAtPrice ?? null,
-          costPrice: parent.costPrice ?? null,
-          shortDescription: parent.shortDescription ?? "",
-          condition: parent.condition ?? undefined,
-          warranty: parent.warranty ?? undefined,
-          images,
-          sku: `${String(parent.sku ?? "SKU")}-${values.map((v) => slugify(v).toUpperCase()).join("-")}`.slice(0, 60),
-          slug: `${String(parent.slug)}-${slugify(values.join("-"))}`,
-          stock: 0,
-          // on the store with the main product (it is only ever shown on the main product's page)
-          status: canGoLive ? "active" : "draft",
-          // published straight away (Payload would otherwise start a new product as a draft)
-          _status: "published",
-        } as never,
-        overrideAccess: true,
-        req,
-      })) as { title: string };
-      created.push(doc.title);
+    // all variants or none: a SKU / address clash half-way leaves nothing behind
+    await initTransaction(req);
+    try {
+      for (const combo of combos) {
+        if (have.has(key(combo))) continue;
+        const values = options.map((o) => combo[o.name]);
+        const doc = (await req.payload.create({
+          collection: "products",
+          data: {
+            store: storeIdOf(parent.store),
+            title: `${String(parent.title)} – ${values.join(" / ")}`,
+            variantOf: id,
+            optionValues: combo,
+            brand: parent.brand,
+            category: parent.category,
+            price: parent.price,
+            compareAtPrice: parent.compareAtPrice ?? null,
+            costPrice: parent.costPrice ?? null,
+            shortDescription: parent.shortDescription ?? "",
+            condition: parent.condition ?? undefined,
+            warranty: parent.warranty ?? undefined,
+            shippingClass: parent.shippingClass ?? undefined,
+            weight: parent.weight ?? undefined,
+            tags: parent.tags ?? undefined,
+            images,
+            sku: `${String(parent.sku ?? "SKU")}-${values.map((v) => slugify(v).toUpperCase()).join("-")}`.slice(0, 60),
+            slug: `${String(parent.slug)}-${slugify(values.join("-"))}`,
+            stock: 0,
+            // on the store with the main product (it is only ever shown on the main product's page)
+            status: canGoLive ? "active" : "draft",
+            // published straight away (Payload would otherwise start a new product as a draft)
+            _status: "published",
+          } as never,
+          overrideAccess: true,
+          req,
+        })) as { title: string };
+        created.push(doc.title);
+      }
+      await commitTransaction(req);
+    } catch (e) {
+      await killTransaction(req);
+      const msg = (e as { data?: { errors?: { message?: string }[] }; message?: string }).data?.errors?.[0]?.message ?? (e as Error).message;
+      return Response.json({ error: `No variants were created: ${msg}` }, { status: 400 });
     }
     return Response.json({ created, existing: existing.length });
   },
@@ -130,7 +146,7 @@ const guardStock: CollectionBeforeChangeHook = async ({ data, originalDoc, opera
   // With drafts on, Payload starts an update from the latest DRAFT – its stock, rating and sold count can be old.
   // The live row is the truth: keep it, unless the person typed a new stock over the number they saw.
   const { liveProduct } = await import("../stock");
-  const live = originalDoc?.id ? await liveProduct(req.payload, Number(originalDoc.id), req) : null;
+  const live = originalDoc?.id ? await liveProduct(req.payload, Number(originalDoc.id), req, true) : null;
   if (!live) return data;
   data.rating = live.rating;
   data.reviewCount = live.reviewCount;
@@ -148,6 +164,21 @@ const guardStock: CollectionBeforeChangeHook = async ({ data, originalDoc, opera
 };
 
 /** Checks that keep the shop correct: prices, was-price, photos for products on the store, no negative numbers. */
+/** Two options of one product can't be the same choice (e.g. two "Black / 16 GB" variants). */
+const uniqueOptions: CollectionBeforeChangeHook = async ({ data, originalDoc, req, context }) => {
+  if (context?.migrating || !("optionValues" in data || "variantOf" in data)) return data;
+  const parent = data.variantOf !== undefined ? data.variantOf : originalDoc?.variantOf;
+  const values = (data.optionValues !== undefined ? data.optionValues : originalDoc?.optionValues) as Record<string, unknown> | null | undefined;
+  const parentId = parent && typeof parent === "object" ? (parent as { id?: unknown }).id : parent;
+  if (parentId == null || !values || typeof values !== "object") return data;
+  const key = (v: Record<string, unknown>) => Object.keys(v).sort().map((k) => `${k.trim().toLowerCase()}=${String(v[k] ?? "").trim().toLowerCase()}`).join("|");
+  const mine = key(values);
+  const siblings = (await req.payload.find({ collection: "products", where: { variantOf: { equals: parentId } }, limit: 200, depth: 0, overrideAccess: true, req })).docs as { id: unknown; optionValues?: Record<string, unknown> }[];
+  if (siblings.some((s) => String(s.id) !== String(originalDoc?.id ?? "") && s.optionValues && key(s.optionValues) === mine))
+    throw new ValidationError({ errors: [{ path: "optionValues", message: "Another option of this product already has exactly these choices." }] });
+  return data;
+};
+
 const validateProduct: CollectionBeforeChangeHook = ({ data, originalDoc, context }) => {
   // only when a person edits these fields (internal updates like rating/sold counts never get blocked);
   // a draft may be unfinished – it's checked when it is published
@@ -195,6 +226,22 @@ const RESERVED_SLUGS = new Set([
   "order-confirmation", "pages", "privacy-policy", "products", "returns", "search", "sell-your-laptop", "shipping-policy", "shop", "sitemap.xml",
   "robots.txt", "terms", "track-order", "warranty-returns", "wholesale", "wishlist", "images", "brand", "_next",
 ]);
+
+/**
+ * A product with variants can't be deleted (its variants would turn into separate products on the store), and nor can a
+ * product an open order still holds stock for – hide it instead (Status → Hidden).
+ */
+const refuseProductDelete: CollectionBeforeDeleteHook = async ({ id, req }) => {
+  const variants = await req.payload.count({ collection: "products", where: { variantOf: { equals: id } }, overrideAccess: true, req });
+  if (variants.totalDocs) throw userError(`This product has ${variants.totalDocs} variant(s). Delete or move the variants first, or hide the product (Status → Hidden).`, 409);
+  const open = await req.payload.count({
+    collection: "orders",
+    where: { and: [{ "items.product": { equals: id } }, { status: { not_in: ["delivered", "cancelled", "refused", "returned"] } }] },
+    overrideAccess: true,
+    req,
+  });
+  if (open.totalDocs) throw userError(`${open.totalDocs} open order(s) include this product. Finish or cancel them first, or hide the product (Status → Hidden).`, 409);
+};
 
 /** Deleting is refused while products (or sub-categories) still use it – they would lose their links. */
 const refuseDeleteInUse =
@@ -291,10 +338,11 @@ export const Categories: CollectionConfig = {
   slug: "categories",
   dbName: dbName("categories"),
   admin: { useAsTitle: "name", group: "Catalog", defaultColumns: ["name", "slug", "parent", "sortOrder"] },
-  access: { read: anyone, create: storeWriteAccess, update: storeWriteAccess, delete: storeWriteAccess },
-  hooks: { ...catalogHooks, beforeChange: [noCategoryLoop], beforeDelete: [refuseDeleteInUse("category")], afterChange: [...catalogHooks.afterChange, slugRedirect("categories")] },
+  access: { read: publicOrStore("store_staff"), create: createFor("store_staff"), update: writeFor("store_staff"), delete: writeFor("store_manager") },
+  indexes: perStoreUnique("slug"),
+  hooks: { ...catalogHooks, beforeValidate: [assignStore()], beforeChange: [noCategoryLoop], beforeDelete: [refuseDeleteInUse("category")], afterChange: [...catalogHooks.afterChange, slugRedirect("categories")] },
   fields: [
-    { name: "store", type: "relationship", relationTo: "stores", index: true, admin: { position: "sidebar", description: "Tenant store this catalog item belongs to." } },
+    storeField(),
     { name: "name", type: "text", required: true },
     { name: "nameUr", type: "text", label: "Name (Urdu)" },
     slugField("name"),
@@ -302,12 +350,15 @@ export const Categories: CollectionConfig = {
       name: "parent",
       type: "relationship",
       relationTo: "categories",
-      // a category can't be inside itself (directly or through others) – that would loop forever on the shop
-      filterOptions: ({ id }) => (id ? { id: { not_equals: id } } : true),
+      // a category can't be inside itself (directly or through others) – that would loop forever on the shop; same store only
+      filterOptions: ({ id, data }) => {
+        const same = sameStore({ data });
+        return id ? (same === true ? { id: { not_equals: id } } : { and: [{ id: { not_equals: id } }, same] }) : same;
+      },
       admin: { position: "sidebar" },
     },
     { name: "icon", type: "text", defaultValue: "Package", admin: { components: { Field: "/payload/admin/IconPickerField#IconPickerField" } } },
-    { name: "image", type: "upload", relationTo: "media", admin: { description: "Picture for the big tile when this is the first category in the home-page Category grid (transparent PNG or a product photo works best). Empty = built-in laptop drawing." } },
+    { name: "image", type: "upload", relationTo: "media", filterOptions: sameStore, admin: { description: "Picture for the big tile when this is the first category in the home-page Category grid (transparent PNG or a product photo works best). Empty = built-in laptop drawing." } },
     { name: "shortDescription", type: "textarea" },
     { name: "seoContent", type: "textarea", admin: { description: "Long SEO copy shown at the bottom of the category page (Markdown)." } },
     {
@@ -336,12 +387,13 @@ export const Brands: CollectionConfig = {
   slug: "brands",
   dbName: dbName("brands"),
   admin: { useAsTitle: "name", group: "Catalog" },
-  access: { read: anyone, create: storeWriteAccess, update: storeWriteAccess, delete: storeWriteAccess },
-  hooks: { ...catalogHooks, beforeDelete: [refuseDeleteInUse("brand")], afterChange: [...catalogHooks.afterChange, slugRedirect("brands")] },
+  access: { read: publicOrStore("store_staff"), create: createFor("store_staff"), update: writeFor("store_staff"), delete: writeFor("store_manager") },
+  indexes: perStoreUnique("slug"),
+  hooks: { ...catalogHooks, beforeValidate: [assignStore()], beforeDelete: [refuseDeleteInUse("brand")], afterChange: [...catalogHooks.afterChange, slugRedirect("brands")] },
   fields: [
-    { name: "store", type: "relationship", relationTo: "stores", index: true, admin: { position: "sidebar", description: "Tenant store this brand belongs to." } },
+    storeField(),
     { name: "name", type: "text", required: true },
-    slugField("name"), { name: "logo", type: "upload", relationTo: "media" }, legacyIdField,
+    slugField("name"), { name: "logo", type: "upload", relationTo: "media", filterOptions: sameStore }, legacyIdField,
   ],
 };
 
@@ -350,11 +402,13 @@ export const LaptopModels: CollectionConfig = {
   dbName: dbName("laptop-models"),
   labels: { singular: "Laptop model", plural: "Laptop models" },
   admin: { useAsTitle: "name", group: "Catalog", defaultColumns: ["name", "brand", "series"], description: "Models used by the “Find parts for your laptop” compatibility finder." },
-  access: { read: anyone, create: staff, update: staff, delete: managers },
-  hooks: catalogHooks,
+  access: { read: publicOrStore("store_staff"), create: createFor("store_staff"), update: writeFor("store_staff"), delete: writeFor("store_manager") },
+  indexes: perStoreUnique("slug"),
+  hooks: { ...catalogHooks, beforeValidate: [assignStore()] },
   fields: [
+    storeField(),
     { name: "name", type: "text", required: true },
-    { name: "brand", type: "relationship", relationTo: "brands", required: true },
+    { name: "brand", type: "relationship", relationTo: "brands", required: true, filterOptions: sameStore },
     { name: "series", type: "text" },
     slugField("name", { admin: { position: "sidebar", description: "Stable id used in compatibility links." } }),
     legacyIdField,
@@ -391,20 +445,30 @@ export const Products: CollectionConfig = {
       ],
     },
   },
-  // readVersions: drafts and old versions are staff-only (Payload would otherwise show them to any signed-in user)
-  access: { read: activeOrStaff, readVersions: staff, create: storeWriteAccess, update: storeWriteAccess, delete: storeWriteAccess },
+  // shoppers: products on the store (and published); a store's team: all of its own products incl. drafts.
+  // readVersions: drafts and old versions are for the store's team only. Deleting: managers.
+  access: {
+    read: publicOrStore("store_staff", { and: [{ status: { equals: "active" } }, { _status: { not_equals: "draft" } }] }),
+    readVersions: readFor("store_staff"),
+    create: createFor("store_staff"),
+    update: writeFor("store_staff"),
+    delete: writeFor("store_manager"),
+  },
+  indexes: perStoreUnique("slug", "sku"),
   // drafts (Save draft / autosave) change nothing on the store – stock log, catalogue refresh, redirects run on publish
   hooks: {
-    beforeChange: [guardStock, validateProduct, setStockStatus],
+    beforeValidate: [assignStore()],
+    beforeChange: [productLimit, guardStock, validateProduct, uniqueOptions, setStockStatus],
     ...catalogHooks,
     afterChange: [...catalogHooks.afterChange, slugRedirect("products"), recountWhenTracking, stockEditLog, retotalVariantParents].map(onPublishOnly),
+    beforeDelete: [refuseProductDelete],
     afterDelete: [...catalogHooks.afterDelete, productDeletedRedirect, retotalAfterVariantDelete],
   },
   // Save draft / autosave while editing, Publish when ready, schedule a publish, restore an older version
   versions: { drafts: { autosave: { interval: 3000 }, schedulePublish: true }, maxPerDoc: 25 },
   endpoints: [createVariantsEndpoint],
   fields: [
-    { name: "store", type: "relationship", relationTo: "stores", index: true, admin: { position: "sidebar", description: "Tenant store this product belongs to." } },
+    storeField(),
     {
       type: "tabs",
       tabs: [
@@ -413,13 +477,13 @@ export const Products: CollectionConfig = {
           fields: [
             { name: "title", type: "text", required: true, label: "Product name", hooks: { beforeDuplicate: [({ value }) => (value ? `${String(value)} (copy)` : value)] }, admin: { components: { Cell: "/payload/admin/products/Cells#ProductTitleCell" } } },
             { type: "row", fields: [
-              { name: "brand", type: "relationship", relationTo: "brands", required: true, admin: { width: "50%" } },
+              { name: "brand", type: "relationship", relationTo: "brands", required: true, filterOptions: sameStore, admin: { width: "50%" } },
               { name: "model", type: "text", admin: { width: "50%" } },
             ] },
-            { name: "category", type: "relationship", relationTo: "categories", required: true },
+            { name: "category", type: "relationship", relationTo: "categories", required: true, filterOptions: sameStore },
             { name: "shortDescription", type: "textarea", label: "Short summary", admin: { description: "One or two lines shown near the price. Example: “Core i5 11th gen, 16GB RAM, 512GB SSD – tested, 6-month warranty.”" } },
             { name: "description", type: "richText", label: "Full description" },
-            { name: "images", type: "upload", relationTo: "media", hasMany: true, label: "Photos", admin: { description: "Add at least 3 clear photos. Drag to reorder – the first photo is the main one shoppers see." } },
+            { name: "images", type: "upload", relationTo: "media", hasMany: true, filterOptions: sameStore, label: "Photos", admin: { description: "Add at least 3 clear photos. Drag to reorder – the first photo is the main one shoppers see." } },
             { name: "video", type: "text", label: "Video link", admin: { description: "Optional. Paste a YouTube link." } },
           ],
         },
@@ -427,24 +491,29 @@ export const Products: CollectionConfig = {
           label: "Pricing & stock",
           fields: [
             { type: "row", fields: [
-              { name: "price", type: "number", required: true, min: 0, label: "Price", access: { update: managerField }, admin: { width: "33%", description: "What the customer pays, in whole rupees (Rs). Only owners and managers can change it.", components: { Cell: "/payload/admin/products/Cells#ProductPriceCell" } } },
-              { name: "compareAtPrice", type: "number", min: 0, label: "Was price", access: { update: managerField }, admin: { width: "33%", description: "Optional. Shown crossed out to show a sale. Must be higher than the price." } },
-              { name: "costPrice", type: "number", min: 0, access: { read: ownerField, update: ownerField, create: ownerField }, label: "Your cost", admin: { width: "33%", description: "What you paid (Rs). Only owners see this. Never shown to customers." } },
+              { name: "price", type: "number", required: true, min: 0, label: "Price", access: { update: storeRoleField("store_manager") }, admin: { width: "33%", description: "What the customer pays, in whole rupees (Rs). Only owners and managers can change it.", components: { Cell: "/payload/admin/products/Cells#ProductPriceCell" } } },
+              { name: "compareAtPrice", type: "number", min: 0, label: "Was price", access: { update: storeRoleField("store_manager") }, admin: { width: "33%", description: "Optional. Shown crossed out to show a sale. Must be higher than the price." } },
+              { name: "costPrice", type: "number", min: 0, access: { read: storeRoleField("store_owner"), update: storeRoleField("store_owner"), create: storeRoleField("store_owner") }, label: "Your cost", admin: { width: "33%", description: "What you paid (Rs). Only owners see this. Never shown to customers." } },
             ] },
             { name: "priceOnRequest", type: "checkbox", label: "Price on request (wholesale lot – can't be bought online)" },
             { type: "row", fields: [
-              { name: "sku", type: "text", required: true, unique: true, index: true, label: "SKU (your stock code)", hooks: {
+              { name: "sku", type: "text", required: true, index: true, label: "SKU (your stock code)", hooks: {
                   // left empty → made from the product name (e.g. P-LOGITECH-M185-7K2Q); the column stays required
                   beforeValidate: [({ value, data }) => (typeof value === "string" && value.trim() ? value.trim() : `P-${slugify(String(data?.title ?? "item")).toUpperCase().slice(0, 28).replace(/-+$/, "")}-${copyTag().toUpperCase()}`)],
                   beforeDuplicate: [({ value }) => `${String(value ?? "SKU").replace(/\s+/g, "-")}-COPY-${copyTag().toUpperCase()}`],
                 },
-                // empty is fine here – the hook above fills it in before saving
-                validate: (v: unknown) => (v == null || typeof v === "string" ? true : "Enter a code or leave it empty."),
+                // empty is fine here – the hook above fills it in before saving; unique within the store
+                validate: async (v: unknown, opts: unknown) => (v == null || typeof v === "string" ? uniqueInStore("sku", "Another product in this store already has this SKU.")(v, opts as never) : "Enter a code or leave it empty."),
                 admin: { width: "34%", description: "Leave empty and one is made for you." } },
-              { name: "stock", type: "number", defaultValue: 0, min: 0, label: "Stock", hooks: { ...onCopy(0).hooks, afterRead: [liveStockWhenDraft] }, access: { read: staffField }, admin: { width: "33%", description: "How many you have.", components: { Cell: "/payload/admin/products/Cells#ProductStockCell" } } },
+              { name: "stock", type: "number", defaultValue: 0, min: 0, label: "Stock", hooks: { ...onCopy(0).hooks, afterRead: [liveStockWhenDraft] }, access: { read: storeRoleField("store_staff") }, admin: { width: "33%", description: "How many you have.", components: { Cell: "/payload/admin/products/Cells#ProductStockCell" } } },
               // the stock this screen showed – lets the server tell "unchanged" from "changed" (see guardStock)
               { name: "stockSeen", type: "number", virtual: true, admin: { hidden: true }, hooks: { afterRead: [liveStockWhenDraft] } },
-              { name: "lowStockThreshold", type: "number", defaultValue: 2, min: 0, access: { read: staffField }, label: "Warn me at", admin: { width: "33%", description: "You get a low-stock alert when stock reaches this number." } },
+              { name: "lowStockThreshold", type: "number", defaultValue: 2, min: 0, access: { read: storeRoleField("store_staff") }, label: "Warn me at", admin: { width: "33%", description: "You get a low-stock alert when stock reaches this number." } },
+            ] },
+            { type: "row", fields: [
+              // what a scanner reads at the counter (EAN / UPC / GTIN); optional, unique within the store
+              { name: "barcode", type: "text", index: true, label: "Barcode", validate: async (v: unknown, opts: unknown) => (v == null || v === "" ? true : typeof v === "string" ? uniqueInStore("barcode", "Another product in this store already has this barcode.")(v, opts as never) : "Enter the number under the barcode."), admin: { width: "50%", description: "EAN / UPC / GTIN – scan it at the shop counter. Optional." } },
+              { name: "productType", type: "text", index: true, label: "Product type", admin: { width: "50%", description: "Your own grouping for reports and filters, e.g. Laptop, Charger, Gift card. Optional." } },
             ] },
             { name: "stockHistoryLink", type: "ui", admin: { condition: (_, __, { user }) => Boolean(user && (user as { role?: string }).role !== "customer"), components: { Field: "/payload/admin/products/StockHistoryLink#StockHistoryLink" } } },
             { type: "row", fields: [
@@ -493,14 +562,14 @@ export const Products: CollectionConfig = {
               { name: "value", type: "text", required: true, admin: { width: "60%" } },
             ] }] },
             { name: "attributes", type: "json", admin: { components: { Field: "/payload/admin/AttributesField#AttributesField" } } },
-            { name: "compatibility", type: "relationship", relationTo: "laptop-models", hasMany: true },
+            { name: "compatibility", type: "relationship", relationTo: "laptop-models", hasMany: true, filterOptions: sameStore },
             { name: "upgrades", type: "array", label: "Options & upgrades", labels: { singular: "Option", plural: "Options" }, admin: { description: "Choices shoppers can add at checkout, grouped (e.g. RAM: 16GB +Rs 6,000; SSD: 512GB +Rs 5,500)." }, fields: [{ type: "row", fields: [
               { name: "optionId", type: "text", admin: { width: "20%" } },
               { name: "group", type: "text", required: true, admin: { width: "20%" } },
               { name: "label", type: "text", required: true, admin: { width: "40%" } },
-              { name: "price", type: "number", required: true, min: 0, access: { update: managerField }, admin: { width: "20%" } },
+              { name: "price", type: "number", required: true, min: 0, access: { update: storeRoleField("store_manager") }, admin: { width: "20%" } },
             ] }] },
-            { name: "boughtTogether", type: "relationship", relationTo: "products", hasMany: true, label: "Frequently bought together" },
+            { name: "boughtTogether", type: "relationship", relationTo: "products", hasMany: true, filterOptions: sameStore, label: "Frequently bought together" },
             { name: "bundleDiscountPercent", type: "number", min: 0, max: 90 },
           ],
         },
@@ -514,7 +583,10 @@ export const Products: CollectionConfig = {
               relationTo: "products",
               index: true,
               label: "Variant of",
-              filterOptions: { variantOf: { exists: false } },
+              filterOptions: ({ data }): Where => {
+                const same = sameStore({ data });
+                return same === true ? { variantOf: { exists: false } } : { and: [{ variantOf: { exists: false } }, same] };
+              },
               admin: { readOnly: true, condition: (d) => Boolean(d?.variantOf), description: "This product is one option of another product – shoppers choose it on that product's page." },
             },
             { name: "optionValues", type: "json", label: "Option", admin: { condition: (d) => Boolean(d?.variantOf), components: { Field: "/payload/admin/products/VariantFields#OptionValuesField" } } },
@@ -553,7 +625,7 @@ export const Products: CollectionConfig = {
     { name: "dealEndsAt", type: "date", admin: { position: "sidebar", date: { pickerAppearance: "dayAndTime" }, condition: (d) => Boolean(d?.hotDeal) } },
     { name: "rating", type: "number", defaultValue: 0, ...onCopy(0), admin: { position: "sidebar", readOnly: true } },
     { name: "reviewCount", type: "number", defaultValue: 0, ...onCopy(0), admin: { position: "sidebar", readOnly: true } },
-    { name: "soldCount", type: "number", defaultValue: 0, ...onCopy(0), access: { read: staffField }, admin: { position: "sidebar", readOnly: true } },
+    { name: "soldCount", type: "number", defaultValue: 0, ...onCopy(0), access: { read: storeRoleField("store_staff") }, admin: { position: "sidebar", readOnly: true } },
     legacyIdField,
   ],
 };
@@ -562,16 +634,11 @@ export const Reviews: CollectionConfig = {
   slug: "reviews",
   dbName: dbName("reviews"),
   admin: { useAsTitle: "name", group: "Catalog", defaultColumns: ["name", "product", "rating", "approved", "createdAt"] },
-  access: {
-    read: ({ req }) => (isStaffUser(req.user as never) ? true : { approved: { equals: true } }),
-    create: storeWriteAccess,
-    update: storeWriteAccess,
-    delete: storeWriteAccess,
-  },
-  hooks: { beforeChange: [publishReviewPhotos], afterChange: [reviewAfterChange], afterDelete: [reviewAfterDelete] },
+  access: { read: publicOrStore("store_staff", { approved: { equals: true } }), create: createFor("store_staff"), update: writeFor("store_staff"), delete: writeFor("store_manager") },
+  hooks: { beforeValidate: [assignStore()], beforeChange: [publishReviewPhotos], afterChange: [reviewAfterChange], afterDelete: [reviewAfterDelete] },
   fields: [
-    { name: "store", type: "relationship", relationTo: "stores", index: true, admin: { position: "sidebar", description: "Tenant store this review belongs to." } },
-    { name: "product", type: "relationship", relationTo: "products", required: true, index: true },
+    storeField(),
+    { name: "product", type: "relationship", relationTo: "products", required: true, index: true, filterOptions: sameStore },
     { type: "row", fields: [
       { name: "name", type: "text", required: true, admin: { width: "40%" } },
       { name: "city", type: "text", admin: { width: "30%" } },

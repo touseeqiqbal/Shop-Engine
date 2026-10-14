@@ -5,6 +5,8 @@ import { FaqAccordion } from "@/components/content/faq-accordion";
 import { WhatsAppCta } from "@/components/content/whatsapp-cta";
 import { JsonLd } from "@/components/ui/json-ld";
 import { getFaqs } from "@/lib/repo/catalog";
+import { getSiteInfo } from "@/lib/repo/site-content";
+import { storePlace } from "@/lib/site-info";
 import { faqJsonLd } from "@/lib/seo";
 import { getPageMeta } from "@/lib/page-seo";
 import { slugify } from "@/lib/utils";
@@ -17,7 +19,8 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function FaqsPage() {
-  const faqs = await getFaqs();
+  const [faqs, site] = await Promise.all([getFaqs(), getSiteInfo()]);
+  const place = storePlace(site); // where the store is (Settings → Store details)
   const groups = new Map<string, FaqItem[]>();
   for (const f of faqs) {
     const g = f.group || "General";
@@ -35,7 +38,7 @@ export default async function FaqsPage() {
             Frequently asked <span className="gradient-text">questions</span>
           </>
         }
-        description="Everything you need to know about ordering laptops and accessories from our Saddar, Karachi store – with delivery all over Pakistan."
+        description={`Everything you need to know about ordering laptops and accessories from our ${place ? `${place} ` : ""}store – with delivery all over Pakistan.`}
       />
 
       <div className="container-x mt-8 grid gap-10 sm:mt-12 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-14">
@@ -67,7 +70,7 @@ export default async function FaqsPage() {
             <Link href="/warranty-returns" className="font-semibold text-fg underline-offset-4 hover:underline">warranty & returns</Link> or{" "}
             <Link href="/contact" className="font-semibold text-fg underline-offset-4 hover:underline">contact us</Link>.
           </p>
-          <WhatsAppCta title="Didn't find your answer?" message="Hi Urko Tech Store! I have a question about an order." />
+          <WhatsAppCta title="Didn't find your answer?" message="Hi {store}! I have a question about an order." />
         </div>
       </div>
     </div>

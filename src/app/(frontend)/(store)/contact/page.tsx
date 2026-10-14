@@ -6,9 +6,19 @@ import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
 import { waLink } from "@/lib/site";
 import { getPageMeta } from "@/lib/page-seo";
 import { getSiteInfo } from "@/lib/repo/site-content";
+import { storePlace } from "@/lib/site-info";
+import { getCurrentStore } from "@/lib/tenant";
+
+/** The original (default) store – or demo mode, which is that store. The hand-written texts below are about its Saddar shop. */
+async function isOriginalStore() {
+  const store = await getCurrentStore();
+  return !store || store.isDefault;
+}
 
 export async function generateMetadata(): Promise<Metadata> {
-  const site = await getSiteInfo();
+  const [site, original] = await Promise.all([getSiteInfo(), isOriginalStore()]);
+  // any other store: the plain built-in title / description with its own name
+  if (!original) return getPageMeta("/contact");
   // Default description follows the live phone numbers / email from Store info.
   return getPageMeta("/contact", {
     title: `Contact ${site.name} – Laptop Shop in Saddar, Karachi | WhatsApp & Phone`,
@@ -17,18 +27,29 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function ContactPage() {
-  const site = await getSiteInfo(); // live business profile (/cms → Settings → Store details)
+  const [site, original] = await Promise.all([getSiteInfo(), isOriginalStore()]); // live business profile (/cms → Settings → Store details)
+  const place = storePlace(site);
   return (
     <div className="pb-16">
       <PageHero
         crumbs={[{ name: "Contact", href: "/contact" }]}
         eyebrow="We're here to help"
         title={
-          <>
-            Contact our <span className="gradient-text">laptop shop in Karachi</span>
-          </>
+          original ? (
+            <>
+              Contact our <span className="gradient-text">laptop shop in Karachi</span>
+            </>
+          ) : (
+            <>
+              Contact <span className="gradient-text">{site.name}</span>
+            </>
+          )
         }
-        description="Questions about a laptop, a charger that fits, or an order on its way? Call, WhatsApp, email or visit us in the Regal Chowk laptop market, Saddar."
+        description={
+          original
+            ? "Questions about a laptop, a charger that fits, or an order on its way? Call, WhatsApp, email or visit us in the Regal Chowk laptop market, Saddar."
+            : "Questions about a product or an order on its way? Call, WhatsApp or email us – we're happy to help."
+        }
       />
 
       <div className="container-x mt-8 space-y-10 sm:mt-12 sm:space-y-14">
@@ -129,16 +150,17 @@ export default async function ContactPage() {
               </div>
             </address>
             <div className="mt-auto rounded-2xl border border-border bg-surface p-4 text-sm text-muted">
-              <strong className="text-fg">Delivery all over Pakistan.</strong> Karachi same / next day, major cities 1–3 working days, other areas 3–5
-              working days – with Cash on Delivery.
+              <strong className="text-fg">Delivery all over Pakistan.</strong>{" "}
+              {original ? "Karachi same / next day, major cities 1–3 working days, other areas 3–5 working days – with Cash on Delivery." : "With Cash on Delivery."}
             </div>
           </section>
         </div>
 
-        {/* Map */}
+        {/* Map (from Store details – none until the store adds one) */}
+        {site.mapEmbed && (
         <section aria-labelledby="map-heading">
           <h2 id="map-heading" className="mb-4 text-2xl font-bold text-fg">
-            Find us in Saddar, Karachi
+            {original ? "Find us in Saddar, Karachi" : place ? `Find us in ${place}` : "Find us"}
           </h2>
           <div className="relative h-[22rem] overflow-hidden rounded-[1.75rem] border border-border sm:h-[28rem]">
             <iframe
@@ -150,10 +172,13 @@ export default async function ContactPage() {
               allowFullScreen
             />
           </div>
-          <p className="mt-3 text-sm text-muted">
-            We&apos;re inside Regal Trade Square at Regal Chowk – the heart of Karachi&apos;s laptop market, close to Empress Market and Zaibunnisa Street.
-          </p>
+          {original && (
+            <p className="mt-3 text-sm text-muted">
+              We&apos;re inside Regal Trade Square at Regal Chowk – the heart of Karachi&apos;s laptop market, close to Empress Market and Zaibunnisa Street.
+            </p>
+          )}
         </section>
+        )}
       </div>
     </div>
   );

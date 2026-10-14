@@ -1,5 +1,5 @@
 import type { Field, GlobalConfig } from "payload";
-import { anyone, managers, staff } from "../access";
+import { anyone, platformAdmins } from "../access";
 import { dbName } from "../fields";
 import { revalidate } from "../revalidate";
 import { SOCIAL_NETWORKS, WEEK_DAYS } from "../../lib/site-info";
@@ -21,7 +21,7 @@ export const StoreInfo: GlobalConfig = {
   dbName: dbName("store_info"),
   label: "Store info",
   admin: { group: "Settings", description: "Business name, address, phones, opening hours and social links – used across the site, in Google data and in emails." },
-  access: { read: anyone, update: managers },
+  access: { read: anyone, update: platformAdmins },
   hooks: { afterChange: refresh(["site-business", "settings"]) },
   fields: [
     { type: "row", fields: [half({ name: "name", type: "text", required: true }), half({ name: "shortName", type: "text" })] },
@@ -77,7 +77,7 @@ export const SeoSettingsGlobal: GlobalConfig = {
   dbName: dbName("seo_settings"),
   label: "SEO",
   admin: { group: "Settings", description: "Site-wide SEO defaults, verification codes, analytics IDs and per-page titles/descriptions for built-in pages." },
-  access: { read: anyone, update: managers },
+  access: { read: anyone, update: platformAdmins },
   hooks: { afterChange: refresh(["site-seo", "site-page-seo"]) },
   fields: [
     {
@@ -86,7 +86,8 @@ export const SeoSettingsGlobal: GlobalConfig = {
         {
           label: "Defaults",
           fields: [
-            { name: "titleTemplate", type: "text", defaultValue: "%s | Urko Tech Store", admin: { description: "%s = page title." } },
+            // "" (not left out) so a new store's settings never pick up the original shop's name from the database default
+            { name: "titleTemplate", type: "text", defaultValue: "", admin: { description: "%s = page title. Empty = “%s | <store name>”." } },
             { name: "defaultTitle", type: "text" },
             { name: "defaultDescription", type: "textarea" },
             { name: "defaultOgImage", type: "text", label: "Default social share image (URL)" },
@@ -132,7 +133,7 @@ export const PageTexts: GlobalConfig = {
   dbName: dbName("page_texts"),
   label: "Page texts",
   admin: { group: "Online store", description: "Texts of built-in pages (About, policies, deals intro…). Markdown works in intro, body and SEO copy." },
-  access: { read: anyone, update: staff },
+  access: { read: anyone, update: platformAdmins },
   hooks: { afterChange: refresh(["site-pages"]) },
   fields: [
     {
@@ -157,7 +158,7 @@ export const TestimonialsGlobal: GlobalConfig = {
   dbName: dbName("testimonials"),
   label: "Testimonials",
   admin: { group: "Online store", description: "Customer quotes for the home page “Testimonials” section." },
-  access: { read: anyone, update: staff },
+  access: { read: anyone, update: platformAdmins },
   hooks: { afterChange: refresh(["settings"]) },
   fields: [
     {
@@ -181,7 +182,7 @@ export const FaqsGlobal: GlobalConfig = {
   dbName: dbName("faqs"),
   label: "FAQs",
   admin: { group: "Online store", description: "Questions on /faqs (grouped), also published as FAQ structured data." },
-  access: { read: anyone, update: staff },
+  access: { read: anyone, update: platformAdmins },
   hooks: { afterChange: refresh(["settings"]) },
   fields: [
     {

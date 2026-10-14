@@ -1,5 +1,6 @@
 import type { GlobalConfig } from "payload";
-import { anyone, managers, staff } from "../access";
+import { anyone, platformAdmins } from "../access";
+import { sameStore } from "../tenancy";
 import { dbName } from "../fields";
 import { linkFields } from "../link";
 import { revalidateChrome } from "../revalidate";
@@ -23,7 +24,7 @@ const FONT_OPTIONS = [
 // Version history (Versions tab → "Restore this version"): roll the storefront look back to an earlier save.
 // Old versions are staff-only – the settings themselves are public (the storefront reads them).
 const common = {
-  access: { read: anyone, readVersions: staff, update: managers },
+  access: { read: anyone, readVersions: platformAdmins, update: platformAdmins },
   versions: { max: 30 },
   hooks: { afterChange: [revalidateChrome] },
 } satisfies Pick<GlobalConfig, "access" | "versions" | "hooks">;
@@ -42,11 +43,11 @@ export const ThemeSettings: GlobalConfig = {
           label: "Logo & icons",
           fields: [
             { type: "row", fields: [
-              { name: "logoDark", type: "upload", relationTo: "media", label: "Logo for dark mode", admin: { width: "50%", description: "Leave empty to use the built-in Urko logo." } },
-              { name: "logoLight", type: "upload", relationTo: "media", label: "Logo for light mode", admin: { width: "50%" } },
+              { name: "logoDark", type: "upload", relationTo: "media", filterOptions: sameStore, label: "Logo for dark mode", admin: { width: "50%", description: "Leave empty to use the built-in logo (the store's name)." } },
+              { name: "logoLight", type: "upload", relationTo: "media", filterOptions: sameStore, label: "Logo for light mode", admin: { width: "50%" } },
             ] },
             { type: "row", fields: [
-              { name: "favicon", type: "upload", relationTo: "media", admin: { width: "50%", description: "Square PNG/SVG, at least 512×512." } },
+              { name: "favicon", type: "upload", relationTo: "media", filterOptions: sameStore, admin: { width: "50%", description: "Square PNG/SVG, at least 512×512." } },
               { name: "logoHeight", type: "number", defaultValue: 36, min: 24, max: 80, admin: { width: "50%", description: "Header logo height in px." } },
             ] },
           ],
@@ -106,7 +107,7 @@ export const AnnouncementBar: GlobalConfig = {
   label: "Announcement bar",
   admin: { group: "Online store", description: "The thin message bar at the very top of every page." },
   ...common,
-  access: { read: anyone, update: staff },
+  access: { read: anyone, update: platformAdmins },
   fields: [
     { name: "enabled", type: "checkbox", defaultValue: true, label: "Show the announcement bar" },
     { name: "text", type: "text", defaultValue: "Free delivery on orders above Rs 15,000 · Cash on Delivery all over Pakistan", admin: { description: "Leave empty to show the store tagline." } },
@@ -133,8 +134,8 @@ export const HeaderSettings: GlobalConfig = {
   admin: { group: "Online store" },
   ...common,
   fields: [
-    { name: "mainMenu", type: "relationship", relationTo: "menus", admin: { description: "Desktop navigation + mobile menu. Items marked “mega menu” open a large dropdown." } },
-    { name: "mobileMenu", type: "relationship", relationTo: "menus", admin: { description: "Optional separate menu for phones (defaults to the main menu)." } },
+    { name: "mainMenu", type: "relationship", relationTo: "menus", filterOptions: sameStore, admin: { description: "Desktop navigation + mobile menu. Items marked “mega menu” open a large dropdown." } },
+    { name: "mobileMenu", type: "relationship", relationTo: "menus", filterOptions: sameStore, admin: { description: "Optional separate menu for phones (defaults to the main menu)." } },
     { type: "row", fields: [
       { name: "sticky", type: "checkbox", defaultValue: true, label: "Sticky header (stays on top while scrolling)", admin: { width: "50%" } },
       { name: "showSearch", type: "checkbox", defaultValue: true, label: "Show search", admin: { width: "50%" } },
@@ -161,7 +162,7 @@ export const FooterSettings: GlobalConfig = {
       admin: { description: "Link columns. Pick a menu for each column (Online store → Menus).", components: { RowLabel: "/payload/admin/RowLabel#TitleRowLabel" } },
       fields: [
         { name: "title", type: "text", required: true },
-        { name: "menu", type: "relationship", relationTo: "menus", required: true },
+        { name: "menu", type: "relationship", relationTo: "menus", required: true, filterOptions: sameStore },
       ],
     },
     { type: "row", fields: [
@@ -180,7 +181,7 @@ export const WhatsAppSettings: GlobalConfig = {
   label: "WhatsApp button",
   admin: { group: "Online store", description: "The floating green WhatsApp button on every page." },
   ...common,
-  access: { read: anyone, update: staff },
+  access: { read: anyone, update: platformAdmins },
   fields: [
     { name: "enabled", type: "checkbox", defaultValue: true, label: "Show the floating WhatsApp button" },
     {
@@ -193,7 +194,8 @@ export const WhatsAppSettings: GlobalConfig = {
         { name: "phone", type: "text", required: true, admin: { width: "60%", description: "International format, e.g. +92 342 6693115" } },
       ] }],
     },
-    { name: "message", type: "textarea", defaultValue: "Hi Urko Tech Store! I need help with an order.", label: "Pre-filled message" },
+    // "" (not left out) so a new store's button never picks up the original shop's name from the database default
+    { name: "message", type: "textarea", defaultValue: "", label: "Pre-filled message", admin: { description: "Empty = “Hi <store name>! I need help with an order.”" } },
     { name: "note", type: "text", label: "Small text under the title", admin: { description: "Leave empty to use the note from Store info." } },
     { name: "position", type: "select", defaultValue: "right", options: [{ label: "Bottom right", value: "right" }, { label: "Bottom left", value: "left" }] },
   ],

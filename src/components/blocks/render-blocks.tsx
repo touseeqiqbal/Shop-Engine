@@ -3,7 +3,7 @@ import Image from "next/image";
 import type { ReactNode } from "react";
 import { Flame, Wrench } from "lucide-react";
 import { HeroSlider } from "@/components/home/hero-slider";
-import { BrandStrip, CategoryBento, InstallmentBanner, SocialFeed, StoreLocation, Testimonials, TrustBadges } from "@/components/home/sections";
+import { BrandStrip, CategoryBento, InstallmentBanner, SocialFeed, StoreLocation, Testimonials, TrustBadges, socialHandle } from "@/components/home/sections";
 import { ProductCarousel } from "@/components/product/product-carousel";
 import { CompatibilityFinder } from "@/components/product/compatibility-finder";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
@@ -21,9 +21,14 @@ import {
   getLaptopModels,
   getProductsByIds,
   getTestimonials,
+  getStoreSettings,
   getTopCategories,
 } from "@/lib/repo/catalog";
-import { AUTO_LIMIT, type PageBlock, type PageData } from "@/lib/cms/blocks-types";
+import { getSiteInfo } from "@/lib/repo/site-content";
+import { getCurrentStore } from "@/lib/tenant";
+import { DEFAULT_HOME, DEFAULT_HOME_SEO_COPY, NEUTRAL_SECTION_TEXT, SECTION_DEFAULTS, type HomeSectionType } from "@/lib/content/home";
+import { fillTokens, tokenValues } from "@/lib/content/page-defaults";
+import { AUTO_LIMIT, type BlockText, type PageBlock, type PageData } from "@/lib/cms/blocks-types";
 import { getCollection } from "@/lib/cms/collections";
 import type { Banner, CatalogProduct, Category } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -31,7 +36,9 @@ import { sanitizeHtml } from "@/lib/sanitize";
 
 /*
  * Renders page-builder blocks (Payload → Pages, or the legacy home config mapped to blocks).
- * With the default home page the output is identical to the original hand-built page.
+ * With the default home page the output is identical to the original hand-built page. The built-in texts describe the
+ * original shop (its Saddar, Karachi store), so any other store gets plain ones where a block still has them.
+ * Rich text can use the same {{tokens}} as the content pages ({{storeName}}, {{address}}, {{phone1}} …).
  */
 
 const has = (blocks: PageBlock[], ...types: PageBlock["type"][]) => blocks.some((b) => types.includes(b.type));
@@ -40,6 +47,18 @@ const none = <T,>(v: T) => Promise.resolve(v);
 export async function RenderBlocks({ page }: { page: PageData }) {
   const blocks = page.blocks;
   const needsProducts = has(blocks, "deals", "products", "categories");
+  const [info, store, storeSettings] = await Promise.all([getSiteInfo(), getCurrentStore(), has(blocks, "richText") ? getStoreSettings() : none(null)]);
+  const original = !store || store.isDefault;
+  const tokens = tokenValues(info, storeSettings);
+  const fill = (s: string | null | undefined) => (s ? fillTokens(s, tokens) : s);
+  /** A section's text, with the original shop's built-in wording swapped for plain text on any other store. */
+  const own = (type: HomeSectionType, t: BlockText): BlockText => {
+    if (original) return t;
+    const d = SECTION_DEFAULTS[type];
+    const plain = Object.entries(NEUTRAL_SECTION_TEXT[type] ?? {}).filter(([k]) => t[k as keyof BlockText] === d[k as keyof typeof d]);
+    return { ...t, ...Object.fromEntries(plain) };
+  };
+  const h1Highlight = !original && page.h1Highlight === DEFAULT_HOME.h1Highlight ? info.name : page.h1Highlight;
   const [heroes, topCategories, categories, brands, models, testimonials, flashSale, all] = await Promise.all([
     blocks.some((b) => b.type === "hero" && !b.slides.length) ? getBanners("hero") : none<Banner[]>([]),
     has(blocks, "categories") ? getTopCategories() : none<Category[]>([]),
@@ -108,8 +127,8 @@ export async function RenderBlocks({ page }: { page: PageData }) {
   // ── H1: always the first thing on the page ──
   const h1 = (
     <h1 className="mb-3 text-sm font-medium text-muted sm:text-base">
-      {page.h1Highlight && <span className="gradient-text font-semibold">{page.h1Highlight}</span>}
-      {page.h1Highlight && page.h1Text ? " · " : null}
+      {h1Highlight && <span className="gradient-text font-semibold">{h1Highlight}</span>}
+      {h1Highlight && page.h1Text ? " · " : null}
       {page.h1Text}
     </h1>
   );
@@ -268,27 +287,33 @@ export async function RenderBlocks({ page }: { page: PageData }) {
           </section>
         );
         break;
-      case "social":
+      case "social": {
+        const t = own("social", b.text);
         out.push(
           <section key={key} className="container-x" aria-label="Instagram and TikTok">
-            <SectionHeading eyebrow={b.text.eyebrow || undefined} title={b.text.title} description={b.text.description || undefined} />
+            <SectionHeading eyebrow={t.eyebrow || socialHandle(info) || undefined} title={t.title} description={t.description || undefined} />
             <SocialFeed />
           </section>
         );
         break;
-      case "location":
+      }
+      case "location": {
+        const t = own("location", b.text);
         out.push(
           <section key={key} className="container-x" aria-label="Store location">
-            <StoreLocation eyebrow={b.text.eyebrow} title={b.text.title} description={b.text.description} />
+            <StoreLocation eyebrow={t.eyebrow} title={t.title} description={t.description} />
           </section>
         );
         break;
+      }
       case "richText":
+        // the original shop's built-in home-page text (its Saddar address and Karachi claims) is its own
+        if (!original && !b.html && b.markdown === DEFAULT_HOME_SEO_COPY) break;
         out.push(
           <RichTextSections
             key={key}
-            html={b.html}
-            markdown={b.markdown}
+            html={fill(b.html)}
+            markdown={fill(b.markdown)}
             boxed={Boolean(b.boxed)}
             narrow={b.width === "narrow"}
             label={page.slug === "home" && b.boxed ? "About buying laptops in Pakistan" : undefined}

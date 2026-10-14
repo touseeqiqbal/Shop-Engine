@@ -52,7 +52,7 @@ export interface Chrome {
 export const DEFAULT_THEME: ThemeChrome = {
   logoDark: null,
   logoLight: null,
-  logoAlt: "Urko Tech Store",
+  logoAlt: "", // empty = the store's name
   logoHeight: 36,
   favicon: null,
   background: "#0a0a0f",
@@ -85,7 +85,7 @@ export const DEFAULT_CHROME: Chrome = {
   whatsapp: {
     enabled: true,
     numbers: [], // empty = use Store info phones
-    message: "Hi Urko Tech Store! I need help with an order.",
+    message: "", // empty = "Hi <store name>! I need help with an order."
     note: "", // empty = Store info note
     position: "right",
   },
@@ -102,7 +102,7 @@ export const SERVICE_LINKS: [string, string][] = [
   ["/terms", "Terms & Conditions"],
 ];
 export const COMPANY_LINKS: [string, string][] = [
-  ["/about", "About Urko Tech Store"],
+  ["/about", "About {store}"], // {store} = the store's name
   ["/contact", "Contact Us"],
   ["/wholesale", "Wholesale & Bulk Orders"],
   ["/blog", "Tech Blog & Buying Guides"],

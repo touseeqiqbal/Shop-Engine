@@ -1,6 +1,4 @@
-import { getPayload } from "payload";
-import config from "@payload-config";
-import { isStaffUser } from "@/payload/access";
+import { adminRequest, canSeeStore, storeOfPrivateFile } from "@/payload/route-access";
 import { getObject } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
@@ -11,10 +9,11 @@ const ALLOWED = /^(returns|warranty|tradein|reviews-pending)\/[A-Za-z0-9._/-]+$/
 export async function GET(req: Request) {
   const key = new URL(req.url).searchParams.get("key") ?? "";
   if (!ALLOWED.test(key) || key.includes("..")) return Response.json({ error: "Not found" }, { status: 404 });
-  const payload = await getPayload({ config });
-  const { user } = await payload.auth({ headers: req.headers });
-  // full staff rights only (owners/managers must have 2-step on – same rule as the rest of /cms)
-  if (!isStaffUser(user as never)) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  // the team of the store whose record holds the file (owners/managers must have 2-step on – same rule as the rest of /cms)
+  const { payload, t } = await adminRequest(req);
+  if (!t.platformAdmin && !t.roles.size) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const store = await storeOfPrivateFile(payload, key);
+  if (store === undefined || !canSeeStore(t, store)) return Response.json({ error: "Not found" }, { status: 404 });
   const obj = await getObject(key);
   if (!obj) return Response.json({ error: "Not found" }, { status: 404 });
   const type = /^image\/(jpeg|png|webp)$/.test(obj.contentType ?? "") ? obj.contentType! : "application/octet-stream";

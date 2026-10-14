@@ -6,7 +6,7 @@ import { pageMetadata } from "@/lib/seo";
 import { InlineText } from "@/components/content/inline-text";
 import { Markdown } from "@/components/ui/markdown";
 import { getPageMeta } from "@/lib/page-seo";
-import { getResolvedPageContent } from "@/lib/repo/site-content";
+import { getResolvedPageContent, getSiteInfo } from "@/lib/repo/site-content";
 import { PageHero } from "@/components/shop/page-hero";
 import { ProductListing } from "@/components/shop/product-listing";
 import { shouldNoindex, type RawSearchParams } from "@/components/shop/params";
@@ -27,9 +27,10 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   const sp = await searchParams;
   const q = getQ(sp);
   if (!q) return getPageMeta("/shop", { noindex: shouldNoindex(sp) });
+  const { name } = await getSiteInfo();
   return pageMetadata({
-    title: `Search results for "${q}" | Urko Tech Store`,
-    description: `Products matching "${q}" at Urko Tech Store – laptops, chargers, batteries & accessories with Cash on Delivery all over Pakistan.`,
+    title: `Search results for "${q}" | ${name}`,
+    description: `Products matching "${q}" at ${name} – laptops, chargers, batteries & accessories with Cash on Delivery all over Pakistan.`,
     path: "/shop",
     noindex: shouldNoindex(sp),
   });
@@ -94,7 +95,7 @@ export default async function ShopPage({ searchParams }: Props) {
       <ProductListing
         basePath="/shop"
         searchParams={sp}
-        listName={q ? `Search results for ${q}` : "All products – Urko Tech Store"}
+        listName={q ? `Search results for ${q}` : `All products – ${c.info.name}`}
         keepParams={["q"]}
       />
       {!q && c.seoCopy.trim() && (

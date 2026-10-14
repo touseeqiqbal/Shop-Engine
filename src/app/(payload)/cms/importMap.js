@@ -62,6 +62,10 @@ import { UsageCell as UsageCell_aaef90522b25c765d7edc6fe2a1db73a } from '../../.
 import { DiscountStatusCell as DiscountStatusCell_aaef90522b25c765d7edc6fe2a1db73a } from '../../../payload/admin/marketing/DiscountCells'
 import { MenuRowLabel as MenuRowLabel_24f67a374aa8f39956a3c103508218a9 } from '../../../payload/admin/RowLabel'
 import { CountReport as CountReport_db8907ada6fb4af05d873f19789b3a00 } from '../../../payload/admin/inventory/CountReport'
+import { TitleRowLabel as TitleRowLabel_24f67a374aa8f39956a3c103508218a9 } from '../../../payload/admin/RowLabel'
+import { ZoneRowLabel as ZoneRowLabel_24f67a374aa8f39956a3c103508218a9 } from '../../../payload/admin/RowLabel'
+import { ShippingFeeTester as ShippingFeeTester_625432db74deb1e615f7c95aeadcf55f } from '../../../payload/admin/ShippingFeeTester'
+import { FeedUrls as FeedUrls_76463ca4a3a77ee0e68aa14554c5c965 } from '../../../payload/admin/FeedUrls'
 import { FormatField as FormatField_cdf7e044479f899a31f804427d568b36 } from '@payloadcms/plugin-import-export/rsc'
 import { LimitField as LimitField_cdf7e044479f899a31f804427d568b36 } from '@payloadcms/plugin-import-export/rsc'
 import { Page as Page_cdf7e044479f899a31f804427d568b36 } from '@payloadcms/plugin-import-export/rsc'
@@ -75,10 +79,6 @@ import { ExportSaveButton as ExportSaveButton_cdf7e044479f899a31f804427d568b36 }
 import { ImportPreview as ImportPreview_cdf7e044479f899a31f804427d568b36 } from '@payloadcms/plugin-import-export/rsc'
 import { ImportSaveButton as ImportSaveButton_cdf7e044479f899a31f804427d568b36 } from '@payloadcms/plugin-import-export/rsc'
 import { FolderTypeField as FolderTypeField_2b8867833a34864a02ddf429b0728a40 } from '@payloadcms/next/client'
-import { TitleRowLabel as TitleRowLabel_24f67a374aa8f39956a3c103508218a9 } from '../../../payload/admin/RowLabel'
-import { ZoneRowLabel as ZoneRowLabel_24f67a374aa8f39956a3c103508218a9 } from '../../../payload/admin/RowLabel'
-import { ShippingFeeTester as ShippingFeeTester_625432db74deb1e615f7c95aeadcf55f } from '../../../payload/admin/ShippingFeeTester'
-import { FeedUrls as FeedUrls_76463ca4a3a77ee0e68aa14554c5c965 } from '../../../payload/admin/FeedUrls'
 import { UrkoNav as UrkoNav_510d17e1577c33657cfb2d09c6aa9056 } from '../../../payload/admin/nav/UrkoNav'
 import { Icon as Icon_fe32eb75d2e86cd142684d3b5ba68760 } from '../../../payload/admin/Brand'
 import { Logo as Logo_fe32eb75d2e86cd142684d3b5ba68760 } from '../../../payload/admin/Brand'
@@ -94,6 +94,8 @@ import { SecurityView as SecurityView_34b2475b77632088cc7cec9afc151f77 } from '.
 import { PrivacyView as PrivacyView_c4d14d13a2017a0aef31ddf52794ad38 } from '../../../payload/admin/privacy/PrivacyView'
 import { StockCountView as StockCountView_113950c8ba2e4d64ee293bb9fa41119e } from '../../../payload/admin/inventory/StockCountView'
 import { HelpView as HelpView_4f90d8d3c4262fe282fa729b5f35030f } from '../../../payload/admin/help/HelpView'
+import { StoreSettingsView as StoreSettingsView_c8dcc2c8795c3f1ae3ada3572fbd07f3 } from '../../../payload/admin/settings/StoreSettingsView'
+import { PlatformView as PlatformView_a30e078e5cc505c64747cb147c1a868a } from '../../../payload/admin/platform/PlatformView'
 import { CollectionCards as CollectionCards_f9c02e79a4aed9a3924487c0cd4cafb1 } from '@payloadcms/next/rsc'
 import { S3ClientUploadHandler as S3ClientUploadHandler_f97aa6c64367fa259c5bc0567239ef24 } from '@payloadcms/storage-s3/client'
 
@@ -163,6 +165,10 @@ export const importMap = {
   "/payload/admin/marketing/DiscountCells#DiscountStatusCell": DiscountStatusCell_aaef90522b25c765d7edc6fe2a1db73a,
   "/payload/admin/RowLabel#MenuRowLabel": MenuRowLabel_24f67a374aa8f39956a3c103508218a9,
   "/payload/admin/inventory/CountReport#CountReport": CountReport_db8907ada6fb4af05d873f19789b3a00,
+  "/payload/admin/RowLabel#TitleRowLabel": TitleRowLabel_24f67a374aa8f39956a3c103508218a9,
+  "/payload/admin/RowLabel#ZoneRowLabel": ZoneRowLabel_24f67a374aa8f39956a3c103508218a9,
+  "/payload/admin/ShippingFeeTester#ShippingFeeTester": ShippingFeeTester_625432db74deb1e615f7c95aeadcf55f,
+  "/payload/admin/FeedUrls#FeedUrls": FeedUrls_76463ca4a3a77ee0e68aa14554c5c965,
   "@payloadcms/plugin-import-export/rsc#FormatField": FormatField_cdf7e044479f899a31f804427d568b36,
   "@payloadcms/plugin-import-export/rsc#LimitField": LimitField_cdf7e044479f899a31f804427d568b36,
   "@payloadcms/plugin-import-export/rsc#Page": Page_cdf7e044479f899a31f804427d568b36,
@@ -176,10 +182,6 @@ export const importMap = {
   "@payloadcms/plugin-import-export/rsc#ImportPreview": ImportPreview_cdf7e044479f899a31f804427d568b36,
   "@payloadcms/plugin-import-export/rsc#ImportSaveButton": ImportSaveButton_cdf7e044479f899a31f804427d568b36,
   "@payloadcms/next/client#FolderTypeField": FolderTypeField_2b8867833a34864a02ddf429b0728a40,
-  "/payload/admin/RowLabel#TitleRowLabel": TitleRowLabel_24f67a374aa8f39956a3c103508218a9,
-  "/payload/admin/RowLabel#ZoneRowLabel": ZoneRowLabel_24f67a374aa8f39956a3c103508218a9,
-  "/payload/admin/ShippingFeeTester#ShippingFeeTester": ShippingFeeTester_625432db74deb1e615f7c95aeadcf55f,
-  "/payload/admin/FeedUrls#FeedUrls": FeedUrls_76463ca4a3a77ee0e68aa14554c5c965,
   "/payload/admin/nav/UrkoNav#UrkoNav": UrkoNav_510d17e1577c33657cfb2d09c6aa9056,
   "/payload/admin/Brand#Icon": Icon_fe32eb75d2e86cd142684d3b5ba68760,
   "/payload/admin/Brand#Logo": Logo_fe32eb75d2e86cd142684d3b5ba68760,
@@ -195,6 +197,8 @@ export const importMap = {
   "/payload/admin/privacy/PrivacyView#PrivacyView": PrivacyView_c4d14d13a2017a0aef31ddf52794ad38,
   "/payload/admin/inventory/StockCountView#StockCountView": StockCountView_113950c8ba2e4d64ee293bb9fa41119e,
   "/payload/admin/help/HelpView#HelpView": HelpView_4f90d8d3c4262fe282fa729b5f35030f,
+  "/payload/admin/settings/StoreSettingsView#StoreSettingsView": StoreSettingsView_c8dcc2c8795c3f1ae3ada3572fbd07f3,
+  "/payload/admin/platform/PlatformView#PlatformView": PlatformView_a30e078e5cc505c64747cb147c1a868a,
   "@payloadcms/next/rsc#CollectionCards": CollectionCards_f9c02e79a4aed9a3924487c0cd4cafb1,
   "@payloadcms/storage-s3/client#S3ClientUploadHandler": S3ClientUploadHandler_f97aa6c64367fa259c5bc0567239ef24
 }

@@ -69,6 +69,9 @@ export interface Config {
   collections: {
     stores: Store;
     'store-memberships': StoreMembership;
+    'subscription-plans': SubscriptionPlan;
+    'store-subscriptions': StoreSubscription;
+    'store-invoices': StoreInvoice;
     users: User;
     media: Media;
     products: Product;
@@ -98,6 +101,29 @@ export interface Config {
     suppliers: Supplier;
     purchases: Purchase;
     'stock-counts': StockCount;
+    'store-theme-settings': StoreThemeSetting;
+    'store-announcement-bar': StoreAnnouncementBar;
+    'store-header': StoreHeader;
+    'store-footer': StoreFooter;
+    'store-whatsapp-button': StoreWhatsappButton;
+    'store-shipping': StoreShipping;
+    'store-payments': StorePayment;
+    'store-notifications': StoreNotification;
+    'store-store-info': StoreStoreInfo;
+    'store-seo-settings': StoreSeoSetting;
+    'store-page-texts': StorePageText;
+    'store-testimonials': StoreTestimonial;
+    'store-faqs': StoreFaq;
+    'store-order-protection': StoreOrderProtection;
+    'store-returns-policy': StoreReturnsPolicy;
+    'store-cookie-notice': StoreCookieNotice;
+    'store-sales-channels': StoreSalesChannel;
+    'store-conversion': StoreConversion;
+    'outbox-events': OutboxEvent;
+    'payment-transactions': PaymentTransaction;
+    'payment-events': PaymentEvent;
+    'webhook-endpoints': WebhookEndpoint;
+    'customer-carts': CustomerCart;
     'stock-movements': StockMovement;
     'activity-log': ActivityLog;
     exports: Export;
@@ -121,6 +147,9 @@ export interface Config {
   collectionsSelect: {
     stores: StoresSelect<false> | StoresSelect<true>;
     'store-memberships': StoreMembershipsSelect<false> | StoreMembershipsSelect<true>;
+    'subscription-plans': SubscriptionPlansSelect<false> | SubscriptionPlansSelect<true>;
+    'store-subscriptions': StoreSubscriptionsSelect<false> | StoreSubscriptionsSelect<true>;
+    'store-invoices': StoreInvoicesSelect<false> | StoreInvoicesSelect<true>;
     users: UsersSelect<false> | UsersSelect<true>;
     media: MediaSelect<false> | MediaSelect<true>;
     products: ProductsSelect<false> | ProductsSelect<true>;
@@ -150,6 +179,29 @@ export interface Config {
     suppliers: SuppliersSelect<false> | SuppliersSelect<true>;
     purchases: PurchasesSelect<false> | PurchasesSelect<true>;
     'stock-counts': StockCountsSelect<false> | StockCountsSelect<true>;
+    'store-theme-settings': StoreThemeSettingsSelect<false> | StoreThemeSettingsSelect<true>;
+    'store-announcement-bar': StoreAnnouncementBarSelect<false> | StoreAnnouncementBarSelect<true>;
+    'store-header': StoreHeaderSelect<false> | StoreHeaderSelect<true>;
+    'store-footer': StoreFooterSelect<false> | StoreFooterSelect<true>;
+    'store-whatsapp-button': StoreWhatsappButtonSelect<false> | StoreWhatsappButtonSelect<true>;
+    'store-shipping': StoreShippingSelect<false> | StoreShippingSelect<true>;
+    'store-payments': StorePaymentsSelect<false> | StorePaymentsSelect<true>;
+    'store-notifications': StoreNotificationsSelect<false> | StoreNotificationsSelect<true>;
+    'store-store-info': StoreStoreInfoSelect<false> | StoreStoreInfoSelect<true>;
+    'store-seo-settings': StoreSeoSettingsSelect<false> | StoreSeoSettingsSelect<true>;
+    'store-page-texts': StorePageTextsSelect<false> | StorePageTextsSelect<true>;
+    'store-testimonials': StoreTestimonialsSelect<false> | StoreTestimonialsSelect<true>;
+    'store-faqs': StoreFaqsSelect<false> | StoreFaqsSelect<true>;
+    'store-order-protection': StoreOrderProtectionSelect<false> | StoreOrderProtectionSelect<true>;
+    'store-returns-policy': StoreReturnsPolicySelect<false> | StoreReturnsPolicySelect<true>;
+    'store-cookie-notice': StoreCookieNoticeSelect<false> | StoreCookieNoticeSelect<true>;
+    'store-sales-channels': StoreSalesChannelsSelect<false> | StoreSalesChannelsSelect<true>;
+    'store-conversion': StoreConversionSelect<false> | StoreConversionSelect<true>;
+    'outbox-events': OutboxEventsSelect<false> | OutboxEventsSelect<true>;
+    'payment-transactions': PaymentTransactionsSelect<false> | PaymentTransactionsSelect<true>;
+    'payment-events': PaymentEventsSelect<false> | PaymentEventsSelect<true>;
+    'webhook-endpoints': WebhookEndpointsSelect<false> | WebhookEndpointsSelect<true>;
+    'customer-carts': CustomerCartsSelect<false> | CustomerCartsSelect<true>;
     'stock-movements': StockMovementsSelect<false> | StockMovementsSelect<true>;
     'activity-log': ActivityLogSelect<false> | ActivityLogSelect<true>;
     exports: ExportsSelect<false> | ExportsSelect<true>;
@@ -252,52 +304,72 @@ export interface Store {
   id: number;
   name: string;
   /**
-   * Made from the name automatically (lowercase letters, numbers and dashes). If you change it later, the old address forwards to the new one.
+   * Store handle (unique on ShopEngine).
    */
   slug: string;
   /**
-   * Legal or business-facing storefront name.
+   * Legal / business name shown on invoices.
    */
   businessName?: string | null;
-  status: 'active' | 'suspended' | 'closed' | 'draft';
   /**
-   * Store subdomain, such as myshop.shopengine.dev.
+   * Draft: only the team sees it. Suspended / Closed: the store is offline and its admin is read-only.
+   */
+  status: 'draft' | 'active' | 'suspended' | 'closed';
+  /**
+   * The original shop: answers on the main site address and owns the global settings.
+   */
+  isDefault?: boolean | null;
+  /**
+   * Store address on the platform, e.g. myshop → myshop.<platform domain>.
    */
   subdomain?: string | null;
   /**
-   * Custom domain for the storefront.
+   * Your own domain, e.g. shop.example.com. Point it to the platform, then add the TXT record below to verify it.
    */
   customDomain?: string | null;
+  /**
+   * Add a DNS TXT record on your domain with exactly this value, then press Verify (Account → Stores).
+   */
+  domainVerificationToken?: string | null;
+  /**
+   * Set when the TXT record was found. The store answers on its custom domain only after this.
+   */
+  domainVerifiedAt?: string | null;
   country?: string | null;
+  /**
+   * ISO code, e.g. PKR, USD.
+   */
   currency?: string | null;
   timezone?: string | null;
   defaultLanguage?: string | null;
   /**
-   * Primary merchant owner for this store.
+   * Start of every order number, e.g. ABC → ABC-261014-123456 (2–6 letters/numbers).
+   */
+  orderPrefix?: string | null;
+  /**
+   * The merchant who opened the store.
    */
   owner?: (number | null) | User;
-  logo?: (number | null) | Media;
-  brandColor?: string | null;
-  supportEmail?: string | null;
-  supportPhone?: string | null;
+  plan?: (number | null) | SubscriptionPlan;
+  subscriptionStatus?: ('trialing' | 'active' | 'past_due' | 'cancelled' | 'expired' | 'suspended') | null;
+  trialEndsAt?: string | null;
   /**
-   * store default configuration and per-store preferences.
+   * A store gets one free trial.
    */
-  settings?:
-    | {
-        [k: string]: unknown;
-      }
-    | unknown[]
-    | string
-    | number
-    | boolean
-    | null;
+  trialUsed?: boolean | null;
   /**
-   * Members with access to this store.
+   * Past due / trial over: the store stays open until this date.
    */
-  members?: (number | User)[] | null;
+  graceEndsAt?: string | null;
+  billingEmail?: string | null;
+  paymentsProvider?: 'stripe' | null;
   /**
-   * Platform-admin-only internal notes.
+   * Connected payment account (set when the owner connects payments).
+   */
+  paymentsAccountId?: string | null;
+  paymentsChargesEnabled?: boolean | null;
+  /**
+   * Platform admins only.
    */
   internalNotes?: string | null;
   updatedAt: string;
@@ -340,21 +412,25 @@ export interface User {
    */
   phone?: string | null;
   /**
-   * Managers can add Staff; only the Owner can make someone a Manager or Owner.
+   * The original shop's team. Managers can add Staff; only a platform admin can make someone a Manager or Owner. Merchants' teams are managed under Store memberships.
    */
   role: 'owner' | 'manager' | 'staff' | 'customer';
   /**
-   * Optional platform-level access when a user is assigned to the ShopEngine control plane.
+   * Platform admin = runs ShopEngine (every store). Only a platform admin can change this.
    */
-  platformRole?: ('customer' | 'platform_admin' | 'merchant_owner' | 'merchant_manager' | 'merchant_staff') | null;
+  platformRole?: ('customer' | 'merchant_owner' | 'platform_admin') | null;
   /**
-   * Default active store for this user in the platform context.
+   * The store this person works in in /cms (changed with the store switcher). Empty for a platform admin = all stores.
    */
   currentStore?: (number | null) | Store;
   /**
-   * All stores this user can access.
+   * Stores this customer agreed to receive news and offers from (ticked at checkout). Each store sees only its own.
    */
-  stores?: (number | Store)[] | null;
+  marketingConsent?: (number | Store)[] | null;
+  /**
+   * Stores this person has ordered from or signed up at (set automatically).
+   */
+  customerOf?: (number | Store)[] | null;
   /**
    * Saved delivery addresses (managed from the storefront account page).
    */
@@ -382,7 +458,7 @@ export interface User {
    */
   notes?: string | null;
   /**
-   * Blocked customers can't place orders.
+   * Blocked accounts can't place orders on any store. Other stores block phone numbers instead (Blocked phones).
    */
   blocked?: boolean | null;
   orders?: {
@@ -404,8 +480,6 @@ export interface User {
   salt?: string | null;
   hash?: string | null;
   resetPasswordRequestedAt?: string | null;
-  loginAttempts?: number | null;
-  lockUntil?: string | null;
   sessions?:
     | {
         id: string;
@@ -422,11 +496,16 @@ export interface User {
  */
 export interface Order {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   orderNumber: string;
   /**
    * Usually changed with the buttons at the top.
    */
   status:
+    | 'awaiting-payment'
     | 'awaiting-confirmation'
     | 'pending'
     | 'confirmed'
@@ -452,6 +531,16 @@ export interface Order {
         productLegacyId?: string | null;
         unitPrice: number;
         qty: number;
+        sku?: string | null;
+        options?:
+          | {
+              [k: string]: unknown;
+            }
+          | unknown[]
+          | string
+          | number
+          | boolean
+          | null;
         slug?: string | null;
         url?: string | null;
         image?: string | null;
@@ -483,18 +572,61 @@ export interface Order {
   total: number;
   advancePaid?: number | null;
   couponCode?: string | null;
+  /**
+   * Tax inside the total, from the store's tax rate when the order was placed.
+   */
+  taxTotal?: number | null;
+  couponConsumed?: boolean | null;
+  couponReturned?: boolean | null;
   paymentMethod: 'cod' | 'jazzcash' | 'easypaisa' | 'bank' | 'card';
-  paymentStatus: 'unpaid' | 'awaiting-verification' | 'paid' | 'refunded' | 'partial';
+  paymentStatus: 'unpaid' | 'awaiting-verification' | 'paid' | 'refunded' | 'partial' | 'partially-refunded';
   paymentScreenshotKey?: string | null;
+  /**
+   * Transaction id from the transfer / wallet receipt, or the online payment id.
+   */
+  paymentReference?: string | null;
+  /**
+   * Follows the order status (separate from payment).
+   */
+  fulfillmentStatus?:
+    ('unfulfilled' | 'partially_fulfilled' | 'in_transit' | 'delivered' | 'returned' | 'cancelled') | null;
   courier?: string | null;
   trackingNumber?: string | null;
   /**
-   * Internal notes.
+   * Each parcel sent for this order, with its own courier and tracking number.
+   */
+  shipments?:
+    | {
+        items?:
+          | {
+              [k: string]: unknown;
+            }
+          | unknown[]
+          | string
+          | number
+          | boolean
+          | null;
+        courier?: string | null;
+        trackingNumber?: string | null;
+        status?: ('shipped' | 'delivered' | 'cancelled') | null;
+        shippedAt?: string | null;
+        deliveredAt?: string | null;
+        id?: string | null;
+      }[]
+    | null;
+  customerNote?: string | null;
+  /**
+   * Ticked by the customer at checkout (for this store only).
+   */
+  marketingConsent?: boolean | null;
+  /**
+   * Internal notes (never shown to the customer).
    */
   notes?: string | null;
   history?:
     | {
         status:
+          | 'awaiting-payment'
           | 'awaiting-confirmation'
           | 'pending'
           | 'confirmed'
@@ -541,6 +673,10 @@ export interface Order {
  */
 export interface Product {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   title: string;
   brand: number | Brand;
   model?: string | null;
@@ -598,6 +734,14 @@ export interface Product {
    * You get a low-stock alert when stock reaches this number.
    */
   lowStockThreshold?: number | null;
+  /**
+   * EAN / UPC / GTIN – scan it at the shop counter. Optional.
+   */
+  barcode?: string | null;
+  /**
+   * Your own grouping for reports and filters, e.g. Laptop, Charger, Gift card. Optional.
+   */
+  productType?: string | null;
   /**
    * e.g. piece, pair, box of 10. Empty = piece.
    */
@@ -727,6 +871,10 @@ export interface Product {
  */
 export interface Brand {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   name: string;
   /**
    * Made from the name automatically (lowercase letters, numbers and dashes). If you change it later, the old address forwards to the new one.
@@ -746,6 +894,10 @@ export interface Brand {
  */
 export interface Media {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   /**
    * Describe the image for Google and screen readers, e.g. “HP EliteBook 840 G8 – keyboard and screen”.
    */
@@ -823,6 +975,10 @@ export interface FolderInterface {
     totalDocs?: number;
   };
   folderType?: 'media'[] | null;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   updatedAt: string;
   createdAt: string;
 }
@@ -832,6 +988,10 @@ export interface FolderInterface {
  */
 export interface Category {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   name: string;
   nameUr?: string | null;
   /**
@@ -896,6 +1056,10 @@ export interface Category {
  */
 export interface LaptopModel {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   name: string;
   brand: number | Brand;
   series?: string | null;
@@ -911,17 +1075,156 @@ export interface LaptopModel {
   createdAt: string;
 }
 /**
+ * ShopEngine plans merchants choose from. Limits are enforced by the server.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "subscription-plans".
+ */
+export interface SubscriptionPlan {
+  id: number;
+  name: string;
+  /**
+   * Made from the name automatically (lowercase letters, numbers and dashes). If you change it later, the old address forwards to the new one.
+   */
+  slug: string;
+  description?: string | null;
+  status: 'active' | 'archived';
+  priceMonthly: number;
+  priceAnnual: number;
+  currency?: string | null;
+  trialDays?: number | null;
+  /**
+   * 0 = unlimited
+   */
+  maxProducts?: number | null;
+  /**
+   * 0 = unlimited
+   */
+  maxStaffMembers?: number | null;
+  /**
+   * 0 = unlimited
+   */
+  maxStorageGb?: number | null;
+  /**
+   * What stores on this plan can use (checked by the server).
+   */
+  features?: ('custom_domain' | 'online_payments' | 'pos' | 'reports' | 'discounts' | 'abandoned_carts')[] | null;
+  /**
+   * Short selling line on the plan picker.
+   */
+  highlight?: string | null;
+  /**
+   * Payment provider price id for monthly billing (e.g. Stripe price_…).
+   */
+  providerPriceIdMonthly?: string | null;
+  providerPriceIdAnnual?: string | null;
+  sortOrder?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Who works in this store. Add someone by their email: they get an invitation link and join once they accept it.
+ *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "store-memberships".
  */
 export interface StoreMembership {
   id: number;
   store: number | Store;
-  user: number | User;
-  role: 'store_owner' | 'store_manager' | 'store_staff' | 'customer';
-  status?: ('active' | 'invited' | 'suspended') | null;
+  /**
+   * Filled in when the invitation is accepted.
+   */
+  user?: (number | null) | User;
+  /**
+   * Who was invited.
+   */
+  email?: string | null;
+  role: 'store_owner' | 'store_manager' | 'store_staff';
+  /**
+   * Suspended: keeps the record, removes all access at once.
+   */
+  status: 'invited' | 'active' | 'suspended';
+  invitedBy?: (number | null) | User;
   invitedAt?: string | null;
+  inviteExpiresAt?: string | null;
   acceptedAt?: string | null;
+  inviteTokenHash?: string | null;
+  notes?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Each store's ShopEngine plan (one per store).
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-subscriptions".
+ */
+export interface StoreSubscription {
+  id: number;
+  store: number | Store;
+  plan: number | SubscriptionPlan;
+  status: 'trialing' | 'active' | 'past_due' | 'cancelled' | 'expired' | 'suspended';
+  billingCycle?: ('monthly' | 'annual') | null;
+  trialEndsAt?: string | null;
+  currentPeriodStart?: string | null;
+  currentPeriodEnd?: string | null;
+  cancelAtPeriodEnd?: boolean | null;
+  /**
+   * Past due: the shop stays open until this date, then the plan expires.
+   */
+  graceEndsAt?: string | null;
+  amount?: number | null;
+  currency?: string | null;
+  billingEmail?: string | null;
+  /**
+   * stripe, manual …
+   */
+  paymentProvider?: string | null;
+  externalCustomerId?: string | null;
+  /**
+   * Provider-side subscription id.
+   */
+  externalSubscriptionId?: string | null;
+  lastInvoiceAt?: string | null;
+  lastPaymentAt?: string | null;
+  failedPayments?: number | null;
+  notes?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * ShopEngine invoices to merchants.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-invoices".
+ */
+export interface StoreInvoice {
+  id: number;
+  store: number | Store;
+  subscription?: (number | null) | StoreSubscription;
+  invoiceNumber: string;
+  status: 'draft' | 'open' | 'paid' | 'failed' | 'refunded' | 'voided';
+  amount: number;
+  currency?: string | null;
+  issuedAt?: string | null;
+  dueAt?: string | null;
+  paidAt?: string | null;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  /**
+   * Provider-side invoice id (one record per provider invoice).
+   */
+  providerInvoiceId?: string | null;
+  hostedInvoiceUrl?: string | null;
+  lines?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
   notes?: string | null;
   updatedAt: string;
   createdAt: string;
@@ -934,6 +1237,10 @@ export interface StoreMembership {
  */
 export interface ProductCollection {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   title: string;
   /**
    * Shown under the heading. Plain text; **bold** works.
@@ -1008,6 +1315,10 @@ export interface ProductCollection {
  */
 export interface Review {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   product: number | Product;
   name: string;
   city?: string | null;
@@ -1050,6 +1361,10 @@ export interface Review {
  */
 export interface Post {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   title: string;
   excerpt?: string | null;
   cover?: (number | null) | Media;
@@ -1076,6 +1391,9 @@ export interface Post {
   slug: string;
   category?: string | null;
   tags?: string[] | null;
+  /**
+   * Empty = the store's name.
+   */
   author?: string | null;
   publishedAt?: string | null;
   /**
@@ -1113,6 +1431,10 @@ export interface Post {
  */
 export interface ReturnRequest {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   requestNumber?: string | null;
   status: 'requested' | 'approved' | 'rejected' | 'received' | 'inspected' | 'refunded' | 'replaced' | 'repaired';
   orderNumber?: string | null;
@@ -1169,6 +1491,10 @@ export interface ReturnRequest {
  */
 export interface WarrantyClaim {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   claimNumber?: string | null;
   status: 'open' | 'received' | 'in-repair' | 'repaired' | 'replaced' | 'rejected' | 'returned';
   serial?: string | null;
@@ -1217,6 +1543,10 @@ export interface WarrantyClaim {
 export interface Unit {
   id: number;
   /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  /**
    * Scan the barcode on the laptop or type it.
    */
   serial: string;
@@ -1250,6 +1580,11 @@ export interface Unit {
  */
 export interface PosSale {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  clientSaleId?: string | null;
   receiptNumber: string;
   status: 'completed' | 'voided';
   items?:
@@ -1295,6 +1630,10 @@ export interface PosSale {
  */
 export interface CashUp {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   day: string;
   openingFloat?: number | null;
   expectedCash?: number | null;
@@ -1316,7 +1655,7 @@ export interface CashUp {
   createdAt: string;
 }
 /**
- * Coupon codes shoppers enter at checkout.
+ * Codes shoppers type at checkout, or automatic discounts applied by themselves. Checked and calculated by the server.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "discounts".
@@ -1324,25 +1663,55 @@ export interface CashUp {
 export interface Discount {
   id: number;
   /**
-   * e.g. WELCOME5 (saved in capitals).
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  /**
+   * e.g. WELCOME5 (saved in capitals). For an automatic discount this is just its name.
    */
   code: string;
-  kind: 'percent' | 'fixed';
+  kind: 'percent' | 'fixed' | 'free_shipping';
   /**
-   * Percent or rupees.
+   * Percent or amount (ignored for free delivery).
    */
   value: number;
+  /**
+   * Applied by itself to every cart that qualifies. At most one automatic discount per order (the best one).
+   */
+  automatic?: boolean | null;
   minOrder?: number | null;
   /**
    * Empty = unlimited.
    */
   usageLimit?: number | null;
+  /**
+   * Uses per customer (by email / phone). Empty = unlimited.
+   */
+  perCustomerLimit?: number | null;
   used?: number | null;
+  /**
+   * Empty = from now.
+   */
+  startsAt?: string | null;
   /**
    * Empty = never expires.
    */
   expiresAt?: string | null;
   active?: boolean | null;
+  /**
+   * A product/category/collection discount counts only the matching items (and their minimum order).
+   */
+  appliesTo?: ('all' | 'products' | 'categories' | 'collections') | null;
+  products?: (number | Product)[] | null;
+  /**
+   * Sub-categories are included.
+   */
+  categories?: (number | Category)[] | null;
+  collections?: (number | ProductCollection)[] | null;
+  /**
+   * A code and an automatic discount add up only when BOTH allow it; otherwise the bigger one is used.
+   */
+  combinable?: boolean | null;
   /**
    * Imported from the previous system.
    */
@@ -1358,6 +1727,10 @@ export interface Discount {
  */
 export interface FlashSale {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   title: string;
   endsAt: string;
   active?: boolean | null;
@@ -1375,6 +1748,10 @@ export interface FlashSale {
  */
 export interface WholesaleInquiry {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   name: string;
   businessName?: string | null;
   phone: string;
@@ -1409,6 +1786,10 @@ export interface WholesaleInquiry {
  */
 export interface ContactMessage {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   name: string;
   phone?: string | null;
   email?: string | null;
@@ -1431,6 +1812,10 @@ export interface ContactMessage {
  */
 export interface Page {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   title: string;
   /**
    * Shown in brand colours. Optional.
@@ -1719,6 +2104,10 @@ export interface Page {
  */
 export interface Menu {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   name: string;
   /**
    * Stable id, e.g. main-menu, footer-shop.
@@ -1800,6 +2189,10 @@ export interface Menu {
 export interface BlockedPhone {
   id: number;
   /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  /**
    * e.g. 03001234567
    */
   phone: string;
@@ -1815,6 +2208,10 @@ export interface BlockedPhone {
  */
 export interface TradeIn {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   status: 'new' | 'contacted' | 'offered' | 'bought' | 'declined';
   offerPrice?: number | null;
   expectedPrice?: number | null;
@@ -1853,6 +2250,10 @@ export interface TradeIn {
  */
 export interface ProductQuestion {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   product: number | Product;
   question: string;
   answer?: string | null;
@@ -1870,6 +2271,10 @@ export interface ProductQuestion {
  */
 export interface StockAlert {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   product: number | Product;
   kind: 'stock' | 'price';
   status: 'waiting' | 'sent' | 'cancelled';
@@ -1887,6 +2292,10 @@ export interface StockAlert {
  */
 export interface AbandonedCart {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   status: 'open' | 'reminded' | 'recovered' | 'stopped';
   total?: number | null;
   remindersSent?: number | null;
@@ -1916,6 +2325,10 @@ export interface AbandonedCart {
  */
 export interface Supplier {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   name: string;
   contactPerson?: string | null;
   phone?: string | null;
@@ -1934,6 +2347,10 @@ export interface Supplier {
  */
 export interface Purchase {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   supplier: number | Supplier;
   invoiceNumber?: string | null;
   date: string;
@@ -1961,6 +2378,10 @@ export interface Purchase {
  */
 export interface StockCount {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   name: string;
   status: 'open' | 'finished' | 'applied';
   category?: (number | null) | Category;
@@ -1982,6 +2403,1074 @@ export interface StockCount {
   createdAt: string;
 }
 /**
+ * Logo, colours, fonts and button style for the whole storefront.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-theme-settings".
+ */
+export interface StoreThemeSetting {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  /**
+   * Leave empty to use the built-in logo (the store's name).
+   */
+  logoDark?: (number | null) | Media;
+  logoLight?: (number | null) | Media;
+  /**
+   * Square PNG/SVG, at least 512×512.
+   */
+  favicon?: (number | null) | Media;
+  /**
+   * Header logo height in px.
+   */
+  logoHeight?: number | null;
+  background?: string | null;
+  backgroundLight?: string | null;
+  /**
+   * Links, highlights, “Tech Store” wordmark.
+   */
+  accent?: string | null;
+  gradientFrom?: string | null;
+  gradientVia?: string | null;
+  gradientTo?: string | null;
+  bodyFont?: ('inter' | 'space-grotesk' | 'montserrat' | 'poppins') | null;
+  headingFont?: ('inter' | 'space-grotesk' | 'montserrat' | 'poppins') | null;
+  buttonStyle?: ('pill' | 'rounded' | 'square') | null;
+  cardRadius?: ('sm' | 'md' | 'xl' | '2xl') | null;
+  defaultMode?: ('dark' | 'light') | null;
+  allowModeToggle?: boolean | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * The thin message bar at the very top of every page.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-announcement-bar".
+ */
+export interface StoreAnnouncementBar {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  enabled?: boolean | null;
+  /**
+   * Leave empty to show the store tagline.
+   */
+  text?: string | null;
+  /**
+   * Optional, e.g. /deals
+   */
+  linkUrl?: string | null;
+  /**
+   * e.g. Shop now
+   */
+  linkLabel?: string | null;
+  /**
+   * Empty = theme default
+   */
+  backgroundColor?: string | null;
+  /**
+   * Empty = theme default
+   */
+  textColor?: string | null;
+  /**
+   * Optional – show from
+   */
+  startsAt?: string | null;
+  /**
+   * Optional – hide after
+   */
+  endsAt?: string | null;
+  showContactLinks?: boolean | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-header".
+ */
+export interface StoreHeader {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  /**
+   * Desktop navigation + mobile menu. Items marked “mega menu” open a large dropdown.
+   */
+  mainMenu?: (number | null) | Menu;
+  /**
+   * Optional separate menu for phones (defaults to the main menu).
+   */
+  mobileMenu?: (number | null) | Menu;
+  sticky?: boolean | null;
+  showSearch?: boolean | null;
+  showLanguageToggle?: boolean | null;
+  showAccountLinks?: boolean | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-footer".
+ */
+export interface StoreFooter {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  about?: string | null;
+  /**
+   * Link columns. Pick a menu for each column (Online store → Menus).
+   */
+  columns?:
+    | {
+        title: string;
+        menu: number | Menu;
+        id?: string | null;
+      }[]
+    | null;
+  showContactInfo?: boolean | null;
+  showSocialLinks?: boolean | null;
+  showCityLinks?: boolean | null;
+  /**
+   * Payment methods / couriers shown as badges.
+   */
+  paymentBadges?: string[] | null;
+  /**
+   * {year} and {store} are filled in automatically.
+   */
+  copyright?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * The floating green WhatsApp button on every page.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-whatsapp-button".
+ */
+export interface StoreWhatsappButton {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  enabled?: boolean | null;
+  /**
+   * Leave empty to use the phone numbers from Store info. One number = opens chat directly; several = shopper chooses.
+   */
+  contacts?:
+    | {
+        label: string;
+        /**
+         * International format, e.g. +92 342 6693115
+         */
+        phone: string;
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * Empty = “Hi <store name>! I need help with an order.”
+   */
+  message?: string | null;
+  /**
+   * Leave empty to use the note from Store info.
+   */
+  note?: string | null;
+  position?: ('right' | 'left') | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Delivery charges by city, free-delivery threshold and delivery times. Use the fee tester below to check any city and cart total.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-shipping".
+ */
+export interface StoreShipping {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  /**
+   * Store-wide. 0 = no free delivery. A zone can override it.
+   */
+  freeDeliveryThreshold?: number | null;
+  defaultCharge?: number | null;
+  /**
+   * A city uses the first zone that lists it; every other city uses the “rest of Pakistan” zone.
+   */
+  zones?:
+    | {
+        name: string;
+        rest?: boolean | null;
+        cities?:
+          | (
+              | 'Abbottabad'
+              | 'Ahmadpur East'
+              | 'Alipur'
+              | 'Arifwala'
+              | 'Attock'
+              | 'Awaran'
+              | 'Badin'
+              | 'Bagh'
+              | 'Bahawalnagar'
+              | 'Bahawalpur'
+              | 'Bannu'
+              | 'Barkhan'
+              | 'Batagram'
+              | 'Battagram'
+              | 'Bhakkar'
+              | 'Bhalwal'
+              | 'Bhimber'
+              | 'Burewala'
+              | 'Chakwal'
+              | 'Chaman'
+              | 'Charsadda'
+              | 'Chichawatni'
+              | 'Chiniot'
+              | 'Chishtian'
+              | 'Chitral'
+              | 'Dadu'
+              | 'Daska'
+              | 'Dera Ghazi Khan'
+              | 'Dera Ismail Khan'
+              | 'Dera Murad Jamali'
+              | 'Dina'
+              | 'Dipalpur'
+              | 'Faisalabad'
+              | 'Fateh Jang'
+              | 'Gadoon'
+              | 'Gawadar'
+              | 'Ghotki'
+              | 'Gilgit'
+              | 'Gojra'
+              | 'Gujar Khan'
+              | 'Gujranwala'
+              | 'Gujrat'
+              | 'Hafizabad'
+              | 'Hala'
+              | 'Hangu'
+              | 'Haripur'
+              | 'Haroonabad'
+              | 'Hasilpur'
+              | 'Hassan Abdal'
+              | 'Hub'
+              | 'Hunza'
+              | 'Hyderabad'
+              | 'Islamabad'
+              | 'Jacobabad'
+              | 'Jalalpur Jattan'
+              | 'Jampur'
+              | 'Jamshoro'
+              | 'Jaranwala'
+              | 'Jhang'
+              | 'Jhelum'
+              | 'Kabirwala'
+              | 'Kahror Pakka'
+              | 'Kamalia'
+              | 'Kamoke'
+              | 'Kandhkot'
+              | 'Karachi'
+              | 'Kasur'
+              | 'Khairpur'
+              | 'Khanewal'
+              | 'Khanpur'
+              | 'Kharian'
+              | 'Khushab'
+              | 'Khuzdar'
+              | 'Kohat'
+              | 'Kot Addu'
+              | 'Kotli'
+              | 'Kotri'
+              | 'Lahore'
+              | 'Lakki Marwat'
+              | 'Lalamusa'
+              | 'Larkana'
+              | 'Layyah'
+              | 'Lodhran'
+              | 'Loralai'
+              | 'Malakand'
+              | 'Mandi Bahauddin'
+              | 'Mansehra'
+              | 'Mardan'
+              | 'Matiari'
+              | 'Mian Channu'
+              | 'Mianwali'
+              | 'Mingora'
+              | 'Mirpur (AJK)'
+              | 'Mirpur Khas'
+              | 'Mirpur Mathelo'
+              | 'Moro'
+              | 'Multan'
+              | 'Muridke'
+              | 'Murree'
+              | 'Muzaffarabad'
+              | 'Muzaffargarh'
+              | 'Narowal'
+              | 'Naushahro Feroze'
+              | 'Nawabshah'
+              | 'Nowshera'
+              | 'Okara'
+              | 'Other (mention in address)'
+              | 'Pakpattan'
+              | 'Pasrur'
+              | 'Pattoki'
+              | 'Peshawar'
+              | 'Pind Dadan Khan'
+              | 'Pindi Bhattian'
+              | 'Pishin'
+              | 'Quetta'
+              | 'Rahim Yar Khan'
+              | 'Rajanpur'
+              | 'Rawalakot'
+              | 'Rawalpindi'
+              | 'Renala Khurd'
+              | 'Sadiqabad'
+              | 'Sahiwal'
+              | 'Samundri'
+              | 'Sanghar'
+              | 'Sangla Hill'
+              | 'Sargodha'
+              | 'Shahdadkot'
+              | 'Shahdadpur'
+              | 'Sheikhupura'
+              | 'Shikarpur'
+              | 'Shujabad'
+              | 'Sialkot'
+              | 'Sibi'
+              | 'Skardu'
+              | 'Sukkur'
+              | 'Swabi'
+              | 'Swat'
+              | 'Talagang'
+              | 'Tando Adam'
+              | 'Tando Allahyar'
+              | 'Tando Muhammad Khan'
+              | 'Taxila'
+              | 'Thatta'
+              | 'Timergara'
+              | 'Toba Tek Singh'
+              | 'Turbat'
+              | 'Umerkot'
+              | 'Vehari'
+              | 'Wah Cantt'
+              | 'Wazirabad'
+              | 'Zhob'
+              | 'Ziarat'
+            )[]
+          | null;
+        charge: number;
+        /**
+         * Empty = store-wide. 0 = never free.
+         */
+        freeAbove?: number | null;
+        /**
+         * e.g. 1–3 working days. Empty = automatic.
+         */
+        estimate?: string | null;
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Which payment methods shoppers can choose, account details and rules for large Cash-on-Delivery orders.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-payments".
+ */
+export interface StorePayment {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  cod?: {
+    enabled?: boolean | null;
+    /**
+     * Optional, e.g. “Pay within 24 hours”.
+     */
+    note?: string | null;
+    /**
+     * Added to COD orders. 0 = none.
+     */
+    fee?: number | null;
+    /**
+     * Empty = no limit.
+     */
+    maxOrder?: number | null;
+    advanceThreshold?: number | null;
+    /**
+     * Paid by JazzCash / EasyPaisa / bank to confirm high-value COD orders. 0 = never ask.
+     */
+    advanceAmount?: number | null;
+  };
+  jazzcash?: {
+    enabled?: boolean | null;
+    /**
+     * Optional, e.g. “Pay within 24 hours”.
+     */
+    note?: string | null;
+    title?: string | null;
+    /**
+     * Empty = JazzCash isn't offered at checkout.
+     */
+    number?: string | null;
+  };
+  easypaisa?: {
+    enabled?: boolean | null;
+    /**
+     * Optional, e.g. “Pay within 24 hours”.
+     */
+    note?: string | null;
+    title?: string | null;
+    /**
+     * Empty = EasyPaisa isn't offered at checkout.
+     */
+    number?: string | null;
+  };
+  bank?: {
+    enabled?: boolean | null;
+    /**
+     * Optional, e.g. “Pay within 24 hours”.
+     */
+    note?: string | null;
+    bankName?: string | null;
+    accountTitle?: string | null;
+    accountNumber?: string | null;
+    iban?: string | null;
+  };
+  card?: {
+    enabled?: boolean | null;
+    /**
+     * Optional, e.g. “Pay within 24 hours”.
+     */
+    note?: string | null;
+  };
+  /**
+   * Sales tax / VAT on orders. Shown on the order, invoice and reports.
+   */
+  tax?: {
+    enabled?: boolean | null;
+    rate?: number | null;
+    /**
+     * Off = tax is added on top at checkout.
+     */
+    inclusive?: boolean | null;
+    label?: string | null;
+    taxDelivery?: boolean | null;
+  };
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Order and enquiry alerts for your team, and the messages customers receive.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-notifications".
+ */
+export interface StoreNotification {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  /**
+   * Email addresses. Empty = the store email (Store info).
+   */
+  staffEmails?: string[] | null;
+  alertNewOrder?: boolean | null;
+  alertWholesale?: boolean | null;
+  alertContact?: boolean | null;
+  customerEmail?: boolean | null;
+  customerWhatsApp?: boolean | null;
+  customerSms?: boolean | null;
+  orderConfirmation?: boolean | null;
+  statusUpdates?: ('confirmed' | 'dispatched' | 'out-for-delivery' | 'delivered')[] | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Business name, address, phones, opening hours and social links – used across the site, in Google data and in emails.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-store-info".
+ */
+export interface StoreStoreInfo {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  name: string;
+  shortName?: string | null;
+  tagline?: string | null;
+  description?: string | null;
+  email?: string | null;
+  /**
+   * First number = main number (calls, WhatsApp button).
+   */
+  phones?:
+    | {
+        label?: string | null;
+        /**
+         * +92 342 6693115
+         */
+        display: string;
+        /**
+         * +923426693115
+         */
+        tel?: string | null;
+        /**
+         * 923426693115
+         */
+        wa?: string | null;
+        id?: string | null;
+      }[]
+    | null;
+  address?: {
+    street?: string | null;
+    area?: string | null;
+    city?: string | null;
+    region?: string | null;
+    postalCode?: string | null;
+    country?: string | null;
+    countryCode?: string | null;
+    full?: string | null;
+  };
+  geo?: {
+    lat?: number | null;
+    lng?: number | null;
+  };
+  mapLink?: string | null;
+  mapEmbed?: string | null;
+  hours?:
+    | {
+        days?: ('Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday')[] | null;
+        /**
+         * 11:00
+         */
+        opens?: string | null;
+        /**
+         * 21:00
+         */
+        closes?: string | null;
+        id?: string | null;
+      }[]
+    | null;
+  hoursDisplay?: string | null;
+  whatsappNote?: string | null;
+  social?: {
+    facebook?: string | null;
+    instagram?: string | null;
+    tiktok?: string | null;
+    youtube?: string | null;
+    x?: string | null;
+    linkedin?: string | null;
+    pinterest?: string | null;
+    threads?: string | null;
+  };
+  /**
+   * Courier partners shown in the footer and delivery info.
+   */
+  couriers?: string[] | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Site-wide SEO defaults, verification codes, analytics IDs and per-page titles/descriptions for built-in pages.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-seo-settings".
+ */
+export interface StoreSeoSetting {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  /**
+   * %s = page title. Empty = “%s | <store name>”.
+   */
+  titleTemplate?: string | null;
+  defaultTitle?: string | null;
+  defaultDescription?: string | null;
+  defaultOgImage?: string | null;
+  keywords?: string[] | null;
+  /**
+   * Only for emergencies – staging is always hidden automatically.
+   */
+  discourageIndexing?: boolean | null;
+  googleVerification?: string | null;
+  bingVerification?: string | null;
+  facebookVerification?: string | null;
+  ga4Id?: string | null;
+  metaPixelId?: string | null;
+  /**
+   * Override the title / description of built-in pages (shop, deals, policies…). Use {city} etc. in template pages.
+   */
+  pages?:
+    | {
+        page:
+          | '/'
+          | '/shop'
+          | '/category'
+          | '/deals'
+          | '/find-parts'
+          | '/brands'
+          | '/wholesale'
+          | '/blog'
+          | '/about'
+          | '/contact'
+          | '/faqs'
+          | '/track-order'
+          | '/shipping-policy'
+          | '/warranty-returns'
+          | '/privacy-policy'
+          | '/terms'
+          | '/installments'
+          | '/returns'
+          | '/sell-your-laptop'
+          | '/compare'
+          | '/cart'
+          | '/laptops-in-{city}'
+          | '/brands/{brand}';
+        title?: string | null;
+        description?: string | null;
+        ogImage?: string | null;
+        indexing?: ('default' | 'index' | 'noindex') | null;
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Texts of built-in pages (About, policies, deals intro…). Markdown works in intro, body and SEO copy.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-page-texts".
+ */
+export interface StorePageText {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  pages?:
+    | {
+        page:
+          | '/shop'
+          | '/category'
+          | '/deals'
+          | '/find-parts'
+          | '/brands'
+          | '/blog'
+          | '/about'
+          | '/shipping-policy'
+          | '/warranty-returns'
+          | '/privacy-policy'
+          | '/terms'
+          | '/installments';
+        eyebrow?: string | null;
+        /**
+         * Wrap words in *asterisks* for the brand gradient.
+         */
+        title?: string | null;
+        description?: string | null;
+        intro?: string | null;
+        /**
+         * Markdown.
+         */
+        body?: string | null;
+        seoCopy?: string | null;
+        updated?: string | null;
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Customer quotes for the home page “Testimonials” section.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-testimonials".
+ */
+export interface StoreTestimonial {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  items?:
+    | {
+        name: string;
+        city?: string | null;
+        rating?: number | null;
+        text: string;
+        /**
+         * Optional – what they bought.
+         */
+        product?: string | null;
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Questions on /faqs (grouped), also published as FAQ structured data.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-faqs".
+ */
+export interface StoreFaq {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  items?:
+    | {
+        q: string;
+        group?: string | null;
+        a: string;
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Stop fake and prank cash-on-delivery orders before you pay for delivery.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-order-protection".
+ */
+export interface StoreOrderProtection {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  confirmEnabled?: boolean | null;
+  /**
+   * 0 = every COD order.
+   */
+  confirmAbove?: number | null;
+  /**
+   * Stock is put back automatically.
+   */
+  autoCancelHours?: number | null;
+  /**
+   * Type zone names exactly as in Delivery charges (e.g. “Rest of Pakistan”). Leave empty for all zones.
+   */
+  confirmZones?: string[] | null;
+  /**
+   * An uploaded advance screenshot never skips the confirmation by itself – when you approve the payment, the order moves to “To confirm” without waiting for the customer.
+   */
+  skipWithAdvance?: boolean | null;
+  pointsCancelled?: number | null;
+  pointsRefused?: number | null;
+  pointsDelivered?: number | null;
+  mediumAt?: number | null;
+  highAt?: number | null;
+  advanceForHighRisk?: boolean | null;
+  advanceForMediumRisk?: boolean | null;
+  /**
+   * e.g. cities with many refused parcels. Exact city names.
+   */
+  advanceCities?: string[] | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Used by the return / warranty form on the website and shown on the Warranty & Returns page.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-returns-policy".
+ */
+export interface StoreReturnsPolicy {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  returnDays?: number | null;
+  restockingFeePercent?: number | null;
+  requirePhotos?: boolean | null;
+  reasons?:
+    | {
+        label: string;
+        changeOfMind?: boolean | null;
+        id?: string | null;
+      }[]
+    | null;
+  returnRules?: string | null;
+  warrantyRules?: string | null;
+  warrantyByCondition?:
+    | {
+        type: string;
+        condition?: ('new' | 'used-a-plus' | 'used-a' | 'refurbished' | 'open-box') | null;
+        months?: number | null;
+        text?: string | null;
+        where?: string | null;
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Google Analytics and the Meta Pixel only set cookies after the visitor presses Accept.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-cookie-notice".
+ */
+export interface StoreCookieNotice {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  enabled?: boolean | null;
+  message?: string | null;
+  acceptLabel?: string | null;
+  rejectLabel?: string | null;
+  policyLink?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Paste a feed address into Google Merchant Center, Meta Commerce Manager or TikTok Catalog Manager as a scheduled feed (daily). The feeds update by themselves when you change products.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-sales-channels".
+ */
+export interface StoreSalesChannel {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  google?: boolean | null;
+  meta?: boolean | null;
+  tiktok?: boolean | null;
+  includeOutOfStock?: boolean | null;
+  excludeCategories?: (number | Category)[] | null;
+  excludeProducts?: (number | Product)[] | null;
+  /**
+   * Empty = the “charge when no zone matches” from Delivery charges. Free above the free-delivery amount.
+   */
+  shippingPrice?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Installment (EMI) block on product pages and the Installments page, plus cart / stock / price reminder messages.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-conversion".
+ */
+export interface StoreConversion {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  emiEnabled?: boolean | null;
+  emiMinPrice?: number | null;
+  emiHeading?: string | null;
+  emiNote?: string | null;
+  emiPlans?:
+    | {
+        bank: string;
+        months: number;
+        markupPercent?: number | null;
+        minAmount?: number | null;
+        id?: string | null;
+      }[]
+    | null;
+  cartEnabled?: boolean | null;
+  cartFirstHours?: number | null;
+  cartSecondHours?: number | null;
+  cartSubject?: string | null;
+  cartMessage?: string | null;
+  /**
+   * Create it first in Marketing → Discount codes.
+   */
+  cartCoupon?: string | null;
+  alertsEnabled?: boolean | null;
+  priceDropPercent?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Messages and tasks waiting to be sent, retried or given up on (Dead). Platform admins can retry a dead one by setting it back to Pending.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "outbox-events".
+ */
+export interface OutboxEvent {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  type: string;
+  status: 'pending' | 'processing' | 'sent' | 'dead';
+  attempts?: number | null;
+  data?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  /**
+   * One delivery per key – a repeated event never sends twice.
+   */
+  dedupeKey?: string | null;
+  nextAttemptAt?: string | null;
+  lockedAt?: string | null;
+  sentAt?: string | null;
+  lastError?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Online payments and refunds, as reported by the payment provider. Read-only.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payment-transactions".
+ */
+export interface PaymentTransaction {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  order?: (number | null) | Order;
+  kind: 'charge' | 'refund';
+  status: 'pending' | 'succeeded' | 'failed' | 'cancelled' | 'refunded' | 'partially_refunded';
+  provider: 'stripe' | 'manual';
+  /**
+   * e.g. the checkout session / payment / refund id.
+   */
+  providerRef: string;
+  amount: number;
+  currency: string;
+  refundedAmount?: number | null;
+  paymentIntent?: string | null;
+  /**
+   * Sent with the provider call, so a retry never charges or refunds twice.
+   */
+  idempotencyKey?: string | null;
+  failureReason?: string | null;
+  checkoutUrl?: string | null;
+  expiresAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Every webhook from a payment provider – each stored once (replays are ignored).
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payment-events".
+ */
+export interface PaymentEvent {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  provider: string;
+  eventId: string;
+  type?: string | null;
+  status: 'received' | 'processed' | 'ignored' | 'failed';
+  receivedAt?: string | null;
+  processedAt?: string | null;
+  error?: string | null;
+  /**
+   * The ids and amounts that mattered (the full payload isn't kept).
+   */
+  summary?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Tell your other systems about orders. Each delivery is a POST with JSON and a ShopEngine-Signature header (HMAC-SHA256 of “timestamp.body” with the secret).
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "webhook-endpoints".
+ */
+export interface WebhookEndpoint {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  url: string;
+  events: ('order.created' | 'order.updated' | 'order.paid' | 'refund.created')[];
+  active?: boolean | null;
+  /**
+   * Use it to check that a delivery really came from ShopEngine. Made for you.
+   */
+  secret?: string | null;
+  lastStatus?: string | null;
+  lastDeliveryAt?: string | null;
+  /**
+   * In a row.
+   */
+  failures?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "customer-carts".
+ */
+export interface CustomerCart {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  user: number | User;
+  lines:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * Every change of stock, newest first: why, how much, the stock after it and who. Filter by product to see one product's history.
  *
  * This interface was referenced by `Config`'s JSON-Schema
@@ -1989,6 +3478,10 @@ export interface StockCount {
  */
 export interface StockMovement {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   product?: (number | null) | Product;
   productTitle?: string | null;
   change?: number | null;
@@ -2020,13 +3513,17 @@ export interface StockMovement {
   createdAt: string;
 }
 /**
- * Who changed what in /cms and when, with the old → new values. Owners and managers only.
+ * Who changed what in /cms and when, with the old → new values. Owners and managers see their store's; platform admins everything.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "activity-log".
  */
 export interface ActivityLog {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   user?: (number | null) | User;
   userEmail?: string | null;
   action?: ('create' | 'update' | 'delete') | null;
@@ -2075,6 +3572,10 @@ export interface Export {
     | number
     | boolean
     | null;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   updatedAt: string;
   createdAt: string;
   url?: string | null;
@@ -2112,6 +3613,10 @@ export interface Import {
       | boolean
       | null;
   };
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   updatedAt: string;
   createdAt: string;
   url?: string | null;
@@ -2130,6 +3635,10 @@ export interface Import {
  */
 export interface Redirect {
   id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
   from: string;
   to?: {
     type?: ('reference' | 'custom') | null;
@@ -2280,6 +3789,18 @@ export interface PayloadLockedDocument {
         value: number | StoreMembership;
       } | null)
     | ({
+        relationTo: 'subscription-plans';
+        value: number | SubscriptionPlan;
+      } | null)
+    | ({
+        relationTo: 'store-subscriptions';
+        value: number | StoreSubscription;
+      } | null)
+    | ({
+        relationTo: 'store-invoices';
+        value: number | StoreInvoice;
+      } | null)
+    | ({
         relationTo: 'users';
         value: number | User;
       } | null)
@@ -2396,6 +3917,98 @@ export interface PayloadLockedDocument {
         value: number | StockCount;
       } | null)
     | ({
+        relationTo: 'store-theme-settings';
+        value: number | StoreThemeSetting;
+      } | null)
+    | ({
+        relationTo: 'store-announcement-bar';
+        value: number | StoreAnnouncementBar;
+      } | null)
+    | ({
+        relationTo: 'store-header';
+        value: number | StoreHeader;
+      } | null)
+    | ({
+        relationTo: 'store-footer';
+        value: number | StoreFooter;
+      } | null)
+    | ({
+        relationTo: 'store-whatsapp-button';
+        value: number | StoreWhatsappButton;
+      } | null)
+    | ({
+        relationTo: 'store-shipping';
+        value: number | StoreShipping;
+      } | null)
+    | ({
+        relationTo: 'store-payments';
+        value: number | StorePayment;
+      } | null)
+    | ({
+        relationTo: 'store-notifications';
+        value: number | StoreNotification;
+      } | null)
+    | ({
+        relationTo: 'store-store-info';
+        value: number | StoreStoreInfo;
+      } | null)
+    | ({
+        relationTo: 'store-seo-settings';
+        value: number | StoreSeoSetting;
+      } | null)
+    | ({
+        relationTo: 'store-page-texts';
+        value: number | StorePageText;
+      } | null)
+    | ({
+        relationTo: 'store-testimonials';
+        value: number | StoreTestimonial;
+      } | null)
+    | ({
+        relationTo: 'store-faqs';
+        value: number | StoreFaq;
+      } | null)
+    | ({
+        relationTo: 'store-order-protection';
+        value: number | StoreOrderProtection;
+      } | null)
+    | ({
+        relationTo: 'store-returns-policy';
+        value: number | StoreReturnsPolicy;
+      } | null)
+    | ({
+        relationTo: 'store-cookie-notice';
+        value: number | StoreCookieNotice;
+      } | null)
+    | ({
+        relationTo: 'store-sales-channels';
+        value: number | StoreSalesChannel;
+      } | null)
+    | ({
+        relationTo: 'store-conversion';
+        value: number | StoreConversion;
+      } | null)
+    | ({
+        relationTo: 'outbox-events';
+        value: number | OutboxEvent;
+      } | null)
+    | ({
+        relationTo: 'payment-transactions';
+        value: number | PaymentTransaction;
+      } | null)
+    | ({
+        relationTo: 'payment-events';
+        value: number | PaymentEvent;
+      } | null)
+    | ({
+        relationTo: 'webhook-endpoints';
+        value: number | WebhookEndpoint;
+      } | null)
+    | ({
+        relationTo: 'customer-carts';
+        value: number | CustomerCart;
+      } | null)
+    | ({
         relationTo: 'stock-movements';
         value: number | StockMovement;
       } | null)
@@ -2462,19 +4075,26 @@ export interface StoresSelect<T extends boolean = true> {
   slug?: T;
   businessName?: T;
   status?: T;
+  isDefault?: T;
   subdomain?: T;
   customDomain?: T;
+  domainVerificationToken?: T;
+  domainVerifiedAt?: T;
   country?: T;
   currency?: T;
   timezone?: T;
   defaultLanguage?: T;
+  orderPrefix?: T;
   owner?: T;
-  logo?: T;
-  brandColor?: T;
-  supportEmail?: T;
-  supportPhone?: T;
-  settings?: T;
-  members?: T;
+  plan?: T;
+  subscriptionStatus?: T;
+  trialEndsAt?: T;
+  trialUsed?: T;
+  graceEndsAt?: T;
+  billingEmail?: T;
+  paymentsProvider?: T;
+  paymentsAccountId?: T;
+  paymentsChargesEnabled?: T;
   internalNotes?: T;
   updatedAt?: T;
   createdAt?: T;
@@ -2486,10 +4106,88 @@ export interface StoresSelect<T extends boolean = true> {
 export interface StoreMembershipsSelect<T extends boolean = true> {
   store?: T;
   user?: T;
+  email?: T;
   role?: T;
   status?: T;
+  invitedBy?: T;
   invitedAt?: T;
+  inviteExpiresAt?: T;
   acceptedAt?: T;
+  inviteTokenHash?: T;
+  notes?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "subscription-plans_select".
+ */
+export interface SubscriptionPlansSelect<T extends boolean = true> {
+  name?: T;
+  slug?: T;
+  description?: T;
+  status?: T;
+  priceMonthly?: T;
+  priceAnnual?: T;
+  currency?: T;
+  trialDays?: T;
+  maxProducts?: T;
+  maxStaffMembers?: T;
+  maxStorageGb?: T;
+  features?: T;
+  highlight?: T;
+  providerPriceIdMonthly?: T;
+  providerPriceIdAnnual?: T;
+  sortOrder?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-subscriptions_select".
+ */
+export interface StoreSubscriptionsSelect<T extends boolean = true> {
+  store?: T;
+  plan?: T;
+  status?: T;
+  billingCycle?: T;
+  trialEndsAt?: T;
+  currentPeriodStart?: T;
+  currentPeriodEnd?: T;
+  cancelAtPeriodEnd?: T;
+  graceEndsAt?: T;
+  amount?: T;
+  currency?: T;
+  billingEmail?: T;
+  paymentProvider?: T;
+  externalCustomerId?: T;
+  externalSubscriptionId?: T;
+  lastInvoiceAt?: T;
+  lastPaymentAt?: T;
+  failedPayments?: T;
+  notes?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-invoices_select".
+ */
+export interface StoreInvoicesSelect<T extends boolean = true> {
+  store?: T;
+  subscription?: T;
+  invoiceNumber?: T;
+  status?: T;
+  amount?: T;
+  currency?: T;
+  issuedAt?: T;
+  dueAt?: T;
+  paidAt?: T;
+  periodStart?: T;
+  periodEnd?: T;
+  providerInvoiceId?: T;
+  hostedInvoiceUrl?: T;
+  lines?: T;
   notes?: T;
   updatedAt?: T;
   createdAt?: T;
@@ -2517,7 +4215,8 @@ export interface UsersSelect<T extends boolean = true> {
   role?: T;
   platformRole?: T;
   currentStore?: T;
-  stores?: T;
+  marketingConsent?: T;
+  customerOf?: T;
   addresses?: T;
   wishlist?: T;
   tags?: T;
@@ -2535,8 +4234,6 @@ export interface UsersSelect<T extends boolean = true> {
   salt?: T;
   hash?: T;
   resetPasswordRequestedAt?: T;
-  loginAttempts?: T;
-  lockUntil?: T;
   sessions?:
     | T
     | {
@@ -2550,6 +4247,7 @@ export interface UsersSelect<T extends boolean = true> {
  * via the `definition` "media_select".
  */
 export interface MediaSelect<T extends boolean = true> {
+  store?: T;
   alt?: T;
   caption?: T;
   tags?: T;
@@ -2608,6 +4306,7 @@ export interface MediaSelect<T extends boolean = true> {
  * via the `definition` "products_select".
  */
 export interface ProductsSelect<T extends boolean = true> {
+  store?: T;
   title?: T;
   brand?: T;
   model?: T;
@@ -2624,6 +4323,8 @@ export interface ProductsSelect<T extends boolean = true> {
   stock?: T;
   stockSeen?: T;
   lowStockThreshold?: T;
+  barcode?: T;
+  productType?: T;
   unit?: T;
   stockStatus?: T;
   condition?: T;
@@ -2701,6 +4402,7 @@ export interface ProductsSelect<T extends boolean = true> {
  * via the `definition` "product-collections_select".
  */
 export interface ProductCollectionsSelect<T extends boolean = true> {
+  store?: T;
   title?: T;
   description?: T;
   image?: T;
@@ -2738,6 +4440,7 @@ export interface ProductCollectionsSelect<T extends boolean = true> {
  * via the `definition` "categories_select".
  */
 export interface CategoriesSelect<T extends boolean = true> {
+  store?: T;
   name?: T;
   nameUr?: T;
   slug?: T;
@@ -2777,6 +4480,7 @@ export interface CategoriesSelect<T extends boolean = true> {
  * via the `definition` "brands_select".
  */
 export interface BrandsSelect<T extends boolean = true> {
+  store?: T;
   name?: T;
   slug?: T;
   logo?: T;
@@ -2789,6 +4493,7 @@ export interface BrandsSelect<T extends boolean = true> {
  * via the `definition` "laptop-models_select".
  */
 export interface LaptopModelsSelect<T extends boolean = true> {
+  store?: T;
   name?: T;
   brand?: T;
   series?: T;
@@ -2802,6 +4507,7 @@ export interface LaptopModelsSelect<T extends boolean = true> {
  * via the `definition` "reviews_select".
  */
 export interface ReviewsSelect<T extends boolean = true> {
+  store?: T;
   product?: T;
   name?: T;
   city?: T;
@@ -2821,6 +4527,7 @@ export interface ReviewsSelect<T extends boolean = true> {
  * via the `definition` "posts_select".
  */
 export interface PostsSelect<T extends boolean = true> {
+  store?: T;
   title?: T;
   excerpt?: T;
   cover?: T;
@@ -2853,6 +4560,7 @@ export interface PostsSelect<T extends boolean = true> {
  * via the `definition` "orders_select".
  */
 export interface OrdersSelect<T extends boolean = true> {
+  store?: T;
   orderNumber?: T;
   status?: T;
   placedAt?: T;
@@ -2874,6 +4582,8 @@ export interface OrdersSelect<T extends boolean = true> {
         productLegacyId?: T;
         unitPrice?: T;
         qty?: T;
+        sku?: T;
+        options?: T;
         slug?: T;
         url?: T;
         image?: T;
@@ -2887,11 +4597,29 @@ export interface OrdersSelect<T extends boolean = true> {
   total?: T;
   advancePaid?: T;
   couponCode?: T;
+  taxTotal?: T;
+  couponConsumed?: T;
+  couponReturned?: T;
   paymentMethod?: T;
   paymentStatus?: T;
   paymentScreenshotKey?: T;
+  paymentReference?: T;
+  fulfillmentStatus?: T;
   courier?: T;
   trackingNumber?: T;
+  shipments?:
+    | T
+    | {
+        items?: T;
+        courier?: T;
+        trackingNumber?: T;
+        status?: T;
+        shippedAt?: T;
+        deliveredAt?: T;
+        id?: T;
+      };
+  customerNote?: T;
+  marketingConsent?: T;
   notes?: T;
   history?:
     | T
@@ -2930,6 +4658,7 @@ export interface OrdersSelect<T extends boolean = true> {
  * via the `definition` "return-requests_select".
  */
 export interface ReturnRequestsSelect<T extends boolean = true> {
+  store?: T;
   requestNumber?: T;
   status?: T;
   orderNumber?: T;
@@ -2975,6 +4704,7 @@ export interface ReturnRequestsSelect<T extends boolean = true> {
  * via the `definition` "warranty-claims_select".
  */
 export interface WarrantyClaimsSelect<T extends boolean = true> {
+  store?: T;
   claimNumber?: T;
   status?: T;
   serial?: T;
@@ -3011,6 +4741,8 @@ export interface WarrantyClaimsSelect<T extends boolean = true> {
  * via the `definition` "pos-sales_select".
  */
 export interface PosSalesSelect<T extends boolean = true> {
+  store?: T;
+  clientSaleId?: T;
   receiptNumber?: T;
   status?: T;
   items?:
@@ -3050,6 +4782,7 @@ export interface PosSalesSelect<T extends boolean = true> {
  * via the `definition` "cash-ups_select".
  */
 export interface CashUpsSelect<T extends boolean = true> {
+  store?: T;
   day?: T;
   openingFloat?: T;
   expectedCash?: T;
@@ -3067,6 +4800,7 @@ export interface CashUpsSelect<T extends boolean = true> {
  * via the `definition` "units_select".
  */
 export interface UnitsSelect<T extends boolean = true> {
+  store?: T;
   serial?: T;
   product?: T;
   status?: T;
@@ -3086,14 +4820,23 @@ export interface UnitsSelect<T extends boolean = true> {
  * via the `definition` "discounts_select".
  */
 export interface DiscountsSelect<T extends boolean = true> {
+  store?: T;
   code?: T;
   kind?: T;
   value?: T;
+  automatic?: T;
   minOrder?: T;
   usageLimit?: T;
+  perCustomerLimit?: T;
   used?: T;
+  startsAt?: T;
   expiresAt?: T;
   active?: T;
+  appliesTo?: T;
+  products?: T;
+  categories?: T;
+  collections?: T;
+  combinable?: T;
   legacyId?: T;
   updatedAt?: T;
   createdAt?: T;
@@ -3103,6 +4846,7 @@ export interface DiscountsSelect<T extends boolean = true> {
  * via the `definition` "flash-sales_select".
  */
 export interface FlashSalesSelect<T extends boolean = true> {
+  store?: T;
   title?: T;
   endsAt?: T;
   active?: T;
@@ -3116,6 +4860,7 @@ export interface FlashSalesSelect<T extends boolean = true> {
  * via the `definition` "wholesale-inquiries_select".
  */
 export interface WholesaleInquiriesSelect<T extends boolean = true> {
+  store?: T;
   name?: T;
   businessName?: T;
   phone?: T;
@@ -3138,6 +4883,7 @@ export interface WholesaleInquiriesSelect<T extends boolean = true> {
  * via the `definition` "contact-messages_select".
  */
 export interface ContactMessagesSelect<T extends boolean = true> {
+  store?: T;
   name?: T;
   phone?: T;
   email?: T;
@@ -3154,6 +4900,7 @@ export interface ContactMessagesSelect<T extends boolean = true> {
  * via the `definition` "pages_select".
  */
 export interface PagesSelect<T extends boolean = true> {
+  store?: T;
   title?: T;
   h1Highlight?: T;
   h1Text?: T;
@@ -3376,6 +5123,7 @@ export interface PagesSelect<T extends boolean = true> {
  * via the `definition` "menus_select".
  */
 export interface MenusSelect<T extends boolean = true> {
+  store?: T;
   name?: T;
   handle?: T;
   items?:
@@ -3426,6 +5174,7 @@ export interface MenusSelect<T extends boolean = true> {
  * via the `definition` "blocked-phones_select".
  */
 export interface BlockedPhonesSelect<T extends boolean = true> {
+  store?: T;
   phone?: T;
   action?: T;
   reason?: T;
@@ -3438,6 +5187,7 @@ export interface BlockedPhonesSelect<T extends boolean = true> {
  * via the `definition` "trade-ins_select".
  */
 export interface TradeInsSelect<T extends boolean = true> {
+  store?: T;
   status?: T;
   offerPrice?: T;
   expectedPrice?: T;
@@ -3465,6 +5215,7 @@ export interface TradeInsSelect<T extends boolean = true> {
  * via the `definition` "product-questions_select".
  */
 export interface ProductQuestionsSelect<T extends boolean = true> {
+  store?: T;
   product?: T;
   question?: T;
   answer?: T;
@@ -3479,6 +5230,7 @@ export interface ProductQuestionsSelect<T extends boolean = true> {
  * via the `definition` "stock-alerts_select".
  */
 export interface StockAlertsSelect<T extends boolean = true> {
+  store?: T;
   product?: T;
   kind?: T;
   status?: T;
@@ -3493,6 +5245,7 @@ export interface StockAlertsSelect<T extends boolean = true> {
  * via the `definition` "abandoned-carts_select".
  */
 export interface AbandonedCartsSelect<T extends boolean = true> {
+  store?: T;
   status?: T;
   total?: T;
   remindersSent?: T;
@@ -3513,6 +5266,7 @@ export interface AbandonedCartsSelect<T extends boolean = true> {
  * via the `definition` "suppliers_select".
  */
 export interface SuppliersSelect<T extends boolean = true> {
+  store?: T;
   name?: T;
   contactPerson?: T;
   phone?: T;
@@ -3528,6 +5282,7 @@ export interface SuppliersSelect<T extends boolean = true> {
  * via the `definition` "purchases_select".
  */
 export interface PurchasesSelect<T extends boolean = true> {
+  store?: T;
   supplier?: T;
   invoiceNumber?: T;
   date?: T;
@@ -3554,6 +5309,7 @@ export interface PurchasesSelect<T extends boolean = true> {
  * via the `definition` "stock-counts_select".
  */
 export interface StockCountsSelect<T extends boolean = true> {
+  store?: T;
   name?: T;
   status?: T;
   category?: T;
@@ -3568,9 +5324,561 @@ export interface StockCountsSelect<T extends boolean = true> {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-theme-settings_select".
+ */
+export interface StoreThemeSettingsSelect<T extends boolean = true> {
+  store?: T;
+  logoDark?: T;
+  logoLight?: T;
+  favicon?: T;
+  logoHeight?: T;
+  background?: T;
+  backgroundLight?: T;
+  accent?: T;
+  gradientFrom?: T;
+  gradientVia?: T;
+  gradientTo?: T;
+  bodyFont?: T;
+  headingFont?: T;
+  buttonStyle?: T;
+  cardRadius?: T;
+  defaultMode?: T;
+  allowModeToggle?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-announcement-bar_select".
+ */
+export interface StoreAnnouncementBarSelect<T extends boolean = true> {
+  store?: T;
+  enabled?: T;
+  text?: T;
+  linkUrl?: T;
+  linkLabel?: T;
+  backgroundColor?: T;
+  textColor?: T;
+  startsAt?: T;
+  endsAt?: T;
+  showContactLinks?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-header_select".
+ */
+export interface StoreHeaderSelect<T extends boolean = true> {
+  store?: T;
+  mainMenu?: T;
+  mobileMenu?: T;
+  sticky?: T;
+  showSearch?: T;
+  showLanguageToggle?: T;
+  showAccountLinks?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-footer_select".
+ */
+export interface StoreFooterSelect<T extends boolean = true> {
+  store?: T;
+  about?: T;
+  columns?:
+    | T
+    | {
+        title?: T;
+        menu?: T;
+        id?: T;
+      };
+  showContactInfo?: T;
+  showSocialLinks?: T;
+  showCityLinks?: T;
+  paymentBadges?: T;
+  copyright?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-whatsapp-button_select".
+ */
+export interface StoreWhatsappButtonSelect<T extends boolean = true> {
+  store?: T;
+  enabled?: T;
+  contacts?:
+    | T
+    | {
+        label?: T;
+        phone?: T;
+        id?: T;
+      };
+  message?: T;
+  note?: T;
+  position?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-shipping_select".
+ */
+export interface StoreShippingSelect<T extends boolean = true> {
+  store?: T;
+  freeDeliveryThreshold?: T;
+  defaultCharge?: T;
+  zones?:
+    | T
+    | {
+        name?: T;
+        rest?: T;
+        cities?: T;
+        charge?: T;
+        freeAbove?: T;
+        estimate?: T;
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-payments_select".
+ */
+export interface StorePaymentsSelect<T extends boolean = true> {
+  store?: T;
+  cod?:
+    | T
+    | {
+        enabled?: T;
+        note?: T;
+        fee?: T;
+        maxOrder?: T;
+        advanceThreshold?: T;
+        advanceAmount?: T;
+      };
+  jazzcash?:
+    | T
+    | {
+        enabled?: T;
+        note?: T;
+        title?: T;
+        number?: T;
+      };
+  easypaisa?:
+    | T
+    | {
+        enabled?: T;
+        note?: T;
+        title?: T;
+        number?: T;
+      };
+  bank?:
+    | T
+    | {
+        enabled?: T;
+        note?: T;
+        bankName?: T;
+        accountTitle?: T;
+        accountNumber?: T;
+        iban?: T;
+      };
+  card?:
+    | T
+    | {
+        enabled?: T;
+        note?: T;
+      };
+  tax?:
+    | T
+    | {
+        enabled?: T;
+        rate?: T;
+        inclusive?: T;
+        label?: T;
+        taxDelivery?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-notifications_select".
+ */
+export interface StoreNotificationsSelect<T extends boolean = true> {
+  store?: T;
+  staffEmails?: T;
+  alertNewOrder?: T;
+  alertWholesale?: T;
+  alertContact?: T;
+  customerEmail?: T;
+  customerWhatsApp?: T;
+  customerSms?: T;
+  orderConfirmation?: T;
+  statusUpdates?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-store-info_select".
+ */
+export interface StoreStoreInfoSelect<T extends boolean = true> {
+  store?: T;
+  name?: T;
+  shortName?: T;
+  tagline?: T;
+  description?: T;
+  email?: T;
+  phones?:
+    | T
+    | {
+        label?: T;
+        display?: T;
+        tel?: T;
+        wa?: T;
+        id?: T;
+      };
+  address?:
+    | T
+    | {
+        street?: T;
+        area?: T;
+        city?: T;
+        region?: T;
+        postalCode?: T;
+        country?: T;
+        countryCode?: T;
+        full?: T;
+      };
+  geo?:
+    | T
+    | {
+        lat?: T;
+        lng?: T;
+      };
+  mapLink?: T;
+  mapEmbed?: T;
+  hours?:
+    | T
+    | {
+        days?: T;
+        opens?: T;
+        closes?: T;
+        id?: T;
+      };
+  hoursDisplay?: T;
+  whatsappNote?: T;
+  social?:
+    | T
+    | {
+        facebook?: T;
+        instagram?: T;
+        tiktok?: T;
+        youtube?: T;
+        x?: T;
+        linkedin?: T;
+        pinterest?: T;
+        threads?: T;
+      };
+  couriers?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-seo-settings_select".
+ */
+export interface StoreSeoSettingsSelect<T extends boolean = true> {
+  store?: T;
+  titleTemplate?: T;
+  defaultTitle?: T;
+  defaultDescription?: T;
+  defaultOgImage?: T;
+  keywords?: T;
+  discourageIndexing?: T;
+  googleVerification?: T;
+  bingVerification?: T;
+  facebookVerification?: T;
+  ga4Id?: T;
+  metaPixelId?: T;
+  pages?:
+    | T
+    | {
+        page?: T;
+        title?: T;
+        description?: T;
+        ogImage?: T;
+        indexing?: T;
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-page-texts_select".
+ */
+export interface StorePageTextsSelect<T extends boolean = true> {
+  store?: T;
+  pages?:
+    | T
+    | {
+        page?: T;
+        eyebrow?: T;
+        title?: T;
+        description?: T;
+        intro?: T;
+        body?: T;
+        seoCopy?: T;
+        updated?: T;
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-testimonials_select".
+ */
+export interface StoreTestimonialsSelect<T extends boolean = true> {
+  store?: T;
+  items?:
+    | T
+    | {
+        name?: T;
+        city?: T;
+        rating?: T;
+        text?: T;
+        product?: T;
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-faqs_select".
+ */
+export interface StoreFaqsSelect<T extends boolean = true> {
+  store?: T;
+  items?:
+    | T
+    | {
+        q?: T;
+        group?: T;
+        a?: T;
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-order-protection_select".
+ */
+export interface StoreOrderProtectionSelect<T extends boolean = true> {
+  store?: T;
+  confirmEnabled?: T;
+  confirmAbove?: T;
+  autoCancelHours?: T;
+  confirmZones?: T;
+  skipWithAdvance?: T;
+  pointsCancelled?: T;
+  pointsRefused?: T;
+  pointsDelivered?: T;
+  mediumAt?: T;
+  highAt?: T;
+  advanceForHighRisk?: T;
+  advanceForMediumRisk?: T;
+  advanceCities?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-returns-policy_select".
+ */
+export interface StoreReturnsPolicySelect<T extends boolean = true> {
+  store?: T;
+  returnDays?: T;
+  restockingFeePercent?: T;
+  requirePhotos?: T;
+  reasons?:
+    | T
+    | {
+        label?: T;
+        changeOfMind?: T;
+        id?: T;
+      };
+  returnRules?: T;
+  warrantyRules?: T;
+  warrantyByCondition?:
+    | T
+    | {
+        type?: T;
+        condition?: T;
+        months?: T;
+        text?: T;
+        where?: T;
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-cookie-notice_select".
+ */
+export interface StoreCookieNoticeSelect<T extends boolean = true> {
+  store?: T;
+  enabled?: T;
+  message?: T;
+  acceptLabel?: T;
+  rejectLabel?: T;
+  policyLink?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-sales-channels_select".
+ */
+export interface StoreSalesChannelsSelect<T extends boolean = true> {
+  store?: T;
+  google?: T;
+  meta?: T;
+  tiktok?: T;
+  includeOutOfStock?: T;
+  excludeCategories?: T;
+  excludeProducts?: T;
+  shippingPrice?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "store-conversion_select".
+ */
+export interface StoreConversionSelect<T extends boolean = true> {
+  store?: T;
+  emiEnabled?: T;
+  emiMinPrice?: T;
+  emiHeading?: T;
+  emiNote?: T;
+  emiPlans?:
+    | T
+    | {
+        bank?: T;
+        months?: T;
+        markupPercent?: T;
+        minAmount?: T;
+        id?: T;
+      };
+  cartEnabled?: T;
+  cartFirstHours?: T;
+  cartSecondHours?: T;
+  cartSubject?: T;
+  cartMessage?: T;
+  cartCoupon?: T;
+  alertsEnabled?: T;
+  priceDropPercent?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "outbox-events_select".
+ */
+export interface OutboxEventsSelect<T extends boolean = true> {
+  store?: T;
+  type?: T;
+  status?: T;
+  attempts?: T;
+  data?: T;
+  dedupeKey?: T;
+  nextAttemptAt?: T;
+  lockedAt?: T;
+  sentAt?: T;
+  lastError?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payment-transactions_select".
+ */
+export interface PaymentTransactionsSelect<T extends boolean = true> {
+  store?: T;
+  order?: T;
+  kind?: T;
+  status?: T;
+  provider?: T;
+  providerRef?: T;
+  amount?: T;
+  currency?: T;
+  refundedAmount?: T;
+  paymentIntent?: T;
+  idempotencyKey?: T;
+  failureReason?: T;
+  checkoutUrl?: T;
+  expiresAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payment-events_select".
+ */
+export interface PaymentEventsSelect<T extends boolean = true> {
+  store?: T;
+  provider?: T;
+  eventId?: T;
+  type?: T;
+  status?: T;
+  receivedAt?: T;
+  processedAt?: T;
+  error?: T;
+  summary?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "webhook-endpoints_select".
+ */
+export interface WebhookEndpointsSelect<T extends boolean = true> {
+  store?: T;
+  url?: T;
+  events?: T;
+  active?: T;
+  secret?: T;
+  lastStatus?: T;
+  lastDeliveryAt?: T;
+  failures?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "customer-carts_select".
+ */
+export interface CustomerCartsSelect<T extends boolean = true> {
+  store?: T;
+  user?: T;
+  lines?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "stock-movements_select".
  */
 export interface StockMovementsSelect<T extends boolean = true> {
+  store?: T;
   product?: T;
   productTitle?: T;
   change?: T;
@@ -3589,6 +5897,7 @@ export interface StockMovementsSelect<T extends boolean = true> {
  * via the `definition` "activity-log_select".
  */
 export interface ActivityLogSelect<T extends boolean = true> {
+  store?: T;
   user?: T;
   userEmail?: T;
   action?: T;
@@ -3617,6 +5926,7 @@ export interface ExportsSelect<T extends boolean = true> {
   fields?: T;
   collectionSlug?: T;
   where?: T;
+  store?: T;
   updatedAt?: T;
   createdAt?: T;
   url?: T;
@@ -3647,6 +5957,7 @@ export interface ImportsSelect<T extends boolean = true> {
         issues?: T;
         issueDetails?: T;
       };
+  store?: T;
   updatedAt?: T;
   createdAt?: T;
   url?: T;
@@ -3664,6 +5975,7 @@ export interface ImportsSelect<T extends boolean = true> {
  * via the `definition` "redirects_select".
  */
 export interface RedirectsSelect<T extends boolean = true> {
+  store?: T;
   from?: T;
   to?:
     | T
@@ -3724,6 +6036,7 @@ export interface PayloadFoldersSelect<T extends boolean = true> {
   folder?: T;
   documentsAndFolders?: T;
   folderType?: T;
+  store?: T;
   updatedAt?: T;
   createdAt?: T;
 }
@@ -3768,7 +6081,7 @@ export interface PayloadMigrationsSelect<T extends boolean = true> {
 export interface ThemeSetting {
   id: number;
   /**
-   * Leave empty to use the built-in Urko logo.
+   * Leave empty to use the built-in logo (the store's name).
    */
   logoDark?: (number | null) | Media;
   logoLight?: (number | null) | Media;
@@ -3913,6 +6226,9 @@ export interface WhatsappButton {
         id?: string | null;
       }[]
     | null;
+  /**
+   * Empty = “Hi <store name>! I need help with an order.”
+   */
   message?: string | null;
   /**
    * Leave empty to use the note from Store info.
@@ -4148,6 +6464,9 @@ export interface Payment {
      */
     note?: string | null;
     title?: string | null;
+    /**
+     * Empty = JazzCash isn't offered at checkout.
+     */
     number?: string | null;
   };
   easypaisa?: {
@@ -4157,6 +6476,9 @@ export interface Payment {
      */
     note?: string | null;
     title?: string | null;
+    /**
+     * Empty = EasyPaisa isn't offered at checkout.
+     */
     number?: string | null;
   };
   bank?: {
@@ -4169,6 +6491,26 @@ export interface Payment {
     accountTitle?: string | null;
     accountNumber?: string | null;
     iban?: string | null;
+  };
+  card?: {
+    enabled?: boolean | null;
+    /**
+     * Optional, e.g. “Pay within 24 hours”.
+     */
+    note?: string | null;
+  };
+  /**
+   * Sales tax / VAT on orders. Shown on the order, invoice and reports.
+   */
+  tax?: {
+    enabled?: boolean | null;
+    rate?: number | null;
+    /**
+     * Off = tax is added on top at checkout.
+     */
+    inclusive?: boolean | null;
+    label?: string | null;
+    taxDelivery?: boolean | null;
   };
   updatedAt?: string | null;
   createdAt?: string | null;
@@ -4288,7 +6630,7 @@ export interface StoreInfo {
 export interface SeoSetting {
   id: number;
   /**
-   * %s = page title.
+   * %s = page title. Empty = “%s | <store name>”.
    */
   titleTemplate?: string | null;
   defaultTitle?: string | null;
@@ -4755,6 +7097,21 @@ export interface PaymentsSelect<T extends boolean = true> {
         accountNumber?: T;
         iban?: T;
       };
+  card?:
+    | T
+    | {
+        enabled?: T;
+        note?: T;
+      };
+  tax?:
+    | T
+    | {
+        enabled?: T;
+        rate?: T;
+        inclusive?: T;
+        label?: T;
+        taxDelivery?: T;
+      };
   updatedAt?: T;
   createdAt?: T;
   globalType?: T;
@@ -5084,6 +7441,9 @@ export interface TaskCreateCollectionExport {
     collectionSlug:
       | 'stores'
       | 'store-memberships'
+      | 'subscription-plans'
+      | 'store-subscriptions'
+      | 'store-invoices'
       | 'users'
       | 'media'
       | 'products'
@@ -5113,6 +7473,29 @@ export interface TaskCreateCollectionExport {
       | 'suppliers'
       | 'purchases'
       | 'stock-counts'
+      | 'store-theme-settings'
+      | 'store-announcement-bar'
+      | 'store-header'
+      | 'store-footer'
+      | 'store-whatsapp-button'
+      | 'store-shipping'
+      | 'store-payments'
+      | 'store-notifications'
+      | 'store-store-info'
+      | 'store-seo-settings'
+      | 'store-page-texts'
+      | 'store-testimonials'
+      | 'store-faqs'
+      | 'store-order-protection'
+      | 'store-returns-policy'
+      | 'store-cookie-notice'
+      | 'store-sales-channels'
+      | 'store-conversion'
+      | 'outbox-events'
+      | 'payment-transactions'
+      | 'payment-events'
+      | 'webhook-endpoints'
+      | 'customer-carts'
       | 'stock-movements'
       | 'activity-log'
       | 'exports'

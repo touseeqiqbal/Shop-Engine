@@ -1,6 +1,7 @@
 import { randomInt } from "node:crypto";
 import type { CollectionBeforeChangeHook, CollectionConfig, Field, GlobalConfig } from "payload";
-import { managers, nobody, staff } from "../access";
+import { nobody, platformAdmins } from "../access";
+import { assignStore, sameStore, storeAccess, storeField, storeIdOf } from "../tenancy";
 import { dbName } from "../fields";
 import { revalidate } from "../revalidate";
 import { userError } from "../errors";
@@ -58,7 +59,7 @@ export const ReturnsPolicy: GlobalConfig = {
   dbName: dbName("returns-policy"),
   label: "Returns & warranty rules",
   admin: { group: "Settings", description: "Used by the return / warranty form on the website and shown on the Warranty & Returns page." },
-  access: { read: () => true, update: managers },
+  access: { read: () => true, update: platformAdmins },
   hooks: { afterChange: [({ doc }) => (revalidate(["settings"], ["/warranty-returns", "/returns"]), doc)] },
   fields: [
     {
@@ -145,7 +146,7 @@ export const RETURN_STATUSES = [
 const RETURN_DONE = new Set(["refunded", "replaced", "repaired"]);
 
 type ReturnItem = { product?: unknown; qty?: number; serial?: string; unitPrice?: number };
-type OrderDoc = { id: number; status?: string; stockHeld?: boolean; items?: { product?: unknown; qty?: number }[] };
+type OrderDoc = { id: number; status?: string; stockHeld?: boolean; total?: number; paymentStatus?: string; items?: { product?: unknown; qty?: number }[] };
 
 /**
  * Finishing a return: credit note number, stock back (if ticked), order marked Returned.
@@ -159,20 +160,30 @@ const returnResolution: CollectionBeforeChangeHook = async ({ data, originalDoc,
   const notThis = originalDoc?.id ? [{ id: { not_equals: originalDoc.id } }] : [];
   const requestNumber = String(data.requestNumber ?? originalDoc?.requestNumber ?? "");
   const items = ((data.items ?? originalDoc?.items) as ReturnItem[] | undefined) ?? [];
+  const storeId = storeIdOf(data.store ?? originalDoc?.store);
+  const inStore = storeId == null ? [] : [{ store: { equals: storeId } }];
 
-  // refund can't be more than what was paid for the returned items
+  const orderId = relId(data.order ?? originalDoc?.order);
+  const order = orderId ? ((await req.payload.findByID({ collection: "orders", id: orderId, depth: 0, overrideAccess: true, req }).catch(() => null)) as OrderDoc | null) : null;
+
+  // refund can't be more than what was paid for the returned items – nor, with the order's earlier refunds, its total
   const refund = Number(data.refundAmount ?? originalDoc?.refundAmount) || 0;
   const paidForItems = items.reduce((s, i) => s + (Number(i.unitPrice) || 0) * (Number(i.qty) || 1), 0);
   if (data.status === "refunded" && paidForItems > 0 && refund > paidForItems)
     throw userError(`The refund (Rs ${refund.toLocaleString("en-PK")}) is more than was paid for these items (Rs ${paidForItems.toLocaleString("en-PK")}).`, 400);
+  let refundedBefore = 0;
+  if (data.status === "refunded" && order) {
+    const earlierRefunds = await req.payload.find({ collection: "return-requests", where: { and: [{ order: { equals: order.id } }, { status: { equals: "refunded" } }, ...notThis] }, limit: 100, depth: 0, overrideAccess: true, req });
+    refundedBefore = (earlierRefunds.docs as { refundAmount?: number }[]).reduce((s, r) => s + (Number(r.refundAmount) || 0), 0);
+    const total = Number(order.total) || 0;
+    if (refundedBefore + refund > total)
+      throw userError(`Refunds for this order would come to Rs ${(refundedBefore + refund).toLocaleString("en-PK")} – more than its total (Rs ${total.toLocaleString("en-PK")}). Already refunded: Rs ${refundedBefore.toLocaleString("en-PK")}.`, 400);
+  }
 
   if (data.status === "refunded" && !(originalDoc?.creditNoteNumber || data.creditNoteNumber)) {
     data.creditNoteNumber = ref("CN");
     data.creditNoteDate = new Date().toISOString();
   }
-
-  const orderId = relId(data.order ?? originalDoc?.order);
-  const order = orderId ? ((await req.payload.findByID({ collection: "orders", id: orderId, depth: 0, overrideAccess: true, req }).catch(() => null)) as OrderDoc | null) : null;
   const orderGaveStockBack = Boolean(order && (order.stockHeld === false || ["cancelled", "refused", "returned"].includes(String(order.status))));
 
   // a shop-counter return: the sale its receipt number belongs to (to check serial numbers against)
@@ -180,11 +191,11 @@ const returnResolution: CollectionBeforeChangeHook = async ({ data, originalDoc,
   const posSaleId = async () => {
     if (saleIdCache !== undefined) return saleIdCache;
     const receipt = String(data.orderNumber ?? originalDoc?.orderNumber ?? "");
-    saleIdCache = !order && receipt.startsWith("POS-") ? (((await req.payload.find({ collection: "pos-sales", where: { receiptNumber: { equals: receipt } }, limit: 1, depth: 0, overrideAccess: true, req })).docs[0] as { id?: number } | undefined)?.id ?? null) : null;
+    saleIdCache = !order && receipt.startsWith("POS-") ? (((await req.payload.find({ collection: "pos-sales", where: { and: [{ receiptNumber: { equals: receipt } }, ...inStore] }, limit: 1, depth: 0, overrideAccess: true, req })).docs[0] as { id?: number } | undefined)?.id ?? null) : null;
     return saleIdCache;
   };
   type Unit = { id: number; status?: string; order?: unknown; sale?: unknown };
-  const unitOf = async (serial: string) => (await req.payload.find({ collection: "units", where: { serial: { equals: serial } }, limit: 1, depth: 0, overrideAccess: true, req })).docs[0] as Unit | undefined;
+  const unitOf = async (serial: string) => (await req.payload.find({ collection: "units", where: { and: [{ serial: { equals: serial } }, ...inStore] }, limit: 1, depth: 0, overrideAccess: true, req })).docs[0] as Unit | undefined;
   const belongsHere = async (unit: Unit) => {
     if (order) return relId(unit.order) === Number(order.id);
     const saleId = await posSaleId();
@@ -200,15 +211,19 @@ const returnResolution: CollectionBeforeChangeHook = async ({ data, originalDoc,
       setStockLog(req, { reason: "return", ref: requestNumber });
       // how many of each product earlier returns of this order already put back
       const earlier = new Map<number, number>();
-      if (orderId) {
-        const others = await req.payload.find({ collection: "return-requests", where: { and: [{ order: { equals: orderId } }, { restocked: { equals: true } }, ...notThis] }, limit: 50, depth: 0, overrideAccess: true, req });
+      // a shop-counter return is checked against its receipt the same way an order return is checked against the order
+      const saleId = order ? null : await posSaleId();
+      const sale = saleId ? ((await req.payload.findByID({ collection: "pos-sales", id: saleId, depth: 0, overrideAccess: true, req }).catch(() => null)) as { items?: { product?: unknown; qty?: number }[] } | null) : null;
+      const sameSource = orderId ? [{ order: { equals: orderId } }] : sale ? [{ orderNumber: { equals: String(data.orderNumber ?? originalDoc?.orderNumber ?? "") } }, ...inStore] : null;
+      if (sameSource) {
+        const others = await req.payload.find({ collection: "return-requests", where: { and: [...sameSource, { restocked: { equals: true } }, ...notThis] }, limit: 50, depth: 0, overrideAccess: true, req });
         for (const r of others.docs as unknown as { items?: ReturnItem[] }[]) for (const i of r.items ?? []) {
           const pid = relId(i.product);
           if (pid) earlier.set(pid, (earlier.get(pid) ?? 0) + (Number(i.qty) || 1));
         }
       }
       const ordered = new Map<number, number>();
-      for (const l of order?.items ?? []) {
+      for (const l of order?.items ?? sale?.items ?? []) {
         const pid = relId(l.product);
         if (pid) ordered.set(pid, (ordered.get(pid) ?? 0) + (Number(l.qty) || 0));
       }
@@ -223,7 +238,7 @@ const returnResolution: CollectionBeforeChangeHook = async ({ data, originalDoc,
           else if (unit && unit.status !== "in-stock") log.warn("returns.serial_not_restocked", { serial: i.serial, return: requestNumber });
         } else if (productId) {
           let qty = Number(i.qty) || 1;
-          if (order) qty = Math.min(qty, Math.max(0, (ordered.get(productId) ?? 0) - (earlier.get(productId) ?? 0)));
+          if (order || sale) qty = Math.min(qty, Math.max(0, (ordered.get(productId) ?? 0) - (earlier.get(productId) ?? 0)));
           if (qty > 0) await putBackStock(req.payload, productId, qty, req);
           earlier.set(productId, (earlier.get(productId) ?? 0) + qty);
         }
@@ -254,14 +269,21 @@ const returnResolution: CollectionBeforeChangeHook = async ({ data, originalDoc,
       return !pid || (back.get(pid) ?? 0) >= (Number(l.qty) || 0);
     });
     const note = `${full ? "Returned" : "Partly returned"} – return ${requestNumber}`.trim();
+    // everything paid has been refunded → the order's payment says so too
+    const fullyRefunded = data.status === "refunded" && refundedBefore + refund >= (Number(order.total) || 0) && ["paid", "partial"].includes(String(order.paymentStatus));
     await req.payload.update({
       collection: "orders",
       id: order.id,
-      data: (full ? { status: "returned", stockHeld: false, history: [{ status: "returned", at: new Date().toISOString(), note }] } : { history: [{ status: "delivered", at: new Date().toISOString(), note }] }) as never,
+      data: {
+        ...(full ? { status: "returned", stockHeld: false, history: [{ status: "returned", at: new Date().toISOString(), note }] } : { history: [{ status: "delivered", at: new Date().toISOString(), note }] }),
+        ...(fullyRefunded ? { paymentStatus: "refunded" } : {}),
+      } as never,
       overrideAccess: true,
       req,
-      context: { skipStock: true, skipNotify: true },
+      context: { skipStock: true, skipNotify: true, system: true },
     });
+  } else if (order && data.status === "refunded" && refundedBefore + refund >= (Number(order.total) || 0) && ["paid", "partial"].includes(String(order.paymentStatus))) {
+    await req.payload.update({ collection: "orders", id: order.id, data: { paymentStatus: "refunded" } as never, overrideAccess: true, req, context: { skipStock: true, skipNotify: true, system: true } });
   }
   return data;
 };
@@ -271,12 +293,12 @@ const itemsField: Field = {
   type: "array",
   fields: [
     { type: "row", fields: [
-      { name: "product", type: "relationship", relationTo: "products", admin: { width: "40%" } },
+      { name: "product", type: "relationship", relationTo: "products", filterOptions: sameStore, admin: { width: "40%" } },
       { name: "title", type: "text", required: true, admin: { width: "60%" } },
     ] },
     { type: "row", fields: [
       { name: "qty", type: "number", defaultValue: 1, min: 1, admin: { width: "30%" } },
-      { name: "unitPrice", type: "number", label: "Price paid (Rs)", admin: { width: "35%" } },
+      { name: "unitPrice", type: "number", min: 0, label: "Price paid (Rs)", admin: { width: "35%" } },
       { name: "serial", type: "text", label: "Serial number", admin: { width: "35%" } },
     ] },
   ],
@@ -318,18 +340,20 @@ export const ReturnRequests: CollectionConfig = {
       ],
     },
   },
-  access: { read: staff, create: staff, update: staff, delete: nobody },
+  access: { ...storeAccess("store_staff"), delete: nobody },
   hooks: {
+    beforeValidate: [assignStore()],
     beforeChange: [({ data, operation }) => (operation === "create" && !data.requestNumber ? { ...data, requestNumber: ref("RET") } : data), statusHistory, returnResolution],
   },
   fields: [
+    storeField(),
     { name: "panel", type: "ui", admin: { components: { Field: { path: "/payload/admin/aftersales/AfterSalesPanel#AfterSalesPanel", clientProps: { kind: "return" } } } } },
     { type: "row", fields: [
       { name: "requestNumber", type: "text", unique: true, index: true, label: "Return number", admin: { width: "34%", readOnly: true } },
       { name: "status", type: "select", required: true, defaultValue: "requested", index: true, options: RETURN_STATUSES, admin: { width: "33%" } },
       { name: "orderNumber", type: "text", index: true, admin: { width: "33%" } },
     ] },
-    { name: "order", type: "relationship", relationTo: "orders" },
+    { name: "order", type: "relationship", relationTo: "orders", filterOptions: sameStore },
     ...customerFields,
     itemsField,
     { type: "row", fields: [
@@ -389,7 +413,7 @@ const checkWarranty: CollectionBeforeChangeHook = async ({ data, originalDoc, op
   if (!recalc) return data;
   data.recheck = false;
   const { warrantyFor } = await import("../warranty");
-  const w = await warrantyFor(req.payload, { serial, orderNumber: String(data.orderNumber ?? originalDoc?.orderNumber ?? ""), productId: relId(data.product ?? originalDoc?.product) ?? null }, req);
+  const w = await warrantyFor(req.payload, { storeId: storeIdOf(data.store ?? originalDoc?.store), serial, orderNumber: String(data.orderNumber ?? originalDoc?.orderNumber ?? ""), productId: relId(data.product ?? originalDoc?.product) ?? null }, req);
   Object.assign(data, w.fields);
   return data;
 };
@@ -435,9 +459,10 @@ export const WarrantyClaims: CollectionConfig = {
       ],
     },
   },
-  access: { read: staff, create: staff, update: staff, delete: managers },
-  hooks: { beforeChange: [checkWarranty, statusHistory, unitRepairStatus] },
+  access: storeAccess("store_staff"),
+  hooks: { beforeValidate: [assignStore()], beforeChange: [checkWarranty, statusHistory, unitRepairStatus] },
   fields: [
+    storeField(),
     { name: "panel", type: "ui", admin: { components: { Field: { path: "/payload/admin/aftersales/AfterSalesPanel#AfterSalesPanel", clientProps: { kind: "warranty" } } } } },
     { type: "row", fields: [
       { name: "claimNumber", type: "text", unique: true, index: true, label: "Claim number", admin: { width: "34%", readOnly: true } },
@@ -446,7 +471,7 @@ export const WarrantyClaims: CollectionConfig = {
     ] },
     { type: "row", fields: [
       { name: "orderNumber", type: "text", index: true, label: "Order / receipt number", admin: { width: "50%" } },
-      { name: "product", type: "relationship", relationTo: "products", admin: { width: "50%" } },
+      { name: "product", type: "relationship", relationTo: "products", filterOptions: sameStore, admin: { width: "50%" } },
     ] },
     ...customerFields,
     { name: "issue", type: "textarea", required: true, label: "Problem" },
@@ -471,9 +496,9 @@ export const WarrantyClaims: CollectionConfig = {
         { name: "recheck", type: "checkbox", label: "Check again when I save" },
       ],
     },
-    { name: "unit", type: "relationship", relationTo: "units", admin: { position: "sidebar", readOnly: true } },
-    { name: "order", type: "relationship", relationTo: "orders", admin: { position: "sidebar", readOnly: true } },
-    { name: "sale", type: "relationship", relationTo: "pos-sales", label: "Shop sale", admin: { position: "sidebar", readOnly: true } },
+    { name: "unit", type: "relationship", relationTo: "units", filterOptions: sameStore, admin: { position: "sidebar", readOnly: true } },
+    { name: "order", type: "relationship", relationTo: "orders", filterOptions: sameStore, admin: { position: "sidebar", readOnly: true } },
+    { name: "sale", type: "relationship", relationTo: "pos-sales", filterOptions: sameStore, label: "Shop sale", admin: { position: "sidebar", readOnly: true } },
     { name: "resolution", type: "textarea", label: "What we did" },
     { name: "notes", type: "textarea", label: "Team notes", admin: { position: "sidebar" } },
     historyField(WARRANTY_STATUSES),

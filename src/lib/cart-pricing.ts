@@ -3,6 +3,7 @@ import { getProductsByIds } from "@/lib/repo/catalog";
 import { getOne } from "@/lib/repo/db";
 import { isCmsConfigured } from "@/lib/db/config";
 import { freshStock } from "@/lib/cms/catalog-source";
+import { currentStoreId } from "@/lib/tenant";
 import type { CatalogProduct, OrderItem } from "@/lib/types";
 import { effectivePrice } from "@/lib/utils";
 
@@ -21,8 +22,9 @@ export interface PricedCart {
 }
 
 /**
- * Re-prices a cart from the live catalog: sale price + upgrade prices (matched by id against product.upgrades).
- * Stock is checked against a fresh (uncached) product row.
+ * Re-prices a cart from the live catalog of the current store: sale price + upgrade prices (matched by id against the
+ * product's upgrades – a variant offers its main product's upgrades unless it has its own). Stock is checked against a
+ * fresh (uncached) product row.
  */
 export async function priceCart(lines: CartRequestLine[], opts: { checkStock?: boolean } = {}): Promise<PricedCart> {
   const problems: string[] = [];
@@ -36,6 +38,9 @@ export async function priceCart(lines: CartRequestLine[], opts: { checkStock?: b
 
   const products = await getProductsByIds([...new Set([...merged.values()].map((l) => l.productId))]);
   const byId = new Map(products.map((p) => [p.id, p]));
+  // main products of variants (their upgrade options)
+  const parentIds = [...new Set(products.map((p) => p.variantOf).filter((id): id is string => Boolean(id) && !byId.has(id!)))];
+  const parents = new Map((parentIds.length ? await getProductsByIds(parentIds) : []).map((p) => [p.id, p]));
   const qtyByProduct = new Map<string, number>();
   const items: OrderItem[] = [];
 
@@ -54,7 +59,8 @@ export async function priceCart(lines: CartRequestLine[], opts: { checkStock?: b
       problems.push(`“${p.name}” is sold by quote only – please remove it and request a wholesale quote.`);
       continue;
     }
-    const upgrades = l.upgradeIds.map((id) => p.upgrades.find((u) => u.id === id));
+    const pool = p.upgrades.length || !p.variantOf ? p.upgrades : ((byId.get(p.variantOf) ?? parents.get(p.variantOf))?.upgrades ?? []);
+    const upgrades = l.upgradeIds.map((id) => pool.find((u) => u.id === id));
     if (upgrades.some((u) => !u)) {
       problems.push(`An upgrade option for “${p.name}” is no longer available – please re-add the product.`);
       continue;
@@ -70,9 +76,10 @@ export async function priceCart(lines: CartRequestLine[], opts: { checkStock?: b
   }
 
   if (opts.checkStock) {
+    const store = await currentStoreId();
     for (const [id, qty] of qtyByProduct) {
       // Live stock straight from the catalog (bypasses caches)
-      const fresh = isCmsConfigured ? await freshStock(id).catch(() => null) : ((await getOne("products", "id", id).catch(() => null))?.stock ?? null);
+      const fresh = isCmsConfigured ? await freshStock(id, store).catch(() => null) : ((await getOne("products", "id", id).catch(() => null))?.stock ?? null);
       const stock = fresh ?? byId.get(id)?.stock ?? 0;
       const name = byId.get(id)?.name ?? "An item";
       if (stock <= 0) problems.push(`“${name}” just went out of stock.`);

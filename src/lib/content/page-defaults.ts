@@ -17,6 +17,7 @@ export const CONTENT_TOKENS: { token: string; help: string }[] = [
   { token: "phones", help: "All phones, comma separated" },
   { token: "phonesSlash", help: "All phones joined with “ / ”" },
   { token: "phonesOr", help: "All phones joined with “ or ”" },
+  { token: "phonesLine", help: "“, or call / WhatsApp …” – empty without phones" },
   { token: "hours", help: "Opening hours text" },
   { token: "domain", help: "Website domain" },
   { token: "couriers", help: "Courier partners" },
@@ -41,6 +42,8 @@ export function tokenValues(info: SiteInfo, settings?: StoreSettings | null): Re
     phones: displays.join(", "),
     phonesSlash: displays.join(" / "),
     phonesOr: displays.join(" or "),
+    // ", call or WhatsApp 0300…" – empty when the store has no phone yet
+    phonesLine: displays.length ? `, or call / WhatsApp ${displays.join(" / ")}` : "",
     hours: info.hoursDisplay,
     domain: info.url.replace(/^https?:\/\//, ""),
     couriers: info.couriers.join(", "),
@@ -114,7 +117,7 @@ During the warranty period we will, at our option, **repair**, **replace the fau
 - Damage caused by power surges, unstable voltage, or using a wrong or duplicate charger
 - Software problems, viruses, forgotten passwords, data loss or operating-system issues
 - Normal wear such as battery capacity reducing over time, or cosmetic marks already described in the condition notes
-- Products opened, repaired or modified by anyone other than Urko Tech Store or the brand's authorised service centre
+- Products opened, repaired or modified by anyone other than {{storeName}} or the brand's authorised service centre
 - Removed, damaged or tampered warranty stickers / serial numbers
 - Consumables and freebies (bags, mouse pads, cables given free with a laptop)
 
@@ -312,6 +315,90 @@ Every used laptop is graded honestly, its battery health is written on the listi
 
 So we brought the shop online. Today you can **buy a laptop online in Pakistan** from our store, pay with Cash on Delivery and receive it in 1–5 working days – or visit us in Saddar and check it in person before you pay.`;
 
+// ───────────────────────────── texts for other stores ─────────────────────────────
+// The texts above describe the original shop (its Karachi shop, market and courts). Every other store starts from these
+// plain versions – filled with its own name, address and delivery prices – until it saves its own in /cms.
+
+const SHIPPING_PLAIN = `## Order processing
+
+- Orders are usually confirmed and dispatched within **1–2 working days**. Orders placed on weekends or public holidays are dispatched the next working day.
+- We may call or message you to confirm your order – please keep your phone on.
+
+## Delivery charges
+
+- **Free delivery** on orders of **{{freeDelivery}} or more** (when offered).
+- Below that, a delivery charge applies; the exact charge for your city is shown at checkout before you place your order.
+
+## Payment on delivery
+
+Where Cash on Delivery is offered, pay the rider when your parcel arrives. For larger orders we may ask for part of the amount in advance to confirm the order. Prepaid orders are dispatched as soon as the payment is confirmed.
+
+## Tracking
+
+As soon as your parcel is dispatched you'll receive the courier name and tracking number. You can also check status on our [track order](/track-order) page.
+
+## Receiving your parcel
+
+- Please check that the parcel is **sealed and undamaged** before accepting it, and contact us straight away if it isn't.
+- Report a wrong, damaged or faulty item as soon as possible – see our [returns policy](/warranty-returns).
+
+## Delays
+
+Delivery times are estimates in working days and can be affected by events outside our control. If your order is late, contact us and we'll follow up with the courier.
+
+## Contact
+
+Questions about delivery? Contact us at {{email}}{{phonesLine}}.`;
+
+const RETURNS_PLAIN = `## Wrong, damaged or faulty items
+
+If you receive a product that is **wrong**, **damaged in transit** or **faulty**, contact us as soon as possible with your order number, a description of the problem and photos. Once we confirm the issue we'll arrange a **replacement** or a **refund**.
+
+## Warranty
+
+Warranty terms depend on the product and are shown on each product page. Warranty does not cover physical or liquid damage, misuse, or products repaired or modified by others.
+
+## Change-of-mind returns
+
+If you change your mind, contact us before sending anything back. Items must be unused and in their original packaging; return delivery is paid by the customer unless the return is due to our error.
+
+## How to return an item
+
+1. **Contact us** with your order number – or use the [returns page](/returns).
+2. **Send the item back** using the instructions we give you.
+3. **Inspection:** we check the item and confirm a replacement, repair or refund.
+
+## Refunds
+
+Approved refunds are made to the original payment method (or the account you give us for cash payments) after we receive and check the item.
+
+## Questions?
+
+Contact us at {{email}}{{phonesLine}}. See also our [shipping policy](/shipping-policy) and [terms & conditions](/terms).`;
+
+const ABOUT_PLAIN = `{{storeName}} is an online store. We describe every product honestly, keep you informed from order to delivery, and stand behind what we sell.
+
+Questions before you buy? Contact us at {{email}}{{phonesLine}} – we're happy to help.`;
+
+/** The original shop's texts, adjusted for every other store (keys present here replace the field). */
+const PLAIN_PAGE_CONTENT: Record<string, { eyebrow?: string; title?: string; description?: string; body?: string; intro?: string }> = {
+  "/shipping-policy": { eyebrow: "Delivery", description: "How we deliver your order, what it costs and how to track it.", body: SHIPPING_PLAIN },
+  "/warranty-returns": { eyebrow: "Peace of mind", title: "Returns & *Warranty*", description: "If something isn't right with your order, we'll make it right.", body: RETURNS_PLAIN },
+  "/terms": { description: "The rules that apply when you buy from {{storeName}}." },
+  "/installments": { description: "Pay in easy instalments where available – ask us for the current options." },
+  "/about": { eyebrow: "About us", title: "About *{{storeName}}*", description: "Who we are and how we work.", body: ABOUT_PLAIN },
+  "/shop": { intro: "Browse everything we sell – delivered to your door." },
+  "/category": { intro: "Browse our categories." },
+  "/deals": { intro: "Our best prices right now." },
+  "/find-parts": { intro: "Find the right part for your device." },
+  "/brands": { intro: "Shop by brand." },
+  "/blog": { intro: "News, guides and tips from {{storeName}}." },
+};
+
+/** Terms: the original shop names its city's courts; other stores refer to their own place of business. */
+const plainTerms = (body: string) =>
+  body.replace("the courts of **Karachi, Sindh**", "the courts where {{storeName}} has its place of business").replace(", by phone or at our shop at {{address}}", " or by phone");
+
 /** Built-in content per page key (fields not listed are rendered from the page's own JSX). */
 export const DEFAULT_PAGE_CONTENT: Record<string, { eyebrow?: string; title?: string; description?: string; body?: string; intro?: string; seoCopy?: string; updated?: string }> = {
   "/shipping-policy": {
@@ -338,7 +425,7 @@ export const DEFAULT_PAGE_CONTENT: Record<string, { eyebrow?: string; title?: st
   "/terms": {
     eyebrow: "Policies",
     title: "Terms & *Conditions*",
-    description: "The simple rules that apply when you buy laptops and accessories from Urko Tech Store – online or in store.",
+    description: "The simple rules that apply when you buy laptops and accessories from {{storeName}} – online or in store.",
     body: TERMS,
     updated: "2026-09-01",
   },
@@ -386,8 +473,10 @@ export const DEFAULT_PAGE_CONTENT: Record<string, { eyebrow?: string; title?: st
 export type ResolvedPageContent = { eyebrow: string; title: string; description: string; body: string; intro: string; seoCopy: string; updated: string };
 
 /** Saved content (non-empty fields) layered over the built-in defaults for `key`. */
-export function resolvePageContent(key: string, saved: Partial<ResolvedPageContent> | null | undefined): ResolvedPageContent {
-  const d = DEFAULT_PAGE_CONTENT[key] ?? {};
+export function resolvePageContent(key: string, saved: Partial<ResolvedPageContent> | null | undefined, opts: { original?: boolean } = {}): ResolvedPageContent {
+  const base = DEFAULT_PAGE_CONTENT[key] ?? {};
+  // the original shop keeps its own texts; every other store gets the plain ones (its own name and details)
+  const d = opts.original === false ? { ...base, ...(key === "/terms" && base.body ? { body: plainTerms(base.body) } : {}), ...(PLAIN_PAGE_CONTENT[key] ?? {}) } : base;
   const pick = (k: keyof ResolvedPageContent) => {
     const v = saved?.[k];
     return typeof v === "string" && v.trim() ? v : d[k] ?? "";

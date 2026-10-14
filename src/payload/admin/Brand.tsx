@@ -1,26 +1,23 @@
-/* Urko Tech Store branding inside the Payload admin (login screen logo + nav icon). */
+/* ShopEngine branding inside the Payload admin (login screen logo + nav icon). The store being worked in is named in the menu. */
 const MARK_PATHS = (
   <>
     <defs>
-      <linearGradient id="urko-admin-g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="500" y2="385">
-        <stop offset="0" stopColor="#00F0FF" />
-        <stop offset="0.55" stopColor="#00C6FF" />
-        <stop offset="1" stopColor="#1D6BFF" />
+      <linearGradient id="urko-admin-g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="64" y2="64">
+        <stop offset="0" stopColor="#00C6FF" />
+        <stop offset="0.5" stopColor="#3B82F6" />
+        <stop offset="1" stopColor="#8B5CF6" />
       </linearGradient>
     </defs>
-    <path
-      d="M0 25 A25 25 0 0 1 50 25 L50 290 Q50 337 97 337 L488 337 Q498 337 492 345 L475 368 Q465 385 445 385 L97 385 Q0 385 0 290 Z M341 355 H414 A6 6 0 0 1 414 367 H341 A6 6 0 0 1 341 355 Z"
-      fill="url(#urko-admin-g)"
-      fillRule="evenodd"
-    />
-    <path d="M122.5 179.1 A80 80 0 1 0 253.5 179.1" fill="none" stroke="url(#urko-admin-g)" strokeWidth="30" strokeLinecap="round" />
-    <path d="M188 109 L188 197" fill="none" stroke="url(#urko-admin-g)" strokeWidth="32" strokeLinecap="round" />
+    {/* rounded tile with a shopping bag */}
+    <rect x="0" y="0" width="64" height="64" rx="16" fill="url(#urko-admin-g)" />
+    <path d="M18 24 H46 L43 50 H21 Z" fill="none" stroke="#fff" strokeWidth="4.5" strokeLinejoin="round" />
+    <path d="M25 24 V20 A7 7 0 0 1 39 20 V24" fill="none" stroke="#fff" strokeWidth="4.5" strokeLinecap="round" />
   </>
 );
 
 export function Icon() {
   return (
-    <svg viewBox="-4 -4 506 393" width="28" height="22" aria-label="Urko Tech Store">
+    <svg viewBox="0 0 64 64" width="24" height="24" aria-label="ShopEngine">
       {MARK_PATHS}
     </svg>
   );
@@ -29,12 +26,12 @@ export function Icon() {
 export function Logo() {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-      <svg viewBox="-4 -4 506 393" width="64" height="50" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="52" height="52" aria-hidden="true">
         {MARK_PATHS}
       </svg>
-      <div style={{ display: "flex", flexDirection: "column", lineHeight: 1, fontWeight: 800, textTransform: "uppercase", fontFamily: "Montserrat, system-ui, sans-serif" }}>
-        <span style={{ fontSize: 30, letterSpacing: "0.02em" }}>Urko</span>
-        <span style={{ fontSize: 13, letterSpacing: "0.08em", color: "#00D4FF", marginTop: 4 }}>Tech Store · Admin</span>
+      <div style={{ display: "flex", flexDirection: "column", lineHeight: 1, fontWeight: 800, fontFamily: "Montserrat, system-ui, sans-serif" }}>
+        <span style={{ fontSize: 30, letterSpacing: "0.01em" }}>ShopEngine</span>
+        <span style={{ fontSize: 13, letterSpacing: "0.04em", color: "#00D4FF", marginTop: 4, fontWeight: 700 }}>the engine that powers shops</span>
       </div>
     </div>
   );

@@ -60,6 +60,7 @@ export function DemoBanner({ className }: { className?: string }) {
 }
 
 export const STATUS_TONE: Record<OrderStatus, string> = {
+  "awaiting-payment": "border-amber-500/40 bg-amber-500/10 text-amber-300",
   "awaiting-confirmation": "border-amber-500/40 bg-amber-500/10 text-amber-300",
   pending: "border-amber-500/40 bg-amber-500/10 text-amber-300",
   confirmed: "border-sky-500/40 bg-sky-500/10 text-sky-300",

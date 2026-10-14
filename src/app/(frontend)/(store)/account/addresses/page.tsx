@@ -5,15 +5,19 @@ import { AddressBook } from "@/components/account/address-book";
 import { getSessionUser, getUserProfile } from "@/lib/auth";
 import { isDatabaseConfigured } from "@/lib/db/config";
 import { pageMetadata } from "@/lib/seo";
+import { getSiteInfo } from "@/lib/repo/site-content";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = pageMetadata({
-  title: "Saved Addresses | Urko Tech Store",
-  description: "Manage your saved delivery addresses for faster checkout.",
-  path: "/account/addresses",
-  noindex: true,
-});
+export async function generateMetadata(): Promise<Metadata> {
+  const { name } = await getSiteInfo(); // the current store's own name
+  return pageMetadata({
+    title: `Saved Addresses | ${name}`,
+    description: "Manage your saved delivery addresses for faster checkout.",
+    path: "/account/addresses",
+    noindex: true,
+  });
+}
 
 export default async function AddressesPage() {
   const heading = (

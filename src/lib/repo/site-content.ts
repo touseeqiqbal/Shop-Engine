@@ -2,11 +2,12 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { getSetting } from "./db";
 import { TAGS, getStoreSettings } from "./catalog";
-import { mergeSiteInfo, type SiteInfo, type SiteInfoOverrides } from "@/lib/site-info";
+import { blankSiteInfo, mergeSiteInfo, type SiteInfo, type SiteInfoOverrides } from "@/lib/site-info";
 import { mergeSeoSettings, type PageSeoMap, type PagesContentMap, type SeoSettings } from "@/lib/content/registry";
 import { mergeHomeConfig, type HomeConfig } from "@/lib/content/home";
 import { fillTokens, resolvePageContent, tokenValues } from "@/lib/content/page-defaults";
 import { cmsPageTexts, cmsSeo, cmsSiteInfo } from "@/lib/cms/site";
+import { currentStoreId, storeDirectory, storeOrigin } from "@/lib/tenant";
 
 /**
  * Admin-editable site content & SEO (key/value settings). Every getter is cached with the
@@ -35,36 +36,68 @@ export const SITE_TAGS = {
 const REVALIDATE = 300;
 const opts = (tag: string) => ({ tags: [TAGS.settings, tag], revalidate: REVALIDATE });
 
-/** Business profile (NAP, hours, socials) – saved overrides merged onto `src/lib/site.ts`. */
-export const getSiteInfo = unstable_cache(
-  async (): Promise<SiteInfo> => mergeSiteInfo((await cmsSiteInfo()) ?? (await getSetting<SiteInfoOverrides | null>(SETTING_KEYS.business, null))),
-  ["site-business-v2"],
+/**
+ * Business profile (NAP, hours, socials) – saved overrides merged onto the defaults. The default store keeps the built-in
+ * profile from `src/lib/site.ts`; every other store starts blank (its own name and address only – never another
+ * business's phone numbers or address).
+ */
+const siteInfoCached = unstable_cache(
+  async (storeId: number | null): Promise<SiteInfo> => {
+    const store = storeId == null ? null : (await storeDirectory()).find((s) => s.id === storeId) ?? null;
+    const saved = (await cmsSiteInfo(storeId)) ?? (store && !store.isDefault ? null : await getSetting<SiteInfoOverrides | null>(SETTING_KEYS.business, null));
+    return mergeSiteInfo(saved, store && !store.isDefault ? blankSiteInfo(store.name, storeOrigin(store), store.country) : undefined);
+  },
+  ["site-business-v3"],
   opts(SITE_TAGS.business)
 );
+export const getSiteInfo = async (storeId?: number | null) => siteInfoCached(storeId === undefined ? await currentStoreId() : storeId);
 
-export const getSeoSettings = unstable_cache(
-  async (): Promise<SeoSettings> => mergeSeoSettings((await cmsSeo())?.settings ?? (await getSetting<Partial<SeoSettings> | null>(SETTING_KEYS.seo, null))),
-  ["site-seo-v2"],
+/** The store, when it isn't the original shop (whose built-in texts are its own). */
+async function otherStore(storeId: number | null) {
+  const store = storeId == null ? null : ((await storeDirectory()).find((s) => s.id === storeId) ?? null);
+  return store && !store.isDefault ? store : null;
+}
+
+/** Saved values that are actually filled in (empty ones fall back to the defaults). */
+const filled = <T extends object>(v: T | null | undefined): Partial<T> =>
+  Object.fromEntries(Object.entries(v ?? {}).filter(([, x]) => x != null && x !== "" && !(Array.isArray(x) && !x.length))) as Partial<T>;
+
+/** A store without its own SEO settings starts from its own name – never another shop's titles or keywords. */
+const storeSeoDefaults = (name: string): Partial<SeoSettings> => ({ titleTemplate: `%s | ${name}`, defaultTitle: name, defaultDescription: `Shop online at ${name}.`, keywords: [name] });
+
+const seoSettingsCached = unstable_cache(
+  async (storeId: number | null): Promise<SeoSettings> => {
+    const saved = (await cmsSeo(storeId))?.settings;
+    const store = await otherStore(storeId);
+    if (store) return mergeSeoSettings({ ...storeSeoDefaults(store.name), ...filled(saved) });
+    return mergeSeoSettings(saved ?? (await getSetting<Partial<SeoSettings> | null>(SETTING_KEYS.seo, null)));
+  },
+  ["site-seo-v4"],
   opts(SITE_TAGS.seo)
 );
+export const getSeoSettings = async () => seoSettingsCached(await currentStoreId());
 
-export const getPageSeoMap = unstable_cache(
-  async (): Promise<PageSeoMap> => (await cmsSeo())?.pages ?? (await getSetting<PageSeoMap | null>(SETTING_KEYS.pageSeo, null)) ?? {},
-  ["site-page-seo-v2"],
+const pageSeoMapCached = unstable_cache(
+  async (storeId: number | null): Promise<PageSeoMap> => (await cmsSeo(storeId))?.pages ?? ((await otherStore(storeId)) ? null : await getSetting<PageSeoMap | null>(SETTING_KEYS.pageSeo, null)) ?? {},
+  ["site-page-seo-v4"],
   opts(SITE_TAGS.pageSeo)
 );
+export const getPageSeoMap = async () => pageSeoMapCached(await currentStoreId());
 
-export const getPagesContent = unstable_cache(
-  async (): Promise<PagesContentMap> => (await cmsPageTexts()) ?? (await getSetting<PagesContentMap | null>(SETTING_KEYS.pages, null)) ?? {},
-  ["site-pages-v2"],
+const pagesContentCached = unstable_cache(
+  async (storeId: number | null): Promise<PagesContentMap> => (await cmsPageTexts(storeId)) ?? ((await otherStore(storeId)) ? null : await getSetting<PagesContentMap | null>(SETTING_KEYS.pages, null)) ?? {},
+  ["site-pages-v4"],
   opts(SITE_TAGS.pages)
 );
+export const getPagesContent = async () => pagesContentCached(await currentStoreId());
 
-export const getHomeConfig = unstable_cache(
-  async (): Promise<HomeConfig> => mergeHomeConfig(await getSetting<Partial<HomeConfig> | null>(SETTING_KEYS.home, null)),
-  ["site-home-v1"],
+const homeConfigCached = unstable_cache(
+  async (storeId: number | null): Promise<HomeConfig> => mergeHomeConfig((await otherStore(storeId)) ? null : await getSetting<Partial<HomeConfig> | null>(SETTING_KEYS.home, null)),
+  ["site-home-v2"],
   opts(SITE_TAGS.home)
 );
+/** The legacy home-page layout (until the store builds its own "home" page): the original shop's saved one, else the defaults. */
+export const getHomeConfig = async () => homeConfigCached(await currentStoreId());
 
 /** Saved content for one page (empty object when nothing saved). */
 export async function getPageContent(key: string) {
@@ -76,8 +109,8 @@ export async function getPageContent(key: string) {
  * charges…) filled from the live Store info / Delivery settings. Also returns those for convenience.
  */
 export async function getResolvedPageContent(key: string) {
-  const [saved, info, settings] = await Promise.all([getPageContent(key), getSiteInfo(), getStoreSettings()]);
-  const c = resolvePageContent(key, saved);
+  const [saved, info, settings, storeId] = await Promise.all([getPageContent(key), getSiteInfo(), getStoreSettings(), currentStoreId()]);
+  const c = resolvePageContent(key, saved, { original: !(await otherStore(storeId)) });
   const values = tokenValues(info, settings);
   const fill = (s: string) => fillTokens(s, values);
   return {

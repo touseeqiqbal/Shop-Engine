@@ -30,6 +30,8 @@ type Report = {
   series: { day: string; revenue: number; orders: number }[];
   topProducts: { key: string; title: string; qty: number; revenue: number }[];
   cities: { key: string; orders: number; revenue: number }[];
+  customers?: { total: number; new: number; returning: number; returningRate: number };
+  checkout?: { started: number; completed: number; abandoned: number; recoveredByReminder: number; completionRate: number };
   recent: { id: number; orderNumber: string; status: string; total: number; placedAt: string; customer: string; city: string }[];
   setup: { key: string; label: string; done: boolean; href: string }[];
   warnings?: string[];
@@ -262,6 +264,52 @@ export function Dashboard() {
             <p className="urko-muted">{data ? "No sales in this period yet." : "Loading…"}</p>
           )}
         </section>
+
+        {data?.customers && data.checkout && (
+          <section className="urko-card" aria-labelledby="cust-h">
+            <h2 id="cust-h" className="urko-h3">
+              Customers & checkout
+            </h2>
+            <ul className="urko-meters">
+              <li>
+                <div>
+                  <span>
+                    Customers who ordered ({data.customers.new} new, {data.customers.returning} returning)
+                  </span>
+                  <strong>{data.customers.total}</strong>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <span>Returning customers</span>
+                  <strong>{data.customers.returningRate}%</strong>
+                </div>
+                <span className="urko-meter">
+                  <span style={{ width: `${Math.min(100, data.customers.returningRate)}%` }} />
+                </span>
+              </li>
+              <li>
+                <div>
+                  <span>
+                    Checkouts completed ({data.checkout.completed} of {data.checkout.started})
+                  </span>
+                  <strong>{data.checkout.completionRate}%</strong>
+                </div>
+                <span className="urko-meter">
+                  <span style={{ width: `${Math.min(100, data.checkout.completionRate)}%` }} />
+                </span>
+              </li>
+              {data.checkout.recoveredByReminder > 0 && (
+                <li>
+                  <div>
+                    <span>Orders won back by cart reminders</span>
+                    <strong>{data.checkout.recoveredByReminder}</strong>
+                  </div>
+                </li>
+              )}
+            </ul>
+          </section>
+        )}
       </div>
 
       {data && setupLeft.length > 0 && (

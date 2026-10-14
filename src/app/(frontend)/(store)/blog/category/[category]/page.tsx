@@ -4,6 +4,8 @@ import { PageHero } from "@/components/content/page-hero";
 import { WhatsAppCta } from "@/components/content/whatsapp-cta";
 import { BlogCategoryChips, BlogTagCloud, PostGrid } from "@/components/blog/blog-listing";
 import { getBlogPosts } from "@/lib/repo/catalog";
+import { getSiteInfo } from "@/lib/repo/site-content";
+import { storePlace } from "@/lib/site-info";
 import { blogCategories, blogCategorySlug } from "@/lib/blog";
 import { pageMetadata } from "@/lib/seo";
 
@@ -23,19 +25,21 @@ async function load(slug: string) {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { category } = await params;
-  const { name, posts } = await load(category);
+  const [{ name, posts }, site] = await Promise.all([load(category), getSiteInfo()]);
   if (!name) return {};
+  const place = storePlace(site, " ");
   return pageMetadata({
-    title: `${name} – Laptop & Tech Articles | Urko Tech Store Blog`,
-    description: `${posts.length} ${name.toLowerCase()} article${posts.length === 1 ? "" : "s"} from Urko Tech Store, Saddar Karachi: practical advice on laptops, prices in Pakistan, chargers and accessories.`,
+    title: `${name} – Laptop & Tech Articles | ${site.name} Blog`,
+    description: `${posts.length} ${name.toLowerCase()} article${posts.length === 1 ? "" : "s"} from ${site.name}${place ? `, ${place}` : ""}: practical advice on laptops, prices in Pakistan, chargers and accessories.`,
     path: `/blog/category/${category}`,
   });
 }
 
 export default async function BlogCategoryPage({ params }: Props) {
   const { category } = await params;
-  const { all, posts, name } = await load(category);
+  const [{ all, posts, name }, site] = await Promise.all([load(category), getSiteInfo()]);
   if (!name) notFound();
+  const place = storePlace(site);
 
   return (
     <div className="pb-16">
@@ -46,7 +50,7 @@ export default async function BlogCategoryPage({ params }: Props) {
         ]}
         eyebrow="Blog category"
         title={name}
-        description={`${posts.length} article${posts.length === 1 ? "" : "s"} to help you buy smarter – written by the Urko Tech team in Saddar, Karachi.`}
+        description={`${posts.length} article${posts.length === 1 ? "" : "s"} to help you buy smarter – written by the ${site.shortName} team${place ? ` in ${place}` : ""}.`}
       />
       <div className="container-x mt-8 space-y-10 sm:mt-10">
         <BlogCategoryChips all={all} active={category} />

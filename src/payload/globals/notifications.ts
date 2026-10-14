@@ -1,5 +1,5 @@
 import type { GlobalConfig } from "payload";
-import { managers, staff } from "../access";
+import { platformAdmins } from "../access";
 import { dbName } from "../fields";
 
 /**
@@ -19,7 +19,7 @@ export const NotificationSettings: GlobalConfig = {
   dbName: dbName("notifications"),
   label: "Notifications",
   admin: { group: "Settings", description: "Order and enquiry alerts for your team, and the messages customers receive." },
-  access: { read: staff, update: managers },
+  access: { read: platformAdmins, update: platformAdmins },
   fields: [
     {
       type: "collapsible",

@@ -23,6 +23,7 @@ import { InlineText } from "@/components/content/inline-text";
 import { Markdown } from "@/components/ui/markdown";
 import { getPageMeta } from "@/lib/page-seo";
 import { getResolvedPageContent } from "@/lib/repo/site-content";
+import { getCurrentStore } from "@/lib/tenant";
 
 export const revalidate = 300;
 
@@ -40,7 +41,7 @@ const STATS = [
 const WHAT_WE_SELL = [
   { icon: Laptop, title: "New, used & refurbished laptops", text: "HP EliteBook & ProBook, Dell Latitude & XPS, Lenovo ThinkPad, MacBook Air and gaming laptops from Asus & MSI.", href: "/category/laptops" },
   { icon: PlugZap, title: "Chargers & adapters", text: "Original-quality chargers for HP, Dell and Lenovo, USB-C PD adapters and universal multi-tip chargers.", href: "/category/chargers" },
-  { icon: BatteryCharging, title: "Laptop batteries", text: "Replacement batteries for popular models – installed free at our Saddar shop.", href: "/category/batteries" },
+  { icon: BatteryCharging, title: "Laptop batteries", text: "Replacement batteries for popular models – installed free at our {area}shop.", href: "/category/batteries" },
   { icon: Keyboard, title: "Keyboards & mouse", text: "Mechanical gaming keyboards, wireless office sets, gaming mouse and laptop replacement keyboards.", href: "/category/keyboards" },
   { icon: Cpu, title: "SSD & RAM upgrades", text: "NVMe & SATA SSDs and DDR4 / DDR5 laptop RAM – the fastest way to make an old laptop feel new.", href: "/category/storage" },
   { icon: Wifi, title: "Networking & accessories", text: "Routers, Wi-Fi adapters, USB-C hubs, monitors, webcams, headsets, bags and cooling pads.", href: "/category/laptop-accessories" },
@@ -57,7 +58,10 @@ const PROCESS = [
 
 export default async function AboutPage() {
   // Hero + story are editable in /cms → Online store → Page texts.
-  const c = await getResolvedPageContent("/about");
+  const [c, store] = await Promise.all([getResolvedPageContent("/about"), getCurrentStore()]);
+  // the original (default) shop's own wording; any other store: its own area (Settings → Store details) or none
+  const original = !store || store.isDefault;
+  const area = (s: string) => s.replace("{area}", c.info.address.area ? `${c.info.address.area} ` : "");
   return (
     <div className="pb-16">
       <PageHero
@@ -87,7 +91,7 @@ export default async function AboutPage() {
         {/* Story */}
         <section className="grid gap-8 lg:grid-cols-2 lg:gap-14" aria-labelledby="story-heading">
           <div>
-            <SectionHeading eyebrow="From Regal Chowk to your doorstep" title={<span id="story-heading">Built on honest advice</span>} className="!mb-4" />
+            <SectionHeading eyebrow={original ? "From Regal Chowk to your doorstep" : "From our shop to your doorstep"} title={<span id="story-heading">Built on honest advice</span>} className="!mb-4" />
             <Markdown content={c.body} />
           </div>
           <Reveal className="relative overflow-hidden rounded-[1.75rem] border border-border bg-bg-elevated p-6 sm:p-10">
@@ -98,7 +102,7 @@ export default async function AboutPage() {
                 ["Honest grading", "Used A+, Used A, Refurbished and New – clearly labelled with real photos and notes."],
                 ["Right part, first time", "Our Find Parts tool and WhatsApp support match chargers, batteries and RAM to your exact model."],
                 ["Fair laptop prices in Pakistan", "Prices are updated daily to stay in line with the market."],
-                ["Free installation", "SSD, RAM and battery installation free at our Saddar shop when you buy from us."],
+                ["Free installation", area("SSD, RAM and battery installation free at our {area}shop when you buy from us.")],
                 ["Real after-sales", "A physical shop you can walk into – not just a page on social media."],
               ].map(([t, d]) => (
                 <li key={t} className="flex gap-3">
@@ -129,7 +133,7 @@ export default async function AboutPage() {
                     <w.icon className="size-6" aria-hidden="true" />
                   </span>
                   <h3 className="text-lg font-bold text-fg">{w.title}</h3>
-                  <p className="text-sm text-muted">{w.text}</p>
+                  <p className="text-sm text-muted">{area(w.text)}</p>
                 </Link>
               </Reveal>
             ))}
@@ -164,7 +168,7 @@ export default async function AboutPage() {
 
         <section className="grid gap-4 md:grid-cols-3" aria-label="Delivery and policies">
           {[
-            { icon: Truck, title: "Delivery all over Pakistan", text: "Karachi same / next day; major cities 1–3 days; other areas 3–5 days.", href: "/shipping-policy", cta: "Shipping policy" },
+            { icon: Truck, title: "Delivery all over Pakistan", text: original ? "Karachi same / next day; major cities 1–3 days; other areas 3–5 days." : "Fast, tracked delivery to every city.", href: "/shipping-policy", cta: "Shipping policy" },
             { icon: ShieldCheck, title: "Warranty you can use", text: "Checking warranty on used laptops, up to 6 months on refurbished, brand warranty on new.", href: "/warranty-returns", cta: "Warranty & returns" },
             { icon: PackageCheck, title: "Questions answered", text: "Payments, COD, delivery, grades and returns – all explained.", href: "/faqs", cta: "Read FAQs" },
           ].map((c) => (
@@ -181,7 +185,7 @@ export default async function AboutPage() {
           <StoreLocation />
         </section>
 
-        <WhatsAppCta title="Visit us or message us on WhatsApp" message="Hi Urko Tech Store! I'd like to visit your Saddar shop." />
+        <WhatsAppCta title="Visit us or message us on WhatsApp" message={`Hi {store}! I'd like to visit your ${c.info.address.area ? `${c.info.address.area} ` : ""}shop.`} />
       </div>
     </div>
   );

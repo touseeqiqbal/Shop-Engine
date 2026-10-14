@@ -1,4 +1,5 @@
 import type { Field } from "payload";
+import { sameStore } from "./tenancy";
 
 /**
  * Reusable "link" fields: point at a category, product, blog post or any custom URL.
@@ -25,9 +26,9 @@ export const linkFields = (opts: { label?: boolean } = { label: true }): Field[]
       { name: "newTab", type: "checkbox", label: "Open in new tab", admin: { width: "30%" } },
     ],
   },
-  { name: "category", type: "relationship", relationTo: "categories", admin: { condition: (_, s) => s?.type === "category" } },
-  { name: "product", type: "relationship", relationTo: "products", admin: { condition: (_, s) => s?.type === "product" } },
-  { name: "post", type: "relationship", relationTo: "posts", admin: { condition: (_, s) => s?.type === "post" } },
+  { name: "category", type: "relationship", relationTo: "categories", filterOptions: sameStore, admin: { condition: (_, s) => s?.type === "category" } },
+  { name: "product", type: "relationship", relationTo: "products", filterOptions: sameStore, admin: { condition: (_, s) => s?.type === "product" } },
+  { name: "post", type: "relationship", relationTo: "posts", filterOptions: sameStore, admin: { condition: (_, s) => s?.type === "post" } },
   {
     name: "url",
     type: "text",

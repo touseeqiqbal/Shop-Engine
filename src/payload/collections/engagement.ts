@@ -1,8 +1,8 @@
 import type { CollectionAfterChangeHook, CollectionConfig, GlobalConfig } from "payload";
-import { anyone, isStaffUser, managers, staff } from "../access";
+import { anyone, platformAdmins } from "../access";
+import { assignStore, publicOrStore, sameStore, storeAccess, storeField, storeIdOf, storeRoleField } from "../tenancy";
 import { dbName } from "../fields";
 import { revalidate } from "../revalidate";
-import { after } from "next/server";
 import { log } from "../../lib/log";
 
 /**
@@ -38,11 +38,13 @@ export const TradeIns: CollectionConfig = {
       { label: "Not bought", where: "where[status][equals]=declined" },
     ]),
   },
-  access: { read: staff, create: staff, update: staff, delete: managers },
+  access: storeAccess("store_staff"),
   hooks: {
+    beforeValidate: [assignStore()],
     beforeChange: [({ data }) => ({ ...data, summary: [data.brand, data.model].filter(Boolean).join(" ") || data.summary || "Laptop" })],
   },
   fields: [
+    storeField(),
     { type: "row", fields: [
       { name: "status", type: "select", required: true, defaultValue: "new", index: true, options: [
         { label: "New", value: "new" },
@@ -88,23 +90,22 @@ export const TradeIns: CollectionConfig = {
 
 /* ───────────── product questions ───────────── */
 
-const questionAnswered: CollectionAfterChangeHook = async ({ doc, previousDoc, context }) => {
+const questionAnswered: CollectionAfterChangeHook = async ({ doc, previousDoc, context, req }) => {
   if (context?.migrating) return doc;
   if (doc.published || previousDoc?.published) revalidate(["catalog"]);
   if (doc.answer && doc.published && !previousDoc?.published && doc.email) {
-    const send = async () => {
-      try {
-        const { notifyQuestionAnswered } = await import("../../lib/notify");
-        await notifyQuestionAnswered({ email: String(doc.email), name: String(doc.name ?? ""), question: String(doc.question), answer: String(doc.answer), productId: typeof doc.product === "object" ? doc.product?.id : doc.product });
-      } catch (e) {
-        log.error("questions.notify_failed", e);
-      }
-    };
-    // after the save is finished – never keep the database waiting on the email server
+    // queued with the save (sent by the outbox once it is committed; never twice)
     try {
-      after(send);
-    } catch {
-      void send();
+      const { queueNotification } = await import("../../lib/notify");
+      await queueNotification(
+        req.payload,
+        "question-answered",
+        storeIdOf(doc.store),
+        { email: String(doc.email), name: String(doc.name ?? ""), question: String(doc.question), answer: String(doc.answer), productId: typeof doc.product === "object" ? doc.product?.id : doc.product },
+        { req, dedupeKey: `question-answered:${String(doc.id)}` },
+      );
+    } catch (e) {
+      log.error("questions.notify_failed", e);
     }
   }
   return doc;
@@ -125,16 +126,17 @@ export const ProductQuestions: CollectionConfig = {
       { label: "On product pages", where: "where[published][equals]=true" },
     ]),
   },
-  access: { read: ({ req }) => (isStaffUser(req.user as never) ? true : { published: { equals: true } }), create: staff, update: staff, delete: managers },
-  hooks: { afterChange: [questionAnswered] },
+  access: { ...storeAccess("store_staff"), read: publicOrStore("store_staff", { published: { equals: true } }) },
+  hooks: { beforeValidate: [assignStore()], afterChange: [questionAnswered] },
   fields: [
-    { name: "product", type: "relationship", relationTo: "products", required: true, index: true },
+    storeField(),
+    { name: "product", type: "relationship", relationTo: "products", required: true, index: true, filterOptions: sameStore },
     { name: "question", type: "textarea", required: true },
     { name: "answer", type: "textarea" },
     { name: "published", type: "checkbox", label: "Show on product page", index: true },
     { type: "row", fields: [
       { name: "name", type: "text", admin: { width: "50%" } },
-      { name: "email", type: "text", label: "Email (we tell them when it's answered)", access: { read: ({ req }) => isStaffUser(req.user as never) }, admin: { width: "50%" } },
+      { name: "email", type: "text", label: "Email (we tell them when it's answered)", access: { read: storeRoleField("store_staff") }, admin: { width: "50%" } },
     ] },
   ],
 };
@@ -156,10 +158,12 @@ export const StockAlerts: CollectionConfig = {
       { label: "All", where: "" },
     ]),
   },
-  access: { read: staff, create: staff, update: staff, delete: managers },
+  access: storeAccess("store_staff"),
+  hooks: { beforeValidate: [assignStore()] },
   fields: [
+    storeField(),
     { type: "row", fields: [
-      { name: "product", type: "relationship", relationTo: "products", required: true, index: true, admin: { width: "50%" } },
+      { name: "product", type: "relationship", relationTo: "products", required: true, index: true, filterOptions: sameStore, admin: { width: "50%" } },
       { name: "kind", type: "select", required: true, options: [
         { label: "Back in stock", value: "stock" },
         { label: "Price drop", value: "price" },
@@ -196,8 +200,10 @@ export const AbandonedCarts: CollectionConfig = {
       { label: "All", where: "" },
     ]),
   },
-  access: { read: staff, create: staff, update: staff, delete: managers },
+  access: storeAccess("store_staff"),
+  hooks: { beforeValidate: [assignStore()] },
   fields: [
+    storeField(),
     { type: "row", fields: [
       { name: "status", type: "select", required: true, defaultValue: "open", index: true, options: [
         { label: "Open", value: "open" },
@@ -229,7 +235,7 @@ export const ConversionSettings: GlobalConfig = {
   dbName: dbName("conversion"),
   label: "Installments & reminders",
   admin: { group: "Settings", description: "Installment (EMI) block on product pages and the Installments page, plus cart / stock / price reminder messages." },
-  access: { read: anyone, update: managers },
+  access: { read: anyone, update: platformAdmins },
   hooks: { afterChange: [({ doc }) => (revalidate(["settings", "catalog"], ["/installments"]), doc)] },
   fields: [
     {

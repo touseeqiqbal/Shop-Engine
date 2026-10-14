@@ -7,6 +7,8 @@ import { absoluteUrl } from "@/lib/site";
 import { listPublishedPages } from "@/lib/cms/pages";
 import { listCollections } from "@/lib/cms/collections";
 import { indexable } from "@/lib/seo";
+import { currentAvailability, currentOrigin } from "@/lib/tenant";
+import { site } from "@/lib/site";
 
 export const revalidate = 3600;
 
@@ -34,7 +36,16 @@ const STATIC_PAGES: { path: string; priority: number; changeFrequency: Entry["ch
   { path: "/terms", priority: 0.2, changeFrequency: "yearly" },
 ];
 
+/** Every store's own sitemap (its address, its pages); a shop that isn't open lists nothing. */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const [{ store, availability }, origin] = await Promise.all([currentAvailability(), currentOrigin()]);
+  if (!availability.open) return [];
+  const own = (u: string) => (u.startsWith(site.url) ? origin + u.slice(site.url.length) : u);
+  // the /laptops-in-{city} pages belong to the original (default) shop only
+  return (await entriesOf(!store || store.isDefault)).map((e) => ({ ...e, url: own(e.url), ...(e.images ? { images: e.images.map(own) } : {}) }));
+}
+
+async function entriesOf(cityPages: boolean): Promise<MetadataRoute.Sitemap> {
   const [products, categories, brands, posts, builderPages] = await Promise.all([getAllProducts(), getCategories(), getBrands(), getBlogPosts(), listPublishedPages()]);
   const collections = await listCollections().catch((e) => (console.error("[sitemap] collections unavailable:", e), []));
   // built-in pages set to "Noindex" in /cms → Settings → Google & SEO → Built-in pages stay out of the sitemap
@@ -101,7 +112,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     entries.push({ url: absoluteUrl(`/blog/tag/${t.slug}`), lastModified: now, changeFrequency: "weekly", priority: 0.3 });
   }
 
-  for (const city of LANDING_CITIES) {
+  for (const city of cityPages ? LANDING_CITIES : []) {
     entries.push({ url: absoluteUrl(`/laptops-in-${citySlug(city)}`), lastModified: now, changeFrequency: "weekly", priority: 0.7 });
   }
 

@@ -1,10 +1,11 @@
 import "server-only";
 import { unstable_cache } from "next/cache";
+import { currentStoreId } from "@/lib/tenant";
 import { isCmsConfigured } from "@/lib/db/config";
 import { getAllProducts, getCategories, getProductsByIds } from "@/lib/repo/catalog";
 import { effectivePrice } from "@/lib/utils";
 import type { CatalogProduct } from "@/lib/types";
-import { payloadClient, storefrontId } from "./catalog-source";
+import { inStore, payloadClient, storefrontId } from "./catalog-source";
 
 /** Product collections from /cms → Catalog → Collections, resolved against the live catalog. */
 
@@ -33,13 +34,14 @@ interface Rule {
   value: string;
 }
 
-const loadDocs = unstable_cache(
-  async (): Promise<Doc[]> => {
+const loadDocsCached = unstable_cache(
+  async (storeId: number | null): Promise<Doc[]> => {
     if (!isCmsConfigured) return [];
     const payload = await payloadClient();
-    const res = await payload.find({ collection: "product-collections" as never, where: { published: { equals: true } }, limit: 0, pagination: false, depth: 1, overrideAccess: true });
+    const res = await payload.find({ collection: "product-collections" as never, where: { and: [{ published: { equals: true } }, inStore(storeId)] }, limit: 0, pagination: false, depth: 1, overrideAccess: true });
     // Keep only what the storefront needs (relationships reduced to storefront ids / slugs).
     return (res.docs as Doc[]).map((d) => ({
+      id: String(d.id),
       slug: d.slug,
       title: d.title,
       description: d.description,
@@ -59,9 +61,11 @@ const loadDocs = unstable_cache(
       rules: (Array.isArray(d.rules) ? (d.rules as Doc[]) : []).map((r) => ({ field: str(r.field), category: storefrontId(obj(r.category)) || undefined, brand: str(obj(r.brand)?.slug) || undefined, value: str(r.value) })),
     }));
   },
-  ["cms-collections-v2"],
+  ["cms-collections-v3"],
   { tags: ["catalog"], revalidate: 300 }
 );
+/** The current store's published collections. */
+const loadDocs = async () => loadDocsCached(await currentStoreId());
 
 async function resolve(d: Doc): Promise<CollectionData> {
   let products: CatalogProduct[];
@@ -119,6 +123,14 @@ async function resolve(d: Doc): Promise<CollectionData> {
     seoNoindex: d.seoNoindex === true || undefined,
     seoCanonical: (d.seoCanonical as string | undefined) || undefined,
   };
+}
+
+/** Storefront ids of the products in a collection (by its Payload id) – e.g. for a collection discount. */
+export async function collectionProductIds(collectionId: string): Promise<string[]> {
+  const d = (await loadDocs()).find((x) => x.id === collectionId);
+  if (!d) return [];
+  const all = d.type === "automatic" ? { ...d, limit: 0 } : d;
+  return (await resolve(all)).products.map((p) => p.id);
 }
 
 export async function getCollection(slug: string): Promise<CollectionData | null> {

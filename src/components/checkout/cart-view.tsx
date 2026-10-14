@@ -6,12 +6,12 @@ import { AnimatePresence, m as motion } from "framer-motion";
 import { ArrowRight, Lock, Minus, Plus, ShieldCheck, ShoppingBag, Trash2, Truck, Wallet } from "lucide-react";
 import { cartCount, cartSubtotal, useCart } from "@/store/cart";
 import { useHydrated } from "@/hooks/use-hydrated";
-import { deliveryCharge, deliveryEstimate, freeDeliveryAbove } from "@/lib/cities";
+import { deliveryEstimate, freeDeliveryAbove } from "@/lib/cities";
+import { orderTotals } from "@/lib/order-totals";
 import { waLink } from "@/lib/site";
 import { useSiteInfo } from "@/components/providers/site-info";
 import { primaryPhone } from "@/lib/site-info";
 import type { StoreSettings } from "@/lib/types";
-import { absoluteUrl } from "@/lib/site";
 import { formatPKR } from "@/lib/utils";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -53,18 +53,18 @@ export function CartView({ settings }: { settings: StoreSettings }) {
   }
 
   const subtotal = cartSubtotal(lines);
-  const discount = coupon.discount;
-  const delivery = city ? deliveryCharge(city, subtotal, settings) : settings.freeDeliveryThreshold > 0 && subtotal >= settings.freeDeliveryThreshold ? 0 : null;
+  const totals = orderTotals({ subtotal, discount: coupon.discount, city, method: "", settings, freeShipping: coupon.freeShipping });
+  const { discount, delivery } = totals;
   // free-delivery amount for the chosen city's zone (0 = that zone never ships free)
   const freeAbove = city ? freeDeliveryAbove(city, settings) : settings.freeDeliveryThreshold;
-  const total = Math.max(0, subtotal - discount + (delivery ?? 0));
+  const total = totals.total;
   const eta = city ? deliveryEstimate(city, settings) : null;
 
   const waText = [
     `Hi ${site.name}, I'd like to order:`,
     ...lines.map(
       (l, i) =>
-        `${i + 1}. ${l.name}${l.upgrades.length ? ` (+ ${l.upgrades.map((u) => u.label).join(", ")})` : ""} × ${l.qty} – ${formatPKR(l.unitPrice * l.qty)}\n   ${absoluteUrl(l.url)}`
+        `${i + 1}. ${l.name}${l.upgrades.length ? ` (+ ${l.upgrades.map((u) => u.label).join(", ")})` : ""} × ${l.qty} – ${formatPKR(l.unitPrice * l.qty)}\n   ${site.url}${l.url}`
     ),
     `Subtotal: ${formatPKR(subtotal)}`,
     discount && coupon.code ? `Coupon ${coupon.code}: −${formatPKR(discount)}` : "",

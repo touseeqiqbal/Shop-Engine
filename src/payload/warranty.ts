@@ -1,4 +1,5 @@
 import type { Payload, PayloadRequest } from "payload";
+import { getStoreSettings } from "./store-settings";
 
 /**
  * Works out whether an item is still under warranty.
@@ -31,14 +32,16 @@ const addMonths = (iso: string, months: number) => {
   return d.toISOString();
 };
 
-export async function warrantyFor(payload: Payload, args: { serial?: string; orderNumber?: string; productId?: number | null }, req?: PayloadRequest) {
+export async function warrantyFor(payload: Payload, args: { storeId: number | null; serial?: string; orderNumber?: string; productId?: number | null }, req?: PayloadRequest) {
   const fields: Doc = {};
   const notes: string[] = [];
   let purchasedAt = "";
   let product: Doc | null = null;
   let months: number | null = null;
+  // only this store's units, orders and receipts
+  const inStore = args.storeId == null ? [] : [{ store: { equals: args.storeId } }];
   const find = (collection: "units" | "orders" | "pos-sales", where: Doc) =>
-    payload.find({ collection, where: where as never, limit: 1, depth: 0, overrideAccess: true, req }).then((r) => (r.docs[0] as unknown as Doc | undefined) ?? null);
+    payload.find({ collection, where: { and: [where, ...inStore] } as never, limit: 1, depth: 0, overrideAccess: true, req }).then((r) => (r.docs[0] as unknown as Doc | undefined) ?? null);
 
   if (args.serial) {
     const unit = await find("units", { serial: { equals: args.serial } });
@@ -80,6 +83,7 @@ export async function warrantyFor(payload: Payload, args: { serial?: string; ord
   const productId = (fields.product as number | undefined) ?? args.productId ?? null;
   if (productId) {
     product = (await payload.findByID({ collection: "products", id: productId, depth: 0, overrideAccess: true, req }).catch(() => null)) as unknown as Doc | null;
+    if (product && args.storeId != null && relId(product.store) !== args.storeId) product = null;
     if (product) fields.product = product.id;
   }
   if (months == null && product?.warranty) {
@@ -87,7 +91,7 @@ export async function warrantyFor(payload: Payload, args: { serial?: string; ord
     if (months != null) notes.push(`product warranty “${str(product.warranty)}”`);
   }
   if (months == null && product?.condition) {
-    const policy = (await payload.findGlobal({ slug: "returns-policy", depth: 0, overrideAccess: true, req }).catch(() => null)) as unknown as Doc | null;
+    const policy = await getStoreSettings<Doc>(payload, "returns-policy", args.storeId, { req });
     const row = ((policy?.warrantyByCondition as Doc[] | undefined) ?? []).find((r) => r.condition === product!.condition);
     if (row && typeof row.months === "number") {
       months = row.months;

@@ -9,6 +9,7 @@ import {
   Banknote,
   BookmarkCheck,
   ChevronDown,
+  CreditCard,
   ImageUp,
   Landmark,
   Loader2,
@@ -23,7 +24,8 @@ import { placeOrder, type CheckoutField, type PlaceOrderState } from "@/app/(fro
 import { trackEvent } from "@/components/analytics";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { readLocalAddresses, writeLocalAddresses } from "@/lib/addresses";
-import { codFee, deliveryCharge, deliveryEstimate, freeDeliveryAbove, paymentEnabled } from "@/lib/cities";
+import { deliveryEstimate, freeDeliveryAbove, paymentEnabled } from "@/lib/cities";
+import { orderTotals } from "@/lib/order-totals";
 import { PAYMENT_LABEL, paymentAccountLines } from "@/lib/order-display";
 import type { PaymentMethod, SavedAddress, StoreSettings } from "@/lib/types";
 import { cn, formatPKR, normalizePkPhone } from "@/lib/utils";
@@ -41,7 +43,7 @@ import { honeypotProps } from "@/lib/honeypot";
 const MAX_FILE = 5 * 1024 * 1024;
 const FILE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const ONLINE: PaymentMethod[] = ["jazzcash", "easypaisa", "bank"];
-const FIELD_ORDER: CheckoutField[] = ["name", "phone", "email", "city", "address", "landmark", "notes", "paymentMethod", "screenshot"];
+const FIELD_ORDER: CheckoutField[] = ["name", "phone", "email", "city", "address", "landmark", "notes", "paymentMethod", "screenshot", "paymentReference"];
 
 type Errors = Partial<Record<CheckoutField, string>>;
 
@@ -111,6 +113,8 @@ export function CheckoutForm({
   const [method, setMethod] = useState<PaymentMethod>(() => (["cod", "jazzcash", "easypaisa", "bank"] as const).find((m) => paymentEnabled(m, settings)) ?? "cod");
   const emailNeeded = emailRequired;
   const [file, setFile] = useState<File | null>(null);
+  // the transaction id from the JazzCash / EasyPaisa / bank receipt (one receipt pays for one order)
+  const [reference, setReference] = useState("");
   // set when the server says this customer / city must pay an advance for cash on delivery
   const [advanceRequired, setAdvanceRequired] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
@@ -175,7 +179,9 @@ export function CheckoutForm({
       }
       trackEvent("purchase", { transaction_id: state.orderNumber, value: state.total, currency: "PKR", items: state.items });
       clearCart();
-      router.replace(`/order-confirmation/${encodeURIComponent(state.orderNumber)}`);
+      // card: on to the payment provider's secure page (the order is marked paid only when the provider confirms it)
+      if (state.paymentUrl) window.location.assign(state.paymentUrl);
+      else router.replace(`/order-confirmation/${encodeURIComponent(state.orderNumber)}`);
     } else {
       if (state.requireAdvance) setAdvanceRequired(true);
       if (state.newTotal) acceptedTotal.current = state.newTotal;
@@ -188,10 +194,9 @@ export function CheckoutForm({
   }, [state]);
 
   const subtotal = cartSubtotal(lines);
-  const discount = coupon.discount;
-  const delivery = f.city ? deliveryCharge(f.city, subtotal, settings) : settings.freeDeliveryThreshold > 0 && subtotal >= settings.freeDeliveryThreshold ? 0 : null;
-  const fee = method === "cod" ? codFee(settings) : 0;
-  const total = Math.max(0, subtotal - discount + (delivery ?? 0) + fee);
+  // the same arithmetic the server uses (lib/order-totals.ts) – the server's total is the one that counts
+  const totals = orderTotals({ subtotal, discount: coupon.discount, city: f.city, method, settings, freeShipping: coupon.freeShipping });
+  const { discount, delivery, fee, total } = totals;
   const eta = f.city ? deliveryEstimate(f.city, settings) : null;
   const codMax = settings.payments?.cod.maxOrder ?? null;
   const advanceEligible = method === "cod" && settings.advanceAmount > 0 && (total >= settings.advanceThreshold || advanceRequired);
@@ -216,10 +221,10 @@ export function CheckoutForm({
     else if (emailNeeded && !f.email.trim()) e.email = "Enter your email address";
     if (!f.city) e.city = "Please choose your city from the list";
     if (f.address.trim().length < 10) e.address = "Please enter your complete address (house, street, area)";
-    if (method === "card") e.paymentMethod = "Card payments are coming soon";
-    else if (!paymentEnabled(method, settings)) e.paymentMethod = "Please choose a payment method";
+    if (!paymentEnabled(method, settings)) e.paymentMethod = "Please choose a payment method";
     else if (method === "cod" && codMax && total > codMax) e.paymentMethod = `Cash on Delivery is available for orders up to ${formatPKR(codMax)} – please pay online`;
     if (needsProof && !file) e.screenshot = "Upload a screenshot of your payment (JPG, PNG or WebP)";
+    if (needsProof && !/^[A-Za-z0-9-]{4,40}$/.test(reference.trim())) e.paymentReference = "Enter the transaction ID from your payment receipt";
     if (method === "cod" && advanceRequired && !file) e.screenshot = "Upload the screenshot of your advance payment";
     return e;
   };
@@ -250,6 +255,7 @@ export function CheckoutForm({
     submitting.current = true;
     fd.delete("screenshot");
     if (file && (needsProof || advanceEligible)) fd.set("screenshot", file);
+    fd.set("paymentReference", needsProof ? reference.trim() : "");
     startTransition(() => formAction(fd));
   };
 
@@ -288,6 +294,8 @@ export function CheckoutForm({
       discount={discount}
       delivery={delivery}
       codFee={fee}
+      tax={totals.tax}
+      taxAdded={totals.taxAdded}
       total={total}
       eta={eta?.label ?? null}
       city={f.city}
@@ -450,6 +458,11 @@ export function CheckoutForm({
                 Save this address for next time
               </label>
             )}
+            {/* never ticked for the customer: marketing needs a clear yes (for this store only) */}
+            <label className="flex cursor-pointer items-center gap-2.5 text-sm text-muted sm:col-span-2">
+              <input type="checkbox" name="marketingConsent" className="size-4 accent-violet-500" />
+              Email me news and offers from this store (you can say no at any time)
+            </label>
           </div>
         </Section>
 
@@ -468,6 +481,9 @@ export function CheckoutForm({
               )}
               {paymentEnabled("bank", settings) && (
                 <PayOption id={fid("pm-bank")} value="bank" current={method} onSelect={setMethod} icon={Landmark} title="Bank Transfer" desc={settings.payments?.bank.note || settings.bank.bankName} />
+              )}
+              {paymentEnabled("card", settings) && (
+                <PayOption id={fid("pm-card")} value="card" current={method} onSelect={setMethod} icon={CreditCard} title="Debit / credit card" desc={settings.payments?.card?.note || "Pay securely on the next page"} />
               )}
             </div>
             {errors.paymentMethod && (
@@ -495,6 +511,28 @@ export function CheckoutForm({
                   <p className="mt-2 text-xs text-muted">Then upload the payment screenshot below. We&apos;ll verify it and confirm your order.</p>
                 </div>
                 <ProofUpload id={fid("screenshot")} required file={file} preview={preview} error={errors.screenshot} onPick={pickFile} onClear={() => setFile(null)} />
+                <div>
+                  <label htmlFor={fid("paymentReference")} className="text-sm font-medium">
+                    Transaction ID
+                  </label>
+                  <input
+                    id={fid("paymentReference")}
+                    value={reference}
+                    onChange={(e) => setReference(e.target.value)}
+                    inputMode="text"
+                    autoComplete="off"
+                    maxLength={40}
+                    aria-invalid={Boolean(errors.paymentReference)}
+                    aria-describedby={errors.paymentReference ? fid("paymentReference-error") : undefined}
+                    className="input mt-1.5 w-full font-mono"
+                    placeholder="From your payment SMS / receipt"
+                  />
+                  {errors.paymentReference && (
+                    <p id={fid("paymentReference-error")} className="mt-1.5 text-xs font-medium text-rose-400">
+                      {errors.paymentReference}
+                    </p>
+                  )}
+                </div>
               </motion.div>
             )}
             {advanceEligible && (
@@ -720,6 +758,8 @@ function OrderSummary({
   discount,
   delivery,
   codFee: fee,
+  tax,
+  taxAdded,
   total,
   eta,
   city,
@@ -730,13 +770,16 @@ function OrderSummary({
   discount: number;
   delivery: number | null;
   codFee: number;
+  tax: number;
+  taxAdded: number;
   total: number;
   eta: string | null;
   city: string;
 }) {
   const lines = useCart((s) => s.lines);
   const freeAbove = freeDeliveryAbove(city, settings);
-  const remaining = freeAbove > 0 ? Math.max(0, freeAbove - subtotal) : 0;
+  // free delivery is judged on the items after any discount (same as the server)
+  const remaining = coupon.freeShipping || freeAbove <= 0 ? 0 : Math.max(0, freeAbove - (subtotal - discount));
   return (
     <div className="space-y-4">
       <ul className="max-h-80 space-y-3 overflow-y-auto pr-1">
@@ -765,7 +808,7 @@ function OrderSummary({
         </div>
         {discount > 0 && (
           <div className="flex justify-between text-emerald-400">
-            <dt>Coupon ({coupon.code})</dt>
+            <dt>{coupon.code ? `Discount (${coupon.code})` : "Discount"}</dt>
             <dd className="tabular-nums">− {formatPKR(discount)}</dd>
           </div>
         )}
@@ -779,6 +822,12 @@ function OrderSummary({
           <div className="flex justify-between">
             <dt className="text-muted">Cash on Delivery fee</dt>
             <dd className="tabular-nums">{formatPKR(fee)}</dd>
+          </div>
+        )}
+        {tax > 0 && (
+          <div className="flex justify-between">
+            <dt className="text-muted">{taxAdded > 0 ? settings.tax?.label || "Tax" : `Incl. ${settings.tax?.label || "tax"}`}</dt>
+            <dd className="tabular-nums">{taxAdded > 0 ? formatPKR(taxAdded) : formatPKR(tax)}</dd>
           </div>
         )}
         {eta && (

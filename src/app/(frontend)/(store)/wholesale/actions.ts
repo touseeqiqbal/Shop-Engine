@@ -1,8 +1,7 @@
 "use server";
-import { after } from "next/server";
 import { z } from "zod";
 import { PAKISTAN_CITIES } from "@/lib/cities";
-import { notifyWholesaleInquiry } from "@/lib/notify";
+import { notifyFromStorefront } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
 import { getProductsByIds } from "@/lib/repo/catalog";
 import { saveWholesaleInquiry } from "@/lib/repo/wholesale";
@@ -124,9 +123,8 @@ export async function submitWholesaleQuote(_prev: QuoteState, fd: FormData): Pro
     return { ok: false, message: "Sorry, we couldn't send your request right now. Please WhatsApp or call us instead.", ts };
   }
 
-  // Email alert after the response is sent – never blocks or fails the request.
-  const saved = inquiry;
-  after(() => notifyWholesaleInquiry(saved));
+  // Email alert to the team (queued – never blocks or fails the request).
+  await notifyFromStorefront("wholesale", { inquiry });
 
   const firstName = data.name.split(" ")[0];
   return {

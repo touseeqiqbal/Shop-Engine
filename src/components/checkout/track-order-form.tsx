@@ -7,9 +7,11 @@ import { m as motion } from "framer-motion";
 import { AlertCircle, CheckCircle2, CircleDashed, ExternalLink, Loader2, PackageCheck, PackageX, Search, Truck, Undo2 } from "lucide-react";
 import { trackOrder, type TrackState, type TrackedOrder } from "@/app/(frontend)/(store)/track-order/actions";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
+import { useSiteInfo } from "@/components/providers/site-info";
 import { deliveryEstimate } from "@/lib/cities";
 import { ORDER_FLOW, ORDER_STATUS_LABEL, PAYMENT_LABEL, PAYMENT_STATUS_LABEL } from "@/lib/order-display";
 import { waLink } from "@/lib/site";
+import { primaryPhone } from "@/lib/site-info";
 import type { OrderStatus } from "@/lib/types";
 import { cn, formatDate, formatPKR } from "@/lib/utils";
 import { CopyButton } from "./order-bits";
@@ -90,6 +92,7 @@ function TrackButton() {
 }
 
 const STEP_HINT: Record<OrderStatus, string> = {
+  "awaiting-payment": "Waiting for your card payment",
   "awaiting-confirmation": "Waiting for you to confirm – check your WhatsApp / SMS",
   pending: "Order received – awaiting confirmation",
   confirmed: "Confirmed and being packed",
@@ -107,6 +110,7 @@ function lastAt(history: TrackedOrder["history"], status: OrderStatus) {
 }
 
 function TrackResult({ order }: { order: TrackedOrder }) {
+  const site = useSiteInfo(); // the current store's own WhatsApp number
   const terminal = order.status === "cancelled" || order.status === "returned";
   // Highest happy-path step reached (from history, so cancelled/returned orders still show their progress)
   const reached = Math.max(
@@ -260,7 +264,7 @@ function TrackResult({ order }: { order: TrackedOrder }) {
         </section>
 
         <a
-          href={waLink(undefined, `Hi, I'd like an update on my order ${order.orderNumber}.`)}
+          href={waLink(primaryPhone(site).wa, `Hi, I'd like an update on my order ${order.orderNumber}.`)}
           target="_blank"
           rel="noopener noreferrer"
           className="btn btn-whatsapp w-full"

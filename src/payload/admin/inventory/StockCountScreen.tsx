@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useAuth } from "@payloadcms/ui";
+import { useStoreRole } from "../ui/store-context";
 import { toast } from "../ui/toast";
 
 /** /cms/stock-count – walk the shelves with a barcode scanner (or type), then see what's over / short. */
@@ -16,8 +16,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 export function StockCountScreen() {
-  const { user } = useAuth();
-  const isManager = ["owner", "manager"].includes(String((user as { role?: string } | null)?.role));
+  const { isManager } = useStoreRole();
   const [open, setOpen] = useState<Count[] | null>(null);
   const [current, setCurrent] = useState<Count | null>(null);
   const [name, setName] = useState("");

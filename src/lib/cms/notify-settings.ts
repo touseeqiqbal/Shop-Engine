@@ -29,9 +29,10 @@ export const DEFAULT_NOTIFY: NotifySettings = {
 };
 
 const load = unstable_cache(
-  async (): Promise<NotifySettings> => {
+  async (storeId: number | null): Promise<NotifySettings> => {
     if (!isCmsConfigured) return DEFAULT_NOTIFY;
-    const g = (await (await payloadClient()).findGlobal({ slug: "notifications" as never, depth: 0, overrideAccess: true })) as Record<string, unknown>;
+    const { getStoreSettings } = await import("@/payload/store-settings");
+    const g = await getStoreSettings<Record<string, unknown>>(await payloadClient(), "notifications", storeId);
     if (!g.updatedAt) return DEFAULT_NOTIFY;
     const bool = (k: keyof NotifySettings) => (typeof g[k] === "boolean" ? (g[k] as boolean) : (DEFAULT_NOTIFY[k] as boolean));
     return {
@@ -46,8 +47,9 @@ const load = unstable_cache(
       statusUpdates: Array.isArray(g.statusUpdates) ? (g.statusUpdates as string[]) : DEFAULT_NOTIFY.statusUpdates,
     };
   },
-  ["cms-notify-v1"],
+  ["cms-notify-v2"],
   { tags: ["settings"], revalidate: 60 }
 );
 
-export const getNotifySettings = () => load().catch(() => DEFAULT_NOTIFY);
+/** A store's notification settings (who gets alerts, which messages customers get). */
+export const getNotifySettings = (storeId: number | null) => load(storeId).catch(() => DEFAULT_NOTIFY);

@@ -7,16 +7,20 @@ import { emailRequiredAtCheckout, getSessionUser, getUserProfile, mustConfirmEma
 import { isDatabaseConfigured } from "@/lib/db/config";
 import { getStoreSettings } from "@/lib/repo/catalog";
 import { pageMetadata } from "@/lib/seo";
+import { getSiteInfo } from "@/lib/repo/site-content";
 import type { SavedAddress } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = pageMetadata({
-  title: "Secure Checkout | Urko Tech Store",
-  description: "Complete your order – Cash on Delivery, JazzCash, EasyPaisa or bank transfer. Delivery all over Pakistan.",
-  path: "/checkout",
-  noindex: true,
-});
+export async function generateMetadata(): Promise<Metadata> {
+  const { name } = await getSiteInfo(); // the current store's own name
+  return pageMetadata({
+    title: `Secure Checkout | ${name}`,
+    description: "Complete your order – Cash on Delivery, JazzCash, EasyPaisa or bank transfer. Delivery all over Pakistan.",
+    path: "/checkout",
+    noindex: true,
+  });
+}
 
 export default async function CheckoutPage() {
   const settings = await getStoreSettings();

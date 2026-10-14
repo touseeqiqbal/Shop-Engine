@@ -4,15 +4,19 @@ import { WishlistView } from "@/components/account/wishlist-view";
 import { getSessionUser } from "@/lib/auth";
 import { isDatabaseConfigured } from "@/lib/db/config";
 import { pageMetadata } from "@/lib/seo";
+import { getSiteInfo } from "@/lib/repo/site-content";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = pageMetadata({
-  title: "My Wishlist | Urko Tech Store",
-  description: "Laptops and accessories you saved for later.",
-  path: "/account/wishlist",
-  noindex: true,
-});
+export async function generateMetadata(): Promise<Metadata> {
+  const { name } = await getSiteInfo(); // the current store's own name
+  return pageMetadata({
+    title: `My Wishlist | ${name}`,
+    description: "Laptops and accessories you saved for later.",
+    path: "/account/wishlist",
+    noindex: true,
+  });
+}
 
 export default async function WishlistPage() {
   const user = isDatabaseConfigured ? await getSessionUser().catch(() => null) : null;

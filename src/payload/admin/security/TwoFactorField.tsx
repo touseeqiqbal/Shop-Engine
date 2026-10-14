@@ -1,5 +1,6 @@
 "use client";
 import { useAuth, useDocumentInfo, useFormFields } from "@payloadcms/ui";
+import { useStoreRole } from "../ui/store-context";
 import { toast } from "../ui/toast";
 
 /** User page sidebar: is 2-step verification on; owners can reset it for someone who lost their phone. */
@@ -8,7 +9,8 @@ export function TwoFactorField() {
   const { user } = useAuth();
   const enabled = useFormFields(([f]) => f["twoFactor.enabled"]?.value) as boolean | undefined;
   const isMe = user && String(user.id) === String(id);
-  const isOwner = (user as { role?: string } | null)?.role === "owner";
+  // resetting someone else's 2-step is a platform admin's job (lost phone)
+  const isOwner = useStoreRole().isPlatformAdmin;
   if (!id) return null;
 
   async function reset() {

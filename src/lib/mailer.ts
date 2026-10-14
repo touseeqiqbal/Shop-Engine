@@ -7,14 +7,21 @@ import nodemailer, { type Transporter } from "nodemailer";
  *     SMTP_HOST, SMTP_PORT (default 587; 465 = SSL), SMTP_USER, SMTP_PASS, SMTP_SECURE (optional "true"/"false")
  *   Resend (otherwise, when RESEND_API_KEY is set) – https://resend.com
  *
- *   EMAIL_FROM  – sender, default "Urko Tech Store <info@urkotechstore.com>". With SMTP it must be an address
- *                 the mailbox may send as (usually SMTP_USER itself).
+ *   EMAIL_FROM  – sender, default "ShopEngine <no-reply@<main site domain>>". With SMTP it must be an address
+ *                 the mailbox may send as (usually SMTP_USER itself) – set it in production.
  *
  * No provider configured → emails are logged in development and skipped otherwise. STAGING=true skips all email.
  * Not "server-only": the Payload config (and its CLI) imports this too.
  */
 
-export const EMAIL_FROM = process.env.EMAIL_FROM || "Urko Tech Store <info@urkotechstore.com>";
+const mainDomain = () => {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost").hostname.replace(/^www\./, "");
+  } catch {
+    return "localhost";
+  }
+};
+export const EMAIL_FROM = process.env.EMAIL_FROM || `ShopEngine <no-reply@${mainDomain()}>`;
 
 export type EmailProvider = "smtp" | "resend" | null;
 export function emailProvider(): EmailProvider {

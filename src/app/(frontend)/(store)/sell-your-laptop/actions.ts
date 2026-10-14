@@ -1,10 +1,9 @@
 "use server";
 import { randomUUID } from "node:crypto";
-import { after } from "next/server";
 import { z } from "zod";
 import { createTradeIn } from "@/lib/cms/engagement";
 import { isCmsConfigured } from "@/lib/db/config";
-import { notifyStaff } from "@/lib/notify";
+import { notifyFromStorefront } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
 import { BOT_MESSAGE, verifyTurnstile } from "@/lib/turnstile";
 import { storePhotos } from "@/lib/uploads";
@@ -60,11 +59,10 @@ export async function submitTradeIn(_prev: TradeInState, fd: FormData): Promise<
   if ("error" in photos) return { ok: false, message: photos.error, ts };
   const d = parsed.data;
   await createTradeIn({ ...d, phone: normalizePkPhone(d.phone), status: "new", photoKeys: photos.keys });
-  after(() =>
-    notifyStaff(`Trade-in: ${d.brand} ${d.model}`, [`${d.name} · ${d.phone}${d.city ? ` · ${d.city}` : ""}`, `${[d.processor, d.ram, d.storage].filter(Boolean).join(" / ")} – ${d.condition}`, d.expectedPrice ? `Expects Rs ${d.expectedPrice.toLocaleString("en-PK")}` : ""], {
-      href: "/cms/collections/trade-ins?where[status][equals]=new",
-      label: "Open trade-ins",
-    })
-  );
+  await notifyFromStorefront("staff", {
+    subject: `Trade-in: ${d.brand} ${d.model}`,
+    lines: [`${d.name} · ${d.phone}${d.city ? ` · ${d.city}` : ""}`, `${[d.processor, d.ram, d.storage].filter(Boolean).join(" / ")} – ${d.condition}`, d.expectedPrice ? `Expects Rs ${d.expectedPrice.toLocaleString("en-PK")}` : ""],
+    link: { href: "/cms/collections/trade-ins?where[status][equals]=new", label: "Open trade-ins" },
+  });
   return { ok: true, message: `Thanks ${d.name.split(" ")[0]}! We'll check the details and call or WhatsApp you with an offer, usually the same day.`, ts };
 }

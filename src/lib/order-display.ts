@@ -15,9 +15,11 @@ export const PAYMENT_STATUS_LABEL: Record<PaymentStatus, string> = {
   paid: "Paid",
   refunded: "Refunded",
   partial: "Partially paid",
+  "partially-refunded": "Partly refunded",
 };
 
 export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
+  "awaiting-payment": "Waiting for payment",
   "awaiting-confirmation": "Awaiting your confirmation",
   pending: "Pending",
   confirmed: "Confirmed",

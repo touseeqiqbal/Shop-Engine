@@ -41,12 +41,13 @@ export function cityInfo(city: string): CityInfo {
   return CITY_INFO[city] ?? { province: "Pakistan", size: "medium", areas: [], angle: "we deliver with Cash on Delivery" };
 }
 
-export function cityIntro(city: string, settings?: StoreSettings) {
+/** `storeName` = the current store's name (from its Store details). */
+export function cityIntro(city: string, storeName: string, settings?: StoreSettings) {
   const info = cityInfo(city);
   const est = deliveryEstimate(city, settings);
   const zone = deliveryZone(city);
   if (zone === "karachi") {
-    return `Looking for a reliable laptop shop in Karachi? Urko Tech Store is based at Regal Trade Square, Regal Chowk – the heart of the Saddar laptop market – so ${info.angle}. Order online for same-day or next-day delivery anywhere in Karachi, or visit to check new, used and refurbished laptops in person.`;
+    return `Looking for a reliable laptop shop in Karachi? ${storeName} is based at Regal Trade Square, Regal Chowk – the heart of the Saddar laptop market – so ${info.angle}. Order online for same-day or next-day delivery anywhere in Karachi, or visit to check new, used and refurbished laptops in person.`;
   }
   const lead =
     info.size === "metro"

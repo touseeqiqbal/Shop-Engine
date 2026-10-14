@@ -4,18 +4,22 @@ import { AuthShell } from "@/components/account/auth-shell";
 import { ResetPasswordForm } from "@/components/account/auth-forms";
 import { isDatabaseConfigured } from "@/lib/db/config";
 import { pageMetadata } from "@/lib/seo";
+import { getSiteInfo } from "@/lib/repo/site-content";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  ...pageMetadata({
-    title: "Choose a New Password | Urko Tech Store",
-    description: "Choose a new password for your Urko Tech Store account.",
-    path: "/account/reset-password",
-    noindex: true,
-  }),
-  referrer: "no-referrer", // the token is in the URL – never pass it on to other sites
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const { name } = await getSiteInfo(); // the current store's own name
+  return {
+    ...pageMetadata({
+      title: `Choose a New Password | ${name}`,
+      description: `Choose a new password for your ${name} account.`,
+      path: "/account/reset-password",
+      noindex: true,
+    }),
+    referrer: "no-referrer", // the token is in the URL – never pass it on to other sites
+  };
+}
 
 export default async function ResetPasswordPage({ searchParams }: { searchParams: Promise<{ token?: string }> }) {
   const { token } = await searchParams;

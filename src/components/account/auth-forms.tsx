@@ -15,6 +15,7 @@ import {
 import { Field, fieldAria } from "@/components/checkout/field";
 import { formatPhoneInput } from "@/components/checkout/phone";
 import { honeypotProps } from "@/lib/honeypot";
+import { Turnstile } from "@/components/ui/turnstile";
 
 function Submit({ children }: { children: React.ReactNode }) {
   const { pending } = useFormStatus();
@@ -118,6 +119,7 @@ export function RegisterForm({ next }: { next?: string }) {
       <Field id="reg-password" label="Password" required error={fe.password} hint="At least 8 characters">
         <PasswordInput id="reg-password" error={fe.password} autoComplete="new-password" />
       </Field>
+      <Turnstile action="register" />
       <Submit>Create account</Submit>
       <p className="text-center text-sm text-muted">
         Already have an account?{" "}

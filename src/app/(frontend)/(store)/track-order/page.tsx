@@ -4,6 +4,7 @@ import { Breadcrumbs } from "@/components/ui/breadcrumbs";
 import { TrackOrderForm } from "@/components/checkout/track-order-form";
 import { getPageMeta } from "@/lib/page-seo";
 import { getSiteInfo } from "@/lib/repo/site-content";
+import { getCurrentStore } from "@/lib/tenant";
 
 export async function generateMetadata(): Promise<Metadata> {
   return getPageMeta("/track-order");
@@ -12,7 +13,10 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function TrackOrderPage({ searchParams }: { searchParams: Promise<{ order?: string | string[] }> }) {
   const { order } = await searchParams;
   const initial = (Array.isArray(order) ? order[0] : order)?.slice(0, 20) ?? "";
-  const site = await getSiteInfo(); // live business profile (/cms → Settings → Store details)
+  const [site, store] = await Promise.all([getSiteInfo(), getCurrentStore()]); // live business profile (/cms → Settings → Store details)
+  // the delivery times below are the original (default) shop's own
+  const original = !store || store.isDefault;
+  const phone = site.phones[0]?.display;
   return (
     <div className="container-x pb-14 pt-4 sm:pt-6">
       <Breadcrumbs items={[{ name: "Track Order", href: "/track-order" }]} />
@@ -41,14 +45,14 @@ export default async function TrackOrderPage({ searchParams }: { searchParams: P
             <Clock className="mt-0.5 size-5 shrink-0 text-violet-300" aria-hidden="true" />
             <span>
               <strong className="block">Delivery times</strong>
-              <span className="text-muted">Karachi same/next day · major cities 1–3 days · others 3–5 days</span>
+              <span className="text-muted">{original ? "Karachi same/next day · major cities 1–3 days · others 3–5 days" : "Shown at checkout for your city"}</span>
             </span>
           </li>
           <li className="card flex items-start gap-3 p-4">
             <ShieldCheck className="mt-0.5 size-5 shrink-0 text-violet-300" aria-hidden="true" />
             <span>
               <strong className="block">Need help?</strong>
-              <span className="text-muted">WhatsApp {site.phones[0]?.display} with your order number</span>
+              <span className="text-muted">{phone ? `WhatsApp ${phone} with your order number` : "Message us with your order number"}</span>
             </span>
           </li>
         </ul>

@@ -1,9 +1,10 @@
 import "server-only";
 import { unstable_cache } from "next/cache";
 import { getAllProducts, getProductDescription, getStoreSettings } from "@/lib/repo/catalog";
-import { absoluteUrl, site } from "@/lib/site";
+import { absoluteUrl } from "@/lib/site";
 import { jpegImageUrl } from "@/lib/seo";
 import { isCmsConfigured } from "@/lib/db/config";
+import { currentStoreId } from "@/lib/tenant";
 import type { CatalogProduct } from "@/lib/types";
 import { effectivePrice } from "@/lib/utils";
 
@@ -17,13 +18,14 @@ export type FeedChannel = "google" | "meta" | "tiktok";
 type Settings = { google: boolean; meta: boolean; tiktok: boolean; includeOutOfStock: boolean; excludeCategories: string[]; excludeProducts: string[]; shippingPrice: number | null };
 const DEFAULTS: Settings = { google: true, meta: true, tiktok: true, includeOutOfStock: true, excludeCategories: [], excludeProducts: [], shippingPrice: null };
 
-const getFeedSettings = unstable_cache(
-  async (): Promise<Settings> => {
+const feedSettingsCached = unstable_cache(
+  async (storeId: number | null): Promise<Settings> => {
     if (!isCmsConfigured) return DEFAULTS;
     try {
       const { payloadClient } = await import("@/lib/cms/catalog-source");
       const payload = await payloadClient();
-      const g = (await payload.findGlobal({ slug: "sales-channels", depth: 1, overrideAccess: true })) as unknown as Record<string, unknown>;
+      const { getStoreSettings } = await import("@/payload/store-settings");
+      const g = await getStoreSettings<Record<string, unknown>>(payload, "sales-channels", storeId, { depth: 1 });
       if (!g.updatedAt) return DEFAULTS;
       const ids = (v: unknown) => (Array.isArray(v) ? v.map((x) => (x && typeof x === "object" ? String((x as { legacyId?: string; id: number }).legacyId || (x as { id: number }).id) : String(x))) : []);
       return {
@@ -41,9 +43,12 @@ const getFeedSettings = unstable_cache(
       throw e;
     }
   },
-  ["feed-settings-v1"],
+  ["feed-settings-v2"],
   { tags: ["settings"], revalidate: 600 }
 );
+
+/** The store's Settings → Sales channels. */
+const getFeedSettings = async () => feedSettingsCached(await currentStoreId());
 
 export type FeedItem = {
   id: string;
@@ -82,7 +87,8 @@ const plain = (md: string) =>
     .trim();
 
 export async function feedItems(channel: FeedChannel): Promise<FeedItem[] | null> {
-  const [s, products, store] = await Promise.all([getFeedSettings(), getAllProducts(), getStoreSettings()]);
+  const [s, products, store, info] = await Promise.all([getFeedSettings(), getAllProducts(), getStoreSettings(), import("@/lib/repo/site-content").then((m) => m.getSiteInfo())]);
+  const storeName = info.name;
   if (!s[channel]) return null;
   const baseShipping = s.shippingPrice ?? store.defaultDeliveryCharge;
   const listed = (products as CatalogProduct[])
@@ -108,7 +114,7 @@ export async function feedItems(channel: FeedChannel): Promise<FeedItem[] | null
         condition: CONDITION[p.condition ?? "new"] ?? "new",
         price,
         salePrice: sale < price ? sale : null,
-        brand: p.brandName || site.name,
+        brand: p.brandName || storeName,
         productType: [p.topCategoryName, p.categoryName].filter((x, i, a) => x && a.indexOf(x) === i).join(" > "),
         googleCategory: GOOGLE_CATEGORY[p.topCategorySlug] ?? null,
         shipping: store.freeDeliveryThreshold > 0 && sale >= store.freeDeliveryThreshold ? 0 : baseShipping,
@@ -120,8 +126,11 @@ export async function feedItems(channel: FeedChannel): Promise<FeedItem[] | null
 const esc = (s: string) => s.replace(/[<>&'"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" })[c]!);
 const money = (n: number) => `${n.toFixed(2)} PKR`;
 
-/** RSS 2.0 with the Google namespace – accepted by Google Merchant Center and Meta Commerce Manager. */
-export function toGoogleXml(items: FeedItem[], title: string) {
+/**
+ * RSS 2.0 with the Google namespace – accepted by Google Merchant Center and Meta Commerce Manager.
+ * `storeName` = the current store's name (Settings → Store details).
+ */
+export function toGoogleXml(items: FeedItem[], title: string, storeName: string) {
   const rows = items
     .map(
       (i) => `<item>
@@ -149,7 +158,7 @@ ${i.googleCategory ? `<g:google_product_category>${i.googleCategory}</g:google_p
 <channel>
 <title>${esc(title)}</title>
 <link>${esc(absoluteUrl("/"))}</link>
-<description>${esc(`${site.name} product feed`)}</description>
+<description>${esc(`${storeName} product feed`)}</description>
 ${rows}
 </channel>
 </rss>`;

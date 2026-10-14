@@ -1,9 +1,8 @@
 "use server";
-import { after } from "next/server";
 import { z } from "zod";
 import { createAlert, createQuestion } from "@/lib/cms/engagement";
 import { isCmsConfigured } from "@/lib/db/config";
-import { notifyStaff } from "@/lib/notify";
+import { notifyFromStorefront } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
 import { BOT_MESSAGE, verifyTurnstile } from "@/lib/turnstile";
 import { normalizePkPhone } from "@/lib/utils";
@@ -32,7 +31,7 @@ export async function askQuestion(productId: string, _prev: SimpleState, fd: For
   if (!(await rateLimit("question", 5, 3600_000))) return { ok: false, message: "You've asked several questions recently – please try again later.", ts };
   const title = await createQuestion(productId, { name: parsed.data.name, email: parsed.data.email?.toLowerCase(), question: parsed.data.question });
   if (!title) return { ok: false, message: "This product isn't available any more.", ts };
-  after(() => notifyStaff(`New question: ${title}`, [`${parsed.data.name}: ${parsed.data.question}`], { href: "/cms/collections/product-questions?where[published][not_equals]=true", label: "Answer it" }));
+  await notifyFromStorefront("staff", { subject: `New question: ${title}`, lines: [`${parsed.data.name}: ${parsed.data.question}`], link: { href: "/cms/collections/product-questions?where[published][not_equals]=true", label: "Answer it" } });
   return { ok: true, message: parsed.data.email ? "Thanks! We'll email you when it's answered." : "Thanks! The answer will appear here soon.", ts };
 }
 

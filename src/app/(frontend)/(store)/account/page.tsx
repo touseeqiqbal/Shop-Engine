@@ -7,17 +7,21 @@ import { ConfirmEmailNotice } from "@/components/account/auth-forms";
 import { getSessionUser, getUserProfile } from "@/lib/auth";
 import { isDatabaseConfigured } from "@/lib/db/config";
 import { pageMetadata } from "@/lib/seo";
+import { getSiteInfo } from "@/lib/repo/site-content";
 import { loadCustomerOrders } from "./orders/load";
 import { logoutAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = pageMetadata({
-  title: "My Account | Urko Tech Store",
-  description: "Your Urko Tech Store account – orders, saved addresses and wishlist.",
-  path: "/account",
-  noindex: true,
-});
+export async function generateMetadata(): Promise<Metadata> {
+  const { name } = await getSiteInfo(); // the current store's own name
+  return pageMetadata({
+    title: `My Account | ${name}`,
+    description: `Your ${name} account – orders, saved addresses and wishlist.`,
+    path: "/account",
+    noindex: true,
+  });
+}
 
 export default async function AccountPage({ searchParams }: { searchParams: Promise<{ reset?: string }> }) {
   const { reset } = await searchParams;

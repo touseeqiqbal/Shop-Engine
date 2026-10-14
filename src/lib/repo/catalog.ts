@@ -30,6 +30,12 @@ import type {
 } from "@/lib/types";
 import { effectivePrice } from "@/lib/utils";
 import { isExactMatch, rank, suggest } from "@/lib/search";
+import { currentStoreId } from "@/lib/tenant";
+
+/**
+ * Everything here is for the store of the current request (`currentStoreId()` – the host, or `runInStore` in jobs).
+ * The store id is part of every cache key, so stores never see each other's catalogue.
+ */
 
 /** Cache tags – invalidate from admin actions with updateTag(). */
 export const TAGS = { catalog: "catalog", content: "content", settings: "settings", reviews: "reviews" } as const;
@@ -51,16 +57,24 @@ interface CatalogSnapshot {
  */
 function groupVariants(products: CatalogProduct[]): CatalogProduct[] {
   const byParent = new Map<string, CatalogProduct[]>();
-  for (const p of products) if (p.variantOf && p.status === "active") byParent.set(p.variantOf, [...(byParent.get(p.variantOf) ?? []), p]);
-  if (!byParent.size) return products;
+  const hasAnyVariant = new Set<string>();
+  for (const p of products) {
+    if (!p.variantOf) continue;
+    hasAnyVariant.add(p.variantOf);
+    if (p.status === "active") byParent.set(p.variantOf, [...(byParent.get(p.variantOf) ?? []), p]);
+  }
+  if (!hasAnyVariant.size) return products;
   const parents = new Map(products.map((p) => [p.id, p]));
   return products.map((p) => {
     if (p.variantOf) {
       const main = parents.get(p.variantOf);
-      return main ? { ...p, url: `${main.url}?variant=${encodeURIComponent(p.slug)}`, images: p.images.length ? p.images : main.images } : p;
+      // a variant is sold only while its main product is on the store
+      if (!main || main.status !== "active") return { ...p, status: "draft" };
+      return { ...p, url: `${main.url}?variant=${encodeURIComponent(p.slug)}`, images: p.images.length ? p.images : main.images };
     }
     const kids = byParent.get(p.id);
-    if (!kids?.length) return p;
+    // options exist but none is on the store: nothing to buy (the main product itself can't be sold)
+    if (!kids?.length) return hasAnyVariant.has(p.id) ? { ...p, stock: 0 } : p;
     const withUrl = kids.map((k) => ({ ...k, url: `${p.url}?variant=${encodeURIComponent(k.slug)}`, images: k.images.length ? k.images : p.images }));
     const cheapest = withUrl.reduce((a, b) => (effectivePrice(b) < effectivePrice(a) ? b : a));
     return { ...p, variants: withUrl, variantCount: withUrl.length, price: cheapest.price, salePrice: cheapest.salePrice, stock: withUrl.reduce((s, k) => s + Math.max(0, k.stock), 0) };
@@ -94,8 +108,8 @@ function enrich(products: Product[], categories: Category[], brands: Brand[]): C
  * A Payload error is thrown, not hidden: Next.js then keeps serving the last good cached catalog instead of
  * silently falling back to the frozen legacy tables. Without a database the in-memory demo catalog is used.
  */
-async function loadRaw() {
-  if (isCmsConfigured) return loadCatalogFromPayload();
+async function loadRaw(storeId: number | null) {
+  if (isCmsConfigured) return loadCatalogFromPayload(storeId);
   const [categories, brands, products, models] = await Promise.all([listAll("categories"), listAll("brands"), listAll("products"), listAll("laptop_models")]);
   return { categories, brands, products, models };
 }
@@ -105,26 +119,28 @@ async function loadRaw() {
  * so with hundreds of products every page would rebuild it). Descriptions are cached per product below.
  */
 const loadSnapshotCached = unstable_cache(
-  async (): Promise<CatalogSnapshot> => {
-    const { categories, brands, products, models } = await loadRaw();
+  async (storeId: number | null): Promise<CatalogSnapshot> => {
+    const { categories, brands, products, models } = await loadRaw(storeId);
     categories.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
     return { categories, brands, products: groupVariants(enrich(products, categories, brands)).map((p) => ({ ...p, description: "" })), models };
   },
-  ["catalog-snapshot-v4"],
+  ["catalog-snapshot-v5"],
   { tags: [TAGS.catalog], revalidate: REVALIDATE }
 );
-/** Once per request, however many components ask. */
-const loadSnapshot = cache(loadSnapshotCached);
+/** Once per request (per store), however many components ask. */
+const loadSnapshotFor = cache(loadSnapshotCached);
+const loadSnapshot = async () => loadSnapshotFor(await currentStoreId());
 
-/** A product's full description (Markdown), cached per product. */
-export const getProductDescription = unstable_cache(
-  async (productId: string): Promise<string> => {
-    if (isCmsConfigured) return loadProductDescription(productId);
+const productDescriptionCached = unstable_cache(
+  async (storeId: number | null, productId: string): Promise<string> => {
+    if (isCmsConfigured) return loadProductDescription(productId, storeId);
     return ((await listAll("products")) as CatalogProduct[]).find((p) => p.id === productId)?.description ?? "";
   },
-  ["product-description-v1"],
+  ["product-description-v2"],
   { tags: [TAGS.catalog], revalidate: REVALIDATE }
 );
+/** A product's full description (Markdown), cached per product. */
+export const getProductDescription = async (productId: string) => productDescriptionCached(await currentStoreId(), productId);
 
 /** Products shoppers browse: on the store, and not a variant (variants are chosen on their main product's page). */
 async function activeProducts() {
@@ -229,7 +245,7 @@ export async function getProductBySlug(slug: string) {
 /** Preview only: the product with its latest unpublished changes (staff in Draft Mode). */
 export async function getPreviewProductBySlug(slug: string) {
   if (!isCmsConfigured) return null;
-  const draft = await loadProductDraft(slug).catch(() => null);
+  const draft = await loadProductDraft(slug, await currentStoreId()).catch(() => null);
   if (!draft) return null;
   const snap = await loadSnapshot();
   // the draft with its (published) variants, so the option picker works in preview too
@@ -378,11 +394,9 @@ export async function queryProducts(query: ProductQuery): Promise<ProductQueryRe
 
 // ───────────────────────────── compatibility ─────────────────────────────
 
-export const getLaptopModels = unstable_cache(
-  async (): Promise<LaptopModel[]> => [...(await loadSnapshot()).models].sort((a, b) => a.name.localeCompare(b.name)),
-  ["laptop-models-v1"],
-  { tags: [TAGS.catalog], revalidate: REVALIDATE }
-);
+export async function getLaptopModels(): Promise<LaptopModel[]> {
+  return [...(await loadSnapshot()).models].sort((a, b) => a.name.localeCompare(b.name));
+}
 
 export async function getCompatibleProducts(modelId: string) {
   return (await activeProducts()).filter((p) => p.compatibility.includes(modelId));
@@ -390,69 +404,77 @@ export async function getCompatibleProducts(modelId: string) {
 
 // ───────────────────────────── reviews ─────────────────────────────
 
-export const getApprovedReviews = unstable_cache(
-  async (productId: string): Promise<Review[]> =>
-    (isCmsConfigured ? await loadApprovedReviewsFromPayload(productId) : await listAll("reviews"))
+const approvedReviewsCached = unstable_cache(
+  async (storeId: number | null, productId: string): Promise<Review[]> =>
+    (isCmsConfigured ? await loadApprovedReviewsFromPayload(storeId, productId) : await listAll("reviews"))
       .filter((r) => r.productId === productId && r.approved)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-  ["reviews-v1"],
+  ["reviews-v2"],
   { tags: [TAGS.reviews], revalidate: REVALIDATE }
 );
+export const getApprovedReviews = async (productId: string) => approvedReviewsCached(await currentStoreId(), productId);
 
 // ───────────────────────────── content ─────────────────────────────
 
+/** Legacy banners (demo mode only – with /cms the home page's banner blocks are used, and the old tables may not exist). */
 export const getBanners = unstable_cache(
   async (placement: Banner["placement"]): Promise<Banner[]> =>
-    (await listAll("banners")).filter((b) => b.active && b.placement === placement).sort((a, b) => a.sortOrder - b.sortOrder),
-  ["banners-v1"],
+    isCmsConfigured ? [] : (await listAll("banners")).filter((b) => b.active && b.placement === placement).sort((a, b) => a.sortOrder - b.sortOrder),
+  ["banners-v2"],
   { tags: [TAGS.content], revalidate: REVALIDATE }
 );
 
-export const getBlogPosts = unstable_cache(
-  async (): Promise<BlogPost[]> =>
+const blogPostsCached = unstable_cache(
+  async (storeId: number | null): Promise<BlogPost[]> =>
     // Blog posts are written in /cms → Content → Blog posts
-    (isCmsConfigured ? await cmsBlogPosts() : (await listAll("blog_posts")).filter((p) => p.status === "published")).sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)),
-  ["blog-posts-v2"],
+    (isCmsConfigured ? await cmsBlogPosts(storeId) : (await listAll("blog_posts")).filter((p) => p.status === "published")).sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)),
+  ["blog-posts-v3"],
   { tags: [TAGS.content], revalidate: REVALIDATE }
 );
+export const getBlogPosts = async () => blogPostsCached(await currentStoreId());
 
 export async function getBlogPost(slug: string) {
   return (await getBlogPosts()).find((p) => p.slug === slug) ?? null;
 }
 
-export const getActiveFlashSale = unstable_cache(
-  async (): Promise<FlashSale | null> => {
-    if (isCmsConfigured) return activeFlashSaleCms(); // /cms → Sales → Flash sales
+const activeFlashSaleCached = unstable_cache(
+  async (storeId: number | null): Promise<FlashSale | null> => {
+    if (isCmsConfigured) return activeFlashSaleCms(storeId); // /cms → Sales → Flash sales
     const now = new Date().toISOString();
     return (await listAll("flash_sales")).find((f) => f.active && f.endsAt > now) ?? null;
   },
-  ["flash-sale-v2"],
+  ["flash-sale-v3"],
   { tags: [TAGS.content], revalidate: 60 }
 );
+export const getActiveFlashSale = async () => activeFlashSaleCached(await currentStoreId());
 
 /** With /cms: safe defaults only – never the demo bank account or demo announcement. */
 const CMS_DEFAULTS: StoreSettings = { ...seedSettings, bank: { bankName: "", accountTitle: "", accountNumber: "", iban: "" }, announcement: "" };
 
-export const getStoreSettings = unstable_cache(
-  async (): Promise<StoreSettings> =>
+const storeSettingsCached = unstable_cache(
+  async (storeId: number | null): Promise<StoreSettings> =>
     isCmsConfigured
       ? // Shipping & payments from /cms (an error is thrown so the last good settings stay cached)
-        { ...CMS_DEFAULTS, ...(await loadCommerceSettings()) }
+        { ...CMS_DEFAULTS, ...(await loadCommerceSettings(storeId)) }
       : { ...seedSettings, ...(await getSetting<Partial<StoreSettings>>("store", seedSettings)) },
-  ["store-settings-v2"],
+  ["store-settings-v3"],
   { tags: [TAGS.settings], revalidate: REVALIDATE }
 );
+/** Shipping & payment settings of the current store (or of `storeId`, e.g. an order's store). */
+export const getStoreSettings = async (storeId?: number | null) => storeSettingsCached(storeId === undefined ? await currentStoreId() : storeId);
 
-export const getTestimonials = unstable_cache(
+const testimonialsCached = unstable_cache(
   // with /cms only real testimonials (Online store → Testimonials) – never the demo ones
-  async (): Promise<Testimonial[]> => (isCmsConfigured ? ((await cmsTestimonials()) ?? []) : getSetting<Testimonial[]>("testimonials", seedTestimonials)),
-  ["testimonials-v2"],
+  async (storeId: number | null): Promise<Testimonial[]> => (isCmsConfigured ? ((await cmsTestimonials(storeId)) ?? []) : getSetting<Testimonial[]>("testimonials", seedTestimonials)),
+  ["testimonials-v3"],
   { tags: [TAGS.settings], revalidate: REVALIDATE }
 );
+export const getTestimonials = async () => testimonialsCached(await currentStoreId());
 
-export const getFaqs = unstable_cache(
-  async (): Promise<FaqItem[]> => (await cmsFaqs()) ?? getSetting<FaqItem[]>("faqs", seedFaqs),
-  ["faqs-v2"],
+const faqsCached = unstable_cache(
+  async (storeId: number | null): Promise<FaqItem[]> => (await cmsFaqs(storeId)) ?? (isCmsConfigured ? [] : getSetting<FaqItem[]>("faqs", seedFaqs)),
+  ["faqs-v3"],
   { tags: [TAGS.settings], revalidate: REVALIDATE }
 );
+export const getFaqs = async () => faqsCached(await currentStoreId());
 

@@ -1,6 +1,7 @@
 import type { CollectionAfterChangeHook, CollectionAfterDeleteHook, CollectionConfig } from "payload";
-import { managers, nobody, ownerField, staff } from "../access";
-import { dbName } from "../fields";
+import { nobody } from "../access";
+import { assignStore, readFor, sameStore, storeAccess, storeField, storeRoleField, writeFor } from "../tenancy";
+import { dbName, perStoreUnique, uniqueInStore } from "../fields";
 
 /**
  * Shop counter (POS) and individual laptop units.
@@ -83,12 +84,14 @@ export const Units: CollectionConfig = {
       ],
     },
   },
-  access: { read: staff, create: staff, update: staff, delete: managers },
-  hooks: { afterChange: [unitAfterChange], afterDelete: [unitAfterDelete] },
+  access: storeAccess("store_staff"),
+  indexes: perStoreUnique("serial"),
+  hooks: { beforeValidate: [assignStore()], afterChange: [unitAfterChange], afterDelete: [unitAfterDelete] },
   fields: [
+    storeField(),
     { type: "row", fields: [
-      { name: "serial", type: "text", required: true, unique: true, index: true, label: "Serial number", admin: { width: "50%", description: "Scan the barcode on the laptop or type it." } },
-      { name: "product", type: "relationship", relationTo: "products", required: true, index: true, admin: { width: "50%" } },
+      { name: "serial", type: "text", required: true, index: true, validate: uniqueInStore("serial", "A unit with this serial number is already in this store."), label: "Serial number", admin: { width: "50%", description: "Scan the barcode on the laptop or type it." } },
+      { name: "product", type: "relationship", relationTo: "products", required: true, index: true, filterOptions: sameStore, admin: { width: "50%" } },
     ] },
     { type: "row", fields: [
       { name: "status", type: "select", required: true, defaultValue: "in-stock", index: true, options: UNIT_STATUSES, admin: { width: "50%" } },
@@ -96,11 +99,11 @@ export const Units: CollectionConfig = {
     ] },
     { name: "conditionNotes", type: "textarea", label: "Condition of this unit", admin: { description: "e.g. Battery 91%, small scratch on lid." } },
     { type: "row", fields: [
-      { name: "costPrice", type: "number", min: 0, label: "Your cost (Rs)", access: { read: ownerField, create: ownerField, update: ownerField }, admin: { width: "50%", description: "Only owners see this." } },
+      { name: "costPrice", type: "number", min: 0, label: "Your cost (Rs)", access: { read: storeRoleField("store_owner"), create: storeRoleField("store_owner"), update: storeRoleField("store_owner") }, admin: { width: "50%", description: "Only owners see this." } },
       { name: "receivedAt", type: "date", label: "Received", admin: { width: "50%", date: { pickerAppearance: "dayOnly" } } },
     ] },
-    { name: "order", type: "relationship", relationTo: "orders", label: "Online order", admin: { readOnly: true, position: "sidebar" } },
-    { name: "sale", type: "relationship", relationTo: "pos-sales", label: "Shop sale", admin: { readOnly: true, position: "sidebar" } },
+    { name: "order", type: "relationship", relationTo: "orders", filterOptions: sameStore, label: "Online order", admin: { readOnly: true, position: "sidebar" } },
+    { name: "sale", type: "relationship", relationTo: "pos-sales", filterOptions: sameStore, label: "Shop sale", admin: { readOnly: true, position: "sidebar" } },
     { name: "soldAt", type: "date", admin: { readOnly: true, position: "sidebar", date: { pickerAppearance: "dayAndTime" } } },
     { name: "notes", type: "textarea", admin: { position: "sidebar" } },
   ],
@@ -117,8 +120,10 @@ export const PosSales: CollectionConfig = {
     listSearchableFields: ["receiptNumber", "customerName", "customerPhone"],
     description: "Sales made at the shop counter. Make new sales from Shop counter → Sell.",
   },
-  access: { read: staff, create: nobody, update: managers, delete: nobody },
+  // made and voided only through Shop counter (the endpoints keep stock, units and cash-ups right) – never edited directly
+  access: { read: readFor("store_staff"), create: nobody, update: nobody, delete: nobody },
   hooks: {
+    beforeValidate: [assignStore()],
     // cost at the time of sale (the laptop's own cost for serial numbers) – for the profit report
     afterChange: [
       async ({ doc, operation, req }) => {
@@ -130,6 +135,9 @@ export const PosSales: CollectionConfig = {
     ],
   },
   fields: [
+    storeField(),
+    // one id per "Complete sale" press: a double click or a retry returns the first sale instead of selling twice
+    { name: "clientSaleId", type: "text", unique: true, index: true, admin: { hidden: true } },
     { type: "row", fields: [
       { name: "receiptNumber", type: "text", required: true, unique: true, index: true, admin: { width: "50%", readOnly: true } },
       { name: "status", type: "select", required: true, defaultValue: "completed", index: true, options: [
@@ -143,16 +151,16 @@ export const PosSales: CollectionConfig = {
       admin: { readOnly: true },
       fields: [
         { type: "row", fields: [
-          { name: "product", type: "relationship", relationTo: "products", admin: { width: "40%" } },
+          { name: "product", type: "relationship", relationTo: "products", filterOptions: sameStore, admin: { width: "40%" } },
           { name: "title", type: "text", required: true, admin: { width: "60%" } },
         ] },
         { type: "row", fields: [
-          { name: "unit", type: "relationship", relationTo: "units", admin: { width: "25%" } },
+          { name: "unit", type: "relationship", relationTo: "units", filterOptions: sameStore, admin: { width: "25%" } },
           { name: "serial", type: "text", admin: { width: "25%" } },
           { name: "qty", type: "number", required: true, admin: { width: "25%" } },
           { name: "unitPrice", type: "number", required: true, label: "Price (Rs)", admin: { width: "25%" } },
         ] },
-        { name: "unitCost", type: "number", label: "Cost each (Rs)", access: { read: ownerField, create: () => false, update: () => false }, admin: { readOnly: true, description: "Your cost when it was sold (owners only) – used by the profit report." } },
+        { name: "unitCost", type: "number", label: "Cost each (Rs)", access: { read: storeRoleField("store_owner"), create: () => false, update: () => false }, admin: { readOnly: true, description: "Your cost when it was sold (owners only) – used by the profit report." } },
       ],
     },
     { type: "row", fields: [
@@ -193,8 +201,10 @@ export const CashUps: CollectionConfig = {
     defaultColumns: ["day", "expectedCash", "countedCash", "difference", "closedBy"],
     description: "End-of-day drawer count. Do it from Shop counter → Cash-up.",
   },
-  access: { read: staff, create: staff, update: managers, delete: managers },
+  access: { ...storeAccess("store_staff", "store_staff", "store_manager"), update: writeFor("store_manager") },
+  hooks: { beforeValidate: [assignStore()] },
   fields: [
+    storeField(),
     { type: "row", fields: [
       { name: "day", type: "text", required: true, index: true, label: "Day (YYYY-MM-DD)", admin: { width: "50%" } },
       { name: "openingFloat", type: "number", defaultValue: 0, label: "Cash in drawer at opening (Rs)", admin: { width: "50%" } },

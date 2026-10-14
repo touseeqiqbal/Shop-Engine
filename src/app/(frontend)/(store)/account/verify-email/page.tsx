@@ -3,13 +3,17 @@ import Link from "next/link";
 import { CheckCircle2, XCircle } from "lucide-react";
 import { confirmEmail, getSessionUser } from "@/lib/auth";
 import { pageMetadata } from "@/lib/seo";
+import { getSiteInfo } from "@/lib/repo/site-content";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  ...pageMetadata({ title: "Confirm Email | Urko Tech Store", description: "Confirm the email address of your Urko Tech Store account.", path: "/account/verify-email", noindex: true }),
-  referrer: "no-referrer",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const { name } = await getSiteInfo(); // the current store's own name
+  return {
+    ...pageMetadata({ title: `Confirm Email | ${name}`, description: `Confirm the email address of your ${name} account.`, path: "/account/verify-email", noindex: true }),
+    referrer: "no-referrer",
+  };
+}
 
 /** Opened from the link in the "Confirm your email" message. */
 export default async function VerifyEmailPage({ searchParams }: { searchParams: Promise<{ token?: string }> }) {

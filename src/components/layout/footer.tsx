@@ -5,8 +5,9 @@ import { WhatsAppIcon } from "./whatsapp-icon";
 import { waLink } from "@/lib/site";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { getStoreSettings } from "@/lib/repo/catalog";
+import { getCurrentStore } from "@/lib/tenant";
 import { paymentsAcceptedText } from "@/lib/seo";
-import { socialLinks } from "@/lib/site-info";
+import { socialLinks, storePlace } from "@/lib/site-info";
 import { LANDING_CITIES, citySlug } from "@/lib/cities";
 import type { Category } from "@/lib/types";
 import { COMPANY_LINKS, DEFAULT_CHROME, SERVICE_LINKS, type Chrome } from "@/lib/cms/chrome-types";
@@ -42,10 +43,20 @@ function SocialIcon({ name }: { name: string }) {
 /** Footer – layout from /cms → Online store → Footer; contact details from Store info. */
 export async function Footer({ categories, settings = DEFAULT_CHROME.footer }: { categories: Category[]; settings?: Chrome["footer"] }) {
   const year = new Date().getFullYear();
-  const site = await getSiteInfo(); // live business profile (/cms → Settings → Store details)
+  const [site, store] = await Promise.all([getSiteInfo(), getCurrentStore()]); // live business profile (/cms → Settings → Store details)
+  // the /laptops-in-{city} pages belong to the original (default) shop only
+  const cityLinks = settings.showCityLinks && (!store || store.isDefault);
   const d = DEFAULT_CHROME.footer;
-  // Untouched defaults keep following Store info (tagline, couriers) exactly as before.
-  const about = settings.about === d.about ? `${site.tagline}. New, used & refurbished laptops and computer accessories from Saddar, Karachi.` : settings.about;
+  // Untouched defaults keep following Store info (tagline, couriers, where the shop is) exactly as before.
+  const place = storePlace(site);
+  const original = !store || store.isDefault;
+  const about =
+    settings.about === d.about
+      ? original
+        ? `${site.tagline ? `${site.tagline}. ` : ""}New, used & refurbished laptops and computer accessories${place ? ` from ${place}` : ""}.`
+        : // another store: its own words (Settings → Store details), never the original shop's laptop line
+          site.tagline || site.description || `Shop online at ${site.name}${place ? ` – ${place}` : ""}.`
+      : settings.about;
   // Untouched default badges show only the payment methods that are switched on (/cms → Settings → Payments)
   const isDefault = settings.paymentBadges.join("|") === d.paymentBadges.join("|");
   const payments = isDefault ? paymentsAcceptedText(await getStoreSettings().catch(() => null)).split(", ") : [];
@@ -148,7 +159,7 @@ export async function Footer({ categories, settings = DEFAULT_CHROME.footer }: {
           {COMPANY_LINKS.map(([href, label]) => (
             <li key={href}>
               <Link href={href} className="hover:text-fg">
-                {label}
+                {label.replaceAll("{store}", site.name)}
               </Link>
             </li>
           ))}
@@ -158,7 +169,7 @@ export async function Footer({ categories, settings = DEFAULT_CHROME.footer }: {
       </div>
 
       {/* Nationwide delivery – internal links to city landing pages */}
-      {settings.showCityLinks && (
+      {cityLinks && (
       <div className="container-x border-t border-border py-8">
         <p className="text-sm font-semibold text-fg">Laptop delivery all over Pakistan</p>
         <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted">
@@ -175,7 +186,7 @@ export async function Footer({ categories, settings = DEFAULT_CHROME.footer }: {
 
       <div className="container-x flex flex-col gap-4 border-t border-border py-6 text-xs text-muted md:flex-row md:items-center md:justify-between">
         <p>
-          {copyright} · {site.address.full}
+          {[copyright, site.address.full].filter(Boolean).join(" · ")}
         </p>
         <ul className="flex flex-wrap items-center gap-2" aria-label="Payment & delivery partners">
           {badges.map((m) => (

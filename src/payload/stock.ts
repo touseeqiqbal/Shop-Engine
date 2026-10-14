@@ -1,7 +1,7 @@
 import { sql } from "@payloadcms/db-postgres";
 import type { Payload, PayloadRequest } from "payload";
-import { canOpenAdmin } from "./access";
 import { userError } from "./errors";
+import { log } from "../lib/log";
 import type { StockReason } from "./collections/history";
 
 /**
@@ -17,8 +17,10 @@ type Db = { drizzle: Exec; sessions?: Record<string, { db: Exec } | undefined> }
  * A product's system-managed values as they are LIVE. With drafts on, the copy a product draft holds can be old
  * (sales, reviews happened since) – these are the real ones.
  */
-export async function liveProduct(payload: Payload, id: number, req?: PayloadRequest): Promise<{ stock: number; rating: number; reviewCount: number; soldCount: number } | null> {
-  const { rows } = await (await conn(payload, req)).execute(sql`SELECT "stock", "rating", "review_count", "sold_count" FROM "payload"."cms_products" WHERE "id" = ${id}`);
+export async function liveProduct(payload: Payload, id: number, req?: PayloadRequest, lock = false): Promise<{ stock: number; rating: number; reviewCount: number; soldCount: number } | null> {
+  // lock = keep the row locked until the save commits, so a sale can't slip in between reading and writing the stock
+  const forUpdate = lock && req?.transactionID ? sql` FOR UPDATE` : sql``;
+  const { rows } = await (await conn(payload, req)).execute(sql`SELECT "stock", "rating", "review_count", "sold_count" FROM "payload"."cms_products" WHERE "id" = ${id}${forUpdate}`);
   const r = rows[0];
   return r ? { stock: Number(r.stock ?? 0), rating: Number(r.rating ?? 0), reviewCount: Number(r.review_count ?? 0), soldCount: Number(r.sold_count ?? 0) } : null;
 }
@@ -61,10 +63,11 @@ async function logMove(db: Exec, req: PayloadRequest | undefined, productId: num
   if (!change) return;
   const ctx = (req?.context?.stockLog ?? {}) as StockLog;
   const u = req?.user as { id?: number; email?: string } | null | undefined;
-  const who = u && canOpenAdmin(u as never) ? u : null; // customers / the website itself show as "—"
+  // a person in /cms or the API (shoppers can't get an admin token); the website's own code shows as "—"
+  const who = u && !req?.context?.storefront ? u : null;
   await db.execute(sql`
-    INSERT INTO "payload"."cms_stock_movements" ("product_id", "product_title", "change", "stock_after", "reason", "reference", "serial", "by_id", "by_email", "note")
-    VALUES (${productId}, ${String(title ?? "")}, ${change}, ${stockAfter}, ${ctx.reason ?? fallback}::"payload"."enum_cms_stock_movements_reason",
+    INSERT INTO "payload"."cms_stock_movements" ("store_id", "product_id", "product_title", "change", "stock_after", "reason", "reference", "serial", "by_id", "by_email", "note")
+    VALUES ((SELECT "store_id" FROM "payload"."cms_products" WHERE "id" = ${productId}), ${productId}, ${String(title ?? "")}, ${change}, ${stockAfter}, ${ctx.reason ?? fallback}::"payload"."enum_cms_stock_movements_reason",
             ${ctx.ref ?? null}, ${ctx.serial ?? null}, ${who?.id ?? null}, ${who?.email ?? null}, ${ctx.note ?? null})`);
 }
 
@@ -86,11 +89,26 @@ export async function takeStock(payload: Payload, productId: number, qty: number
   const { rows } = await db.execute(sql`
     UPDATE "payload"."cms_products" SET "stock" = "stock" - ${qty}, "sold_count" = COALESCE("sold_count", 0) + ${qty}
     WHERE "id" = ${productId} AND COALESCE("stock", 0) >= ${qty}
-    RETURNING "stock", "title"`);
+    RETURNING "stock", "title", "low_stock_threshold", "store_id"`);
   if (!rows.length) return null;
   await refreshStatus(payload, productId, req);
   await logMove(db, req, productId, rows[0].title, -qty, Number(rows[0].stock));
+  await lowStockAlert(payload, req, { productId, title: String(rows[0].title ?? ""), after: Number(rows[0].stock), sold: qty, threshold: rows[0].low_stock_threshold == null ? 2 : Number(rows[0].low_stock_threshold), storeId: rows[0].store_id == null ? null : Number(rows[0].store_id) });
   return Number(rows[0].stock);
+}
+
+/** A sale just took the product down to its "warn me at" level (or sold it out): tell the store's team, once a day. */
+async function lowStockAlert(payload: Payload, req: PayloadRequest | undefined, p: { productId: number; title: string; after: number; sold: number; threshold: number; storeId: number | null }) {
+  const before = p.after + p.sold;
+  const crossed = (before > p.threshold && p.after <= p.threshold) || (before > 0 && p.after <= 0);
+  if (!crossed) return;
+  try {
+    const { queueNotification } = await import("../lib/notify");
+    const subject = p.after <= 0 ? `Sold out: ${p.title}` : `Low stock: ${p.title} (${p.after} left)`;
+    await queueNotification(payload, "staff", p.storeId, { subject, lines: [p.after <= 0 ? "The last one was just sold." : `Only ${p.after} left – your warning level is ${p.threshold}.`], link: { href: `/cms/collections/products/${p.productId}`, label: "Open the product" } }, { req, dedupeKey: `stock-alert:${p.productId}:${p.after <= 0 ? "out" : "low"}:${new Date().toISOString().slice(0, 10)}` });
+  } catch (e) {
+    log.error("stock.low_alert_failed", e, { product: p.productId });
+  }
 }
 
 /** Puts `qty` back (cancelled order, refused parcel, restocked return, voided shop sale). */
@@ -119,21 +137,26 @@ export async function addStock(payload: Payload, productId: number, qty: number,
   return Number(rows[0]?.stock ?? 0);
 }
 
-/** Uses one coupon if it still has uses left – a single statement, so two shoppers can't both take the last use. */
-export async function consumeCoupon(payload: Payload, code: string, req?: PayloadRequest): Promise<boolean> {
+/**
+ * Uses one coupon of a store if it still has uses left – a single statement, so two shoppers can't both take the last use.
+ * Codes are per store: the same code in another store is a different coupon.
+ */
+export async function consumeCoupon(payload: Payload, code: string, storeId: number | null, req?: PayloadRequest): Promise<boolean> {
   const { rows } = await (await conn(payload, req)).execute(sql`
     UPDATE "payload"."cms_discounts" SET "used" = COALESCE("used", 0) + 1, "updated_at" = now()
-    WHERE upper("code") = ${code.trim().toUpperCase()} AND COALESCE("active", true)
+    WHERE upper("code") = ${code.trim().toUpperCase()} AND "store_id" IS NOT DISTINCT FROM ${storeId} AND COALESCE("active", true)
       AND ("usage_limit" IS NULL OR COALESCE("used", 0) < "usage_limit")
+      AND ("starts_at" IS NULL OR "starts_at" <= now())
       AND ("expires_at" IS NULL OR "expires_at" > now())
     RETURNING "id"`);
   return rows.length > 0;
 }
 
-/** Gives a coupon use back (order cancelled before delivery). */
-export async function releaseCoupon(payload: Payload, code: string, req?: PayloadRequest): Promise<void> {
+/** Gives a coupon use back (order cancelled before delivery) – only call it for an order that really used one. */
+export async function releaseCoupon(payload: Payload, code: string, storeId: number | null, req?: PayloadRequest): Promise<void> {
   await (await conn(payload, req)).execute(sql`
-    UPDATE "payload"."cms_discounts" SET "used" = GREATEST(0, COALESCE("used", 0) - 1), "updated_at" = now() WHERE upper("code") = ${code.trim().toUpperCase()}`);
+    UPDATE "payload"."cms_discounts" SET "used" = GREATEST(0, COALESCE("used", 0) - 1), "updated_at" = now()
+    WHERE upper("code") = ${code.trim().toUpperCase()} AND "store_id" IS NOT DISTINCT FROM ${storeId}`);
 }
 
 /** Lowers the "sold" count (a serial-tracked laptop came back – its stock is recounted from the units). */
@@ -197,10 +220,24 @@ export async function hasVariants(payload: Payload, productId: number, req?: Pay
   return rows.length > 0;
 }
 
+/**
+ * Locks every product of an order (and the main products of variants) in id order before changing any of them.
+ * Two orders with the same products in a different order then wait for each other instead of deadlocking.
+ */
+export async function lockProducts(payload: Payload, ids: number[], req?: PayloadRequest): Promise<void> {
+  if (!ids.length || !req?.transactionID) return; // outside a transaction every statement stands alone
+  const list = sql.join([...new Set(ids)].map((i) => sql`${i}`), sql`, `);
+  await (await conn(payload, req)).execute(sql`
+    SELECT "id" FROM "payload"."cms_products"
+    WHERE "id" IN (${list}) OR "id" IN (SELECT "variant_of_id" FROM "payload"."cms_products" WHERE "id" IN (${list}) AND "variant_of_id" IS NOT NULL)
+    ORDER BY "id" FOR UPDATE`);
+}
+
 /** Takes stock for several lines; all or nothing. Returns the titles that were short, or [] on success. */
 export async function takeStockForLines(payload: Payload, lines: { productId: number; qty: number; title?: string }[], req?: PayloadRequest): Promise<string[]> {
   const done: { productId: number; qty: number }[] = [];
-  for (const l of lines) {
+  await lockProducts(payload, lines.map((l) => l.productId), req);
+  for (const l of [...lines].sort((a, b) => a.productId - b.productId)) {
     const left = await takeStock(payload, l.productId, l.qty, req);
     if (left === null) {
       for (const d of done) await putBackStock(payload, d.productId, d.qty, req);
@@ -290,7 +327,7 @@ export async function linkUnitsToSale(payload: Payload, unitIds: number[], saleI
 }
 
 /** Locks a row for the rest of the transaction and returns its current status (serialises concurrent changes). */
-export async function lockRowStatus(payload: Payload, table: "cms_orders" | "cms_pos_sales" | "cms_stock_counts", id: number, req: PayloadRequest): Promise<string | null> {
+export async function lockRowStatus(payload: Payload, table: "cms_orders" | "cms_pos_sales" | "cms_stock_counts" | "cms_purchases", id: number, req: PayloadRequest): Promise<string | null> {
   const { rows } = await (await conn(payload, req)).execute(sql`SELECT "status" FROM ${sql.raw(`"payload"."${table}"`)} WHERE "id" = ${id} FOR UPDATE`);
   return rows.length ? String(rows[0].status) : null;
 }

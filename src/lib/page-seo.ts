@@ -2,7 +2,8 @@ import "server-only";
 import type { Metadata } from "next";
 import { pageMetadata } from "@/lib/seo";
 import { PAGE_DEF_BY_KEY, fillPlaceholders } from "@/lib/content/registry";
-import { getPageSeoMap, getSeoSettings } from "@/lib/repo/site-content";
+import { getPageSeoMap, getSeoSettings, getSiteInfo } from "@/lib/repo/site-content";
+import { getCurrentStore } from "@/lib/tenant";
 
 interface PageMetaOptions {
   /** Computed defaults (fall back to the registry entry for `key`) */
@@ -25,8 +26,9 @@ interface PageMetaOptions {
  * Empty saved fields fall back to the page's built-in defaults, so output is unchanged until edited.
  */
 export async function getPageMeta(key: string, o: PageMetaOptions = {}): Promise<Metadata> {
-  const def = PAGE_DEF_BY_KEY[key];
-  const [map, seo] = await Promise.all([getPageSeoMap(), getSeoSettings()]);
+  const [map, seo, store] = await Promise.all([getPageSeoMap(), getSeoSettings(), getCurrentStore()]);
+  // the built-in texts describe the original shop; any other store gets plain ones with its own name
+  const def = store && !store.isDefault ? await neutralDef(key) : PAGE_DEF_BY_KEY[key];
   const saved = map[key] ?? {};
   const vars = o.vars ?? {};
   const pick = (v: string | undefined) => (v && v.trim() ? fillPlaceholders(v.trim(), vars) : "");
@@ -37,4 +39,14 @@ export async function getPageMeta(key: string, o: PageMetaOptions = {}): Promise
   const image = o.cms?.image || saved.ogImage?.trim() || o.image || seo.defaultOgImage || undefined;
   const noindex = Boolean(o.noindex) || Boolean(o.cms?.noindex) || (saved.noindex ?? def?.noindex ?? false);
   return pageMetadata({ title, description, path: o.path ?? key, image, noindex, canonical: o.cms?.canonical, type: o.type });
+}
+
+/** Built-in page texts for a store other than the original shop: the page's name and the store's own name only. */
+async function neutralDef(key: string) {
+  const def = PAGE_DEF_BY_KEY[key];
+  if (!def) return undefined;
+  const name = (await getSiteInfo()).name;
+  const label = def.label.replace(/\s*\(.*?\)\s*/g, " ").replace(/\s+page$/i, "").trim();
+  const title = key === "/" ? name : `${label} | ${name}`;
+  return { ...def, title, description: key === "/" ? `Shop online at ${name}.` : `${label} – ${name}.` };
 }

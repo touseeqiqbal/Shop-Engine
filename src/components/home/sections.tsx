@@ -9,9 +9,10 @@ import { Stars } from "@/components/ui/stars";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
 import { waLink } from "@/lib/site";
 import { getSiteInfo } from "@/lib/repo/site-content";
-import { primaryPhone, SOCIAL_NETWORKS } from "@/lib/site-info";
+import { primaryPhone, SOCIAL_NETWORKS, socialLinks, storePlace, type SiteInfo } from "@/lib/site-info";
+import { getCurrentStore } from "@/lib/tenant";
 import { InlineText } from "@/components/content/inline-text";
-import type { TrustBadgeText } from "@/lib/content/home";
+import { NEUTRAL_TRUST_TEXT, type TrustBadgeText } from "@/lib/content/home";
 import { cn } from "@/lib/utils";
 
 export const TRUST_BADGES = [
@@ -22,9 +23,20 @@ export const TRUST_BADGES = [
   { icon: RotateCcw, title: "Easy Returns", text: "3-day replacement", tone: "text-rose-400" },
 ];
 
-/** `items` overrides the badge texts (/cms → Online store → Home page); icons stay fixed per position. */
-export function TrustBadges({ className, items }: { className?: string; items?: TrustBadgeText[] }) {
-  const badges = TRUST_BADGES.map((b, i) => ({ ...b, title: items?.[i]?.title || b.title, text: items?.[i]?.text || b.text }));
+/** The original (default) store – or demo mode, which is that store. Its built-in texts name its Saddar, Karachi shop. */
+async function isOriginalStore() {
+  const store = await getCurrentStore();
+  return !store || store.isDefault;
+}
+
+/**
+ * `items` overrides the badge texts (/cms → Online store → Home page); icons stay fixed per position.
+ * Built-in texts about the original shop's Karachi delivery are replaced by plain ones on any other store.
+ */
+export async function TrustBadges({ className, items }: { className?: string; items?: TrustBadgeText[] }) {
+  const original = await isOriginalStore();
+  const own = (text: string) => (original ? text : NEUTRAL_TRUST_TEXT[text] ?? text);
+  const badges = TRUST_BADGES.map((b, i) => ({ ...b, title: items?.[i]?.title || b.title, text: own(items?.[i]?.text || b.text) }));
   return (
     <ul className={cn("snap-row -mx-4 scroll-px-4 gap-3 px-4 sm:mx-0 sm:grid sm:grid-cols-3 sm:px-0 lg:grid-cols-5", className)} aria-label="Why shop with us">
       {badges.map((b, i) => (
@@ -168,6 +180,12 @@ export async function SocialFeed() {
   );
 }
 
+/** The store's first social profile as a handle (e.g. "@yourshop"), or "" when it has none. */
+export function socialHandle(info: SiteInfo) {
+  const first = socialLinks(info)[0];
+  return first ? handleOf(first.href) : "";
+}
+
 const handleOf = (url: string) => {
   try {
     const path = new URL(url).pathname.replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? "";
@@ -177,22 +195,29 @@ const handleOf = (url: string) => {
   }
 };
 
+/** Address, hours and map from Store details (nothing is shown until the store has an address). */
 export async function StoreLocation({
   eyebrow = "Visit our store",
-  title = "Laptop shop in Saddar, Karachi",
+  title,
   description,
 }: { eyebrow?: string; title?: string; description?: string } = {}) {
-  const site = await getSiteInfo(); // live business profile (/cms → Settings → Store details)
+  const [site, original] = await Promise.all([getSiteInfo(), isOriginalStore()]); // live business profile (/cms → Settings → Store details)
+  if (!site.address.full) return null;
   const phone = primaryPhone(site);
+  const place = storePlace(site);
+  // built-in heading: the original shop's own words; any other store: where it is, from its address
+  const heading = title || (original ? "Laptop shop in Saddar, Karachi" : place ? `Visit us in ${place}` : "Visit our store");
   return (
     <div className="grid overflow-hidden rounded-[1.75rem] border border-border lg:grid-cols-5">
       <div className="relative bg-bg-elevated p-6 sm:p-10 lg:col-span-2">
         <div className="pointer-events-none absolute -left-20 -top-20 size-72 rounded-full bg-violet-600/20 blur-3xl" aria-hidden="true" />
-        <SectionHeading eyebrow={eyebrow} title={title} className="relative !mb-4" />
+        <SectionHeading eyebrow={eyebrow} title={heading} className="relative !mb-4" />
         {description ? (
           <p className="relative text-muted">
             <InlineText text={description} />
           </p>
+        ) : !original ? (
+          <p className="relative text-muted">Come and see us in person – we&apos;re happy to help you choose.</p>
         ) : (
           <p className="relative text-muted">
             Come check laptops in person at the heart of Karachi&apos;s <strong className="text-fg">Regal Chowk laptop market</strong>. Free SSD & RAM

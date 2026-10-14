@@ -107,7 +107,8 @@ export const SECTION_DEFAULTS: Record<HomeSectionType, Omit<HomeSection, "type" 
     linkHref: "/installments",
   },
   testimonials: { eyebrow: "Customer reviews", title: "What our customers say" },
-  social: { eyebrow: "@urkotechstore", title: "Follow us on Instagram & TikTok", description: "Unboxings, laptop tips and the latest arrivals from our Saddar store." },
+  // eyebrow "" = the store's own social handle (from Store details)
+  social: { eyebrow: "", title: "Follow us on Instagram & TikTok", description: "Unboxings, laptop tips and the latest arrivals from our Saddar store." },
   location: {
     eyebrow: "Visit our store",
     title: "Laptop shop in Saddar, Karachi",
@@ -116,6 +117,17 @@ export const SECTION_DEFAULTS: Record<HomeSectionType, Omit<HomeSection, "type" 
   },
   seoCopy: {},
 };
+
+/**
+ * Some defaults above (and the trust badges / H1 below) describe the original shop's Saddar store. Any other store shows
+ * these plain texts instead wherever a section still has that built-in text (empty = the location section's wording
+ * from the store's own address).
+ */
+export const NEUTRAL_SECTION_TEXT: Partial<Record<HomeSectionType, Partial<Record<"eyebrow" | "title" | "description", string>>>> = {
+  social: { description: "Unboxings, tips and the latest arrivals." },
+  location: { title: "", description: "" },
+};
+export const NEUTRAL_TRUST_TEXT: Record<string, string> = { "Karachi same / next day": "Fast, tracked delivery" };
 
 export const DEFAULT_SECTION_ORDER: HomeSectionType[] = [
   "hero",
@@ -144,7 +156,7 @@ export const DEFAULT_TRUST_BADGES: TrustBadgeText[] = [
 
 export const DEFAULT_HOME_SEO_COPY = `## Your trusted laptop shop in Karachi – delivering all over Pakistan
 
-**Urko Tech Store** is a laptop and computer accessories shop located at **Regal Trade Square, Regal Chowk, Saddar, Karachi** – the city's most famous laptop market. Whether you are looking for **used laptops in Karachi**, a brand new gaming laptop, or a replacement charger for your old HP, we make it easy to **buy laptops online in Pakistan** with Cash on Delivery.
+**{{storeName}}** is a laptop and computer accessories shop located at **Regal Trade Square, Regal Chowk, Saddar, Karachi** – the city's most famous laptop market. Whether you are looking for **used laptops in Karachi**, a brand new gaming laptop, or a replacement charger for your old HP, we make it easy to **buy laptops online in Pakistan** with Cash on Delivery.
 
 ### New, used & refurbished laptops at the best laptop price in Pakistan
 We stock HP EliteBook and ProBook, Dell Latitude and XPS, Lenovo ThinkPad, Apple MacBook Air and MacBook Pro, Asus TUF and MSI gaming laptops. Every used laptop is graded (Used A+ or Used A), and every refurbished machine is checked & tested on 30+ points – battery health, display, keyboard, ports, Wi-Fi and thermals – so you know exactly what you are getting. Our **laptop prices in Pakistan** are updated daily.
