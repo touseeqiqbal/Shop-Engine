@@ -91,9 +91,12 @@ const pagesContentCached = unstable_cache(
 );
 export const getPagesContent = async () => pagesContentCached(await currentStoreId());
 
+/** A new store's home page until it builds its own: the standard sections with plain wording (no laptop shop texts). */
+const plainHome = (): HomeConfig => ({ ...mergeHomeConfig(null), h1Highlight: "", h1Text: "Shop our latest products – delivered to your door", seoCopy: "" });
+
 const homeConfigCached = unstable_cache(
-  async (storeId: number | null): Promise<HomeConfig> => mergeHomeConfig((await otherStore(storeId)) ? null : await getSetting<Partial<HomeConfig> | null>(SETTING_KEYS.home, null)),
-  ["site-home-v2"],
+  async (storeId: number | null): Promise<HomeConfig> => ((await otherStore(storeId)) ? plainHome() : mergeHomeConfig(await getSetting<Partial<HomeConfig> | null>(SETTING_KEYS.home, null))),
+  ["site-home-v3"],
   opts(SITE_TAGS.home)
 );
 /** The legacy home-page layout (until the store builds its own "home" page): the original shop's saved one, else the defaults. */

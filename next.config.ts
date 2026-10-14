@@ -32,6 +32,9 @@ const csp = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // `next dev` only: other local addresses allowed to load dev scripts, e.g. DEV_ALLOWED_ORIGINS=localtest.me,*.localtest.me
+  // so store sub-domains (acme.localtest.me) work in a browser while developing. Unset = Next.js' default (localhost only).
+  ...(process.env.DEV_ALLOWED_ORIGINS ? { allowedDevOrigins: process.env.DEV_ALLOWED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean) } : {}),
   output: "standalone",
   images: {
     formats: ["image/avif", "image/webp"],

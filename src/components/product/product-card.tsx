@@ -56,14 +56,21 @@ export function ProductCard({
         )}
       >
         <Link href={p.url} aria-label={p.name} className="absolute inset-0 z-[1]" tabIndex={-1} />
-        <Image
-          src={p.images[0]}
-          alt={p.name}
-          fill
-          priority={priority}
-          sizes={list ? "(min-width: 640px) 192px, 128px" : "(min-width: 1280px) 22vw, (min-width: 768px) 30vw, 46vw"}
-          className={cn("object-contain p-3 transition-all duration-500", p.images[1] && "group-hover:scale-105 group-hover:opacity-0")}
-        />
+        {p.images[0] ? (
+          <Image
+            src={p.images[0]}
+            alt={p.name}
+            fill
+            priority={priority}
+            sizes={list ? "(min-width: 640px) 192px, 128px" : "(min-width: 1280px) 22vw, (min-width: 768px) 30vw, 46vw"}
+            className={cn("object-contain p-3 transition-all duration-500", p.images[1] && "group-hover:scale-105 group-hover:opacity-0")}
+          />
+        ) : (
+          // no photo yet: the product's initial instead of a broken image
+          <span aria-hidden="true" className="absolute inset-0 grid place-items-center font-display text-4xl font-bold text-muted">
+            {p.name.trim().charAt(0).toUpperCase()}
+          </span>
+        )}
         {p.images[1] && (
           <Image
             src={p.images[1]}
