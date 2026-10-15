@@ -1,5 +1,6 @@
 "use client";
 import { useRowLabel } from "@payloadcms/ui";
+import { useAdminMoney } from "./ui/store-context";
 
 type LinkRow = { type?: string; label?: string; url?: string; megaMenu?: boolean };
 
@@ -21,13 +22,25 @@ export function TitleRowLabel() {
   return <span>{data?.title || `Row ${String((rowNumber ?? 0) + 1).padStart(2, "0")}`}</span>;
 }
 
-type ZoneRow = { name?: string; rest?: boolean; charge?: number; cities?: string[] };
+type ZoneRow = { name?: string; rest?: boolean; charge?: number; cities?: string[]; places?: string[] };
 /** Shipping zone: "Karachi · Rs 200 · 1 city" */
 export function ZoneRowLabel() {
   const { data, rowNumber } = useRowLabel<ZoneRow>();
+  const money = useAdminMoney();
   const parts = [data?.name || `Zone ${String((rowNumber ?? 0) + 1).padStart(2, "0")}`];
-  if (typeof data?.charge === "number") parts.push(`Rs ${data.charge.toLocaleString("en-PK")}`);
-  const n = data?.cities?.length ?? 0;
-  parts.push(data?.rest ? "all other cities" : `${n} ${n === 1 ? "city" : "cities"}`);
+  if (typeof data?.charge === "number") parts.push(money(data.charge));
+  const cities = data?.cities?.length ?? 0;
+  const n = cities + (data?.places?.length ?? 0);
+  const noun = n === cities ? (n === 1 ? "city" : "cities") : n === 1 ? "place" : "places";
+  parts.push(data?.rest ? "all other addresses" : `${n} ${noun}`);
+  return <span>{parts.join(" · ")}</span>;
+}
+
+type MethodRow = { name?: string; enabled?: boolean; due?: string };
+/** A store's own payment method: "UPI · before shipping" / "Card on delivery · on delivery · off" */
+export function PaymentMethodRowLabel() {
+  const { data, rowNumber } = useRowLabel<MethodRow>();
+  const parts = [data?.name || `Method ${String((rowNumber ?? 0) + 1).padStart(2, "0")}`, data?.due === "on-delivery" ? "on delivery" : "before shipping"];
+  if (data?.enabled === false) parts.push("off");
   return <span>{parts.join(" · ")}</span>;
 }

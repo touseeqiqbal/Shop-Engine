@@ -16,7 +16,9 @@ import { getSiteInfo } from "@/lib/repo/site-content";
 import { blogCategoryHref, blogTagHref, renderArticle } from "@/lib/blog";
 import { absoluteUrl } from "@/lib/site";
 import { articleJsonLd, pageMetadata } from "@/lib/seo";
-import { formatDate, readingTime } from "@/lib/utils";
+import { readingTime } from "@/lib/utils";
+import { getStoreLocale } from "@/lib/store-locale";
+import { formatDate } from "@/lib/time";
 
 export const revalidate = 300;
 
@@ -28,7 +30,7 @@ export async function generateStaticParams() {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const [post, site] = await Promise.all([getBlogPost(slug), getSiteInfo()]);
+  const [post, site, locale] = await Promise.all([getBlogPost(slug), getSiteInfo(), getStoreLocale()]);
   if (!post) return {};
   return pageMetadata({
     title: post.seoTitle || `${post.title} | ${site.name}`,
@@ -40,6 +42,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     canonical: post.seoCanonical,
     publishedTime: post.publishedAt,
     modifiedTime: post.updatedAt ?? post.publishedAt,
+    locale,
   });
 }
 
@@ -48,7 +51,7 @@ export default async function BlogPostPage({ params }: Props) {
   const post = await getBlogPost(slug);
   if (!post) notFound();
 
-  const [all, products, categories, site] = await Promise.all([getBlogPosts(), getProductsBySlugs(post.relatedProducts), getCategories(), getSiteInfo()]);
+  const [all, products, categories, site, loc] = await Promise.all([getBlogPosts(), getProductsBySlugs(post.relatedProducts), getCategories(), getSiteInfo(), getStoreLocale()]);
   const { html, headings } = renderArticle(post.content);
   const minutes = readingTime(post.content);
   const idx = all.findIndex((p) => p.slug === post.slug);
@@ -91,11 +94,11 @@ export default async function BlogPostPage({ params }: Props) {
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <CalendarDays className="size-4" aria-hidden="true" />
-                <time dateTime={post.publishedAt}>{formatDate(post.publishedAt, { dateStyle: "long" })}</time>
+                <time dateTime={post.publishedAt}>{formatDate(post.publishedAt, loc, { dateStyle: "long" })}</time>
               </span>
               {updated && (
                 <span className="inline-flex items-center gap-1.5">
-                  <RefreshCw className="size-4" aria-hidden="true" /> Updated <time dateTime={updated}>{formatDate(updated)}</time>
+                  <RefreshCw className="size-4" aria-hidden="true" /> Updated <time dateTime={updated}>{formatDate(updated, loc)}</time>
                 </span>
               )}
               <span className="inline-flex items-center gap-1.5">
@@ -222,7 +225,7 @@ export default async function BlogPostPage({ params }: Props) {
 
         <WhatsAppCta
           title="Still not sure what to buy?"
-          text="Send us your budget, city and use case on WhatsApp – we'll shortlist the best options honestly, with Cash on Delivery all over Pakistan."
+          text={`Send us your budget, city and use case on WhatsApp – we'll shortlist the best options honestly, with Cash on Delivery ${loc.country === "PK" ? "all over Pakistan" : "nationwide"}.`}
           message={`Hi {store}! I just read “${post.title}” and need some advice.`}
         />
 

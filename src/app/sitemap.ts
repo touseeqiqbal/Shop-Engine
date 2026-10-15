@@ -8,6 +8,7 @@ import { listPublishedPages } from "@/lib/cms/pages";
 import { listCollections } from "@/lib/cms/collections";
 import { indexable } from "@/lib/seo";
 import { currentAvailability, currentOrigin } from "@/lib/tenant";
+import { getStoreLocale } from "@/lib/store-locale";
 import { site } from "@/lib/site";
 
 export const revalidate = 3600;
@@ -38,11 +39,11 @@ const STATIC_PAGES: { path: string; priority: number; changeFrequency: Entry["ch
 
 /** Every store's own sitemap (its address, its pages); a shop that isn't open lists nothing. */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const [{ store, availability }, origin] = await Promise.all([currentAvailability(), currentOrigin()]);
+  const [{ store, availability }, origin, loc] = await Promise.all([currentAvailability(), currentOrigin(), getStoreLocale()]);
   if (!availability.open) return [];
   const own = (u: string) => (u.startsWith(site.url) ? origin + u.slice(site.url.length) : u);
-  // the /laptops-in-{city} pages belong to the original (default) shop only
-  return (await entriesOf(!store || store.isDefault)).map((e) => ({ ...e, url: own(e.url), ...(e.images ? { images: e.images.map(own) } : {}) }));
+  // the /laptops-in-{city} pages belong to the original (default) shop only, while it sells in Pakistan
+  return (await entriesOf((!store || store.isDefault) && loc.country === "PK")).map((e) => ({ ...e, url: own(e.url), ...(e.images ? { images: e.images.map(own) } : {}) }));
 }
 
 async function entriesOf(cityPages: boolean): Promise<MetadataRoute.Sitemap> {

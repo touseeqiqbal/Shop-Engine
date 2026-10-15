@@ -22,6 +22,6 @@ export const SalesChannels: GlobalConfig = {
     { name: "includeOutOfStock", type: "checkbox", defaultValue: true, label: "Include out-of-stock products (shown as “out of stock”)" },
     { name: "excludeCategories", type: "relationship", relationTo: "categories", hasMany: true, filterOptions: sameStore, label: "Leave out these categories" },
     { name: "excludeProducts", type: "relationship", relationTo: "products", hasMany: true, filterOptions: sameStore, label: "Leave out these products" },
-    { name: "shippingPrice", type: "number", min: 0, label: "Delivery price shown in feeds (Rs)", admin: { description: "Empty = the “charge when no zone matches” from Delivery charges. Free above the free-delivery amount." } },
+    { name: "shippingPrice", type: "number", min: 0, label: "Delivery price shown in feeds", admin: { description: "Empty = the “charge when no zone matches” from Delivery charges. Free above the free-delivery amount." } },
   ],
 };

@@ -11,14 +11,18 @@ import { getSessionUser } from "@/lib/auth";
 import { deliveryEstimate } from "@/lib/cities";
 import { LAST_ORDER_COOKIE, cookieMatchesOrder } from "@/lib/order-cookie";
 import { ORDER_NUMBER_RE } from "@/lib/order-number";
-import { PAYMENT_LABEL, PAYMENT_STATUS_LABEL, paymentAccountLines } from "@/lib/order-display";
+import { cityLine, PAYMENT_STATUS_LABEL, paymentAccountLines, paymentLabel } from "@/lib/order-display";
+import { paidOnDelivery } from "@/lib/order-money";
+import { findCheckoutMethod } from "@/lib/payments/methods";
 import { getStoreSettings } from "@/lib/repo/catalog";
 import { getOrderByNumber } from "@/lib/repo/orders";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { pageMetadata } from "@/lib/seo";
 import { waLink } from "@/lib/site";
 import { primaryPhone } from "@/lib/site-info";
-import { formatDate, formatPKR } from "@/lib/utils";
+import { moneyFormatter } from "@/lib/money";
+import { getStoreLocale } from "@/lib/store-locale";
+import { formatDate, formatDateTime } from "@/lib/time";
 import { payNow } from "./pay-action";
 
 export const dynamic = "force-dynamic";
@@ -26,12 +30,13 @@ export const dynamic = "force-dynamic";
 type Props = { params: Promise<{ orderNumber: string }>; searchParams: Promise<{ payment?: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { orderNumber } = await params;
+  const [{ orderNumber }, locale] = await Promise.all([params, getStoreLocale()]);
   return pageMetadata({
     title: "Order confirmed",
     description: "Thank you for your order.",
     path: `/order-confirmation/${encodeURIComponent(orderNumber)}`,
     noindex: true,
+    locale,
   });
 }
 
@@ -63,13 +68,17 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
     );
   }
 
-  const [settings, site] = await Promise.all([getStoreSettings(), getSiteInfo()]);
-  const eta = deliveryEstimate(order.customer.city, settings);
+  const [settings, site, loc] = await Promise.all([getStoreSettings(), getSiteInfo(), getStoreLocale()]);
+  // amounts and times in the store's currency and time zone
+  const money = moneyFormatter(loc);
+  const eta = deliveryEstimate(order.customer.city, settings, order.customer.postalCode ?? "");
   const accountLines = paymentAccountLines(order.paymentMethod, settings);
+  // the store's own steps for its own methods ("use your order number as the reference")
+  const instructions = findCheckoutMethod(order.paymentMethod, settings)?.instructions;
   const awaitingCode = order.status === "awaiting-confirmation" && Boolean(order.confirmation);
   const waText = awaitingCode
-    ? `Hi, I have a question about my order ${order.orderNumber} (${formatPKR(order.total)}).`
-    : `Hi, I just placed order ${order.orderNumber}, total ${formatPKR(order.total)}, please confirm.`;
+    ? `Hi, I have a question about my order ${order.orderNumber} (${money(order.total)}).`
+    : `Hi, I just placed order ${order.orderNumber}, total ${money(order.total)}, please confirm.`;
 
   return (
     <div className="container-x pb-14 pt-6 sm:pt-10">
@@ -92,7 +101,7 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
                 </p>
               )}
               <form action={payNow.bind(null, order.orderNumber)}>
-                <button className="btn btn-primary btn-lg">Pay {formatPKR(order.total)} by card</button>
+                <button className="btn btn-primary btn-lg">Pay {money(order.total)} by card</button>
               </form>
             </div>
           ) : order.paymentMethod === "card" && order.status === "cancelled" && order.paymentStatus !== "paid" ? (
@@ -101,7 +110,7 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
             <ConfirmCodeForm
               orderNumber={order.orderNumber}
               phone={order.customer.phone}
-              deadline={new Date(order.confirmation.expiresAt).toLocaleString("en-PK", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Karachi" })}
+              deadline={formatDate(order.confirmation.expiresAt, loc, { weekday: "short", hour: "numeric", minute: "2-digit" })}
             />
           ) : (
             <p className="mx-auto mt-2 max-w-md text-muted">
@@ -153,25 +162,25 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
                   </Link>
                   {i.upgrades.length > 0 && <p className="text-xs text-violet-300">+ {i.upgrades.map((u) => u.label).join(", ")}</p>}
                   <p className="text-xs text-muted">
-                    Qty {i.qty} × {formatPKR(i.unitPrice)}
+                    Qty {i.qty} × {money(i.unitPrice)}
                   </p>
                 </div>
-                <p className="text-sm font-semibold tabular-nums">{formatPKR(i.unitPrice * i.qty)}</p>
+                <p className="text-sm font-semibold tabular-nums">{money(i.unitPrice * i.qty)}</p>
               </li>
             ))}
           </ul>
           <dl className="mt-2 space-y-2 border-t border-border pt-4 text-sm">
-            <Row label="Subtotal" value={formatPKR(order.subtotal)} />
-            {order.discount > 0 && <Row label={`Discount${order.couponCode ? ` (${order.couponCode})` : ""}`} value={`− ${formatPKR(order.discount)}`} accent />}
-            <Row label="Delivery" value={order.deliveryCharge ? formatPKR(order.deliveryCharge) : "FREE"} />
+            <Row label="Subtotal" value={money(order.subtotal)} />
+            {order.discount > 0 && <Row label={`Discount${order.couponCode ? ` (${order.couponCode})` : ""}`} value={`− ${money(order.discount)}`} accent />}
+            <Row label="Delivery" value={order.deliveryCharge ? money(order.deliveryCharge) : "FREE"} />
             <div className="flex items-baseline justify-between border-t border-border pt-3">
               <dt className="font-semibold">Total</dt>
-              <dd className="font-display text-2xl font-extrabold tabular-nums">{formatPKR(order.total)}</dd>
+              <dd className="font-display text-2xl font-extrabold tabular-nums">{money(order.total)}</dd>
             </div>
             {order.advancePaid ? (
               <>
-                <Row label={order.paymentStatus === "partial" ? "Advance paid" : "Advance (being checked)"} value={formatPKR(order.advancePaid)} accent />
-                <Row label="Due on delivery" value={formatPKR(Math.max(0, order.total - order.advancePaid))} />
+                <Row label={order.paymentStatus === "partial" ? "Advance paid" : "Advance (being checked)"} value={money(order.advancePaid)} accent />
+                <Row label="Due on delivery" value={money(Math.max(0, order.total - order.advancePaid))} />
               </>
             ) : null}
           </dl>
@@ -193,7 +202,7 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
                 </>
               )}
               <br />
-              {order.customer.city}
+              {cityLine(order.customer)}
             </p>
             <p className="flex items-center gap-2 rounded-xl bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">
               <CalendarClock className="size-4 shrink-0" aria-hidden="true" /> Estimated: {eta.label}
@@ -205,19 +214,19 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
               <Wallet className="size-4 text-violet-300" aria-hidden="true" /> Payment
             </h2>
             <p className="text-sm">
-              {PAYMENT_LABEL[order.paymentMethod]} · <span className="text-muted">{PAYMENT_STATUS_LABEL[order.paymentStatus]}</span>
+              {paymentLabel(order.paymentMethod, order.paymentMethodLabel)} · <span className="text-muted">{PAYMENT_STATUS_LABEL[order.paymentStatus]}</span>
             </p>
-            {order.paymentMethod === "cod" ? (
+            {paidOnDelivery(order) ? (
               <p className="text-sm text-muted">
-                Please keep <strong className="text-fg">{formatPKR(Math.max(0, order.total - (order.advancePaid ?? 0)))}</strong> ready in cash when the rider arrives
+                Please keep <strong className="text-fg">{money(Math.max(0, order.total - (order.advancePaid ?? 0)))}</strong> ready {order.paymentMethod === "cod" ? "in cash when the rider arrives" : "when your order arrives"}
                 {order.advancePaid && order.paymentStatus !== "partial" ? " (once we've confirmed your advance)" : ""}.
               </p>
-            ) : (
+            ) : accountLines.length === 0 ? null : (
               <>
                 <p className="text-sm text-muted">
                   {order.paymentScreenshotUrl
                     ? "We received your payment screenshot and will verify it shortly."
-                    : `Please send ${formatPKR(order.total)} to the account below and share the screenshot on WhatsApp.`}
+                    : `Please send ${money(order.total)} to the account below and share the screenshot on WhatsApp.`}
                 </p>
                 <dl className="space-y-1 rounded-xl bg-surface-strong p-3 text-xs">
                   {accountLines.map((l) => (
@@ -227,9 +236,10 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
                     </div>
                   ))}
                 </dl>
+                {!order.paymentScreenshotUrl && instructions && <p className="whitespace-pre-line text-xs text-muted">{instructions}</p>}
               </>
             )}
-            <p className="text-xs text-subtle">Placed {formatDate(order.createdAt, { dateStyle: "medium", timeStyle: "short" })}</p>
+            <p className="text-xs text-subtle">Placed {formatDateTime(order.createdAt, loc)}</p>
           </section>
         </div>
       </div>

@@ -7,29 +7,32 @@ import { notifyFromStorefront } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
 import { BOT_MESSAGE, verifyTurnstile } from "@/lib/turnstile";
 import { storePhotos } from "@/lib/uploads";
-import { normalizePkPhone } from "@/lib/utils";
+import { normalizePhone, phonePlaceholder } from "@/lib/phone";
+import { getMoney, getStoreLocale } from "@/lib/store-locale";
 import { HONEYPOT } from "@/lib/honeypot";
 
 /** "Sell / trade in your laptop" form → /cms → Customers → Trade-ins. */
 
 export type TradeInState = { ok?: boolean; message?: string; ts?: number };
 
-const schema = z.object({
-  brand: z.string().trim().min(2, "Enter the brand").max(40),
-  model: z.string().trim().min(2, "Enter the model").max(80),
-  processor: z.string().trim().max(60).optional(),
-  ram: z.string().trim().max(30).optional(),
-  storage: z.string().trim().max(40).optional(),
-  batteryHealth: z.string().trim().max(30).optional(),
-  condition: z.enum(["like-new", "good", "fair", "faulty"], { message: "Choose the condition" }),
-  accessories: z.string().trim().max(200).optional(),
-  faults: z.string().trim().max(1500).optional(),
-  expectedPrice: z.coerce.number().int().min(0).max(5_000_000).optional(),
-  wantsTradeIn: z.boolean(),
-  name: z.string().trim().min(3, "Enter your name").max(80),
-  phone: z.string().refine((v) => !!normalizePkPhone(v), "Enter a mobile number like 0300-1234567"),
-  city: z.string().trim().max(60).optional(),
-});
+/** `country` = the store's country (ISO code): phone numbers are checked for it. */
+const schema = (country: string) =>
+  z.object({
+    brand: z.string().trim().min(2, "Enter the brand").max(40),
+    model: z.string().trim().min(2, "Enter the model").max(80),
+    processor: z.string().trim().max(60).optional(),
+    ram: z.string().trim().max(30).optional(),
+    storage: z.string().trim().max(40).optional(),
+    batteryHealth: z.string().trim().max(30).optional(),
+    condition: z.enum(["like-new", "good", "fair", "faulty"], { message: "Choose the condition" }),
+    accessories: z.string().trim().max(200).optional(),
+    faults: z.string().trim().max(1500).optional(),
+    expectedPrice: z.coerce.number().min(0).max(1_000_000_000).optional(),
+    wantsTradeIn: z.boolean(),
+    name: z.string().trim().min(3, "Enter your name").max(80),
+    phone: z.string().refine((v) => !!normalizePhone(v, country), country === "PK" ? "Enter a mobile number like 0300-1234567" : `Enter a phone number like ${phonePlaceholder(country)}`),
+    city: z.string().trim().max(60).optional(),
+  });
 
 export async function submitTradeIn(_prev: TradeInState, fd: FormData): Promise<TradeInState> {
   const ts = Date.now();
@@ -37,7 +40,8 @@ export async function submitTradeIn(_prev: TradeInState, fd: FormData): Promise<
   if (!isCmsConfigured) return { ok: false, message: "Please WhatsApp us the details instead.", ts };
   if (!(await verifyTurnstile(fd, "tradein"))) return { ok: false, message: BOT_MESSAGE, ts };
   const opt = (k: string) => String(fd.get(k) ?? "").trim() || undefined;
-  const parsed = schema.safeParse({
+  const { country } = await getStoreLocale();
+  const parsed = schema(country).safeParse({
     brand: fd.get("brand"),
     model: fd.get("model"),
     processor: opt("processor"),
@@ -58,10 +62,11 @@ export async function submitTradeIn(_prev: TradeInState, fd: FormData): Promise<
   const photos = await storePhotos(fd.getAll("photos"), "tradein", randomUUID().slice(0, 12), 6);
   if ("error" in photos) return { ok: false, message: photos.error, ts };
   const d = parsed.data;
-  await createTradeIn({ ...d, phone: normalizePkPhone(d.phone), status: "new", photoKeys: photos.keys });
+  await createTradeIn({ ...d, phone: normalizePhone(d.phone, country), status: "new", photoKeys: photos.keys });
+  const money = await getMoney();
   await notifyFromStorefront("staff", {
     subject: `Trade-in: ${d.brand} ${d.model}`,
-    lines: [`${d.name} · ${d.phone}${d.city ? ` · ${d.city}` : ""}`, `${[d.processor, d.ram, d.storage].filter(Boolean).join(" / ")} – ${d.condition}`, d.expectedPrice ? `Expects Rs ${d.expectedPrice.toLocaleString("en-PK")}` : ""],
+    lines: [`${d.name} · ${d.phone}${d.city ? ` · ${d.city}` : ""}`, `${[d.processor, d.ram, d.storage].filter(Boolean).join(" / ")} – ${d.condition}`, d.expectedPrice ? `Expects ${money(d.expectedPrice)}` : ""],
     link: { href: "/cms/collections/trade-ins?where[status][equals]=new", label: "Open trade-ins" },
   });
   return { ok: true, message: `Thanks ${d.name.split(" ")[0]}! We'll check the details and call or WhatsApp you with an offer, usually the same day.`, ts };

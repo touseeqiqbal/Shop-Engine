@@ -1,33 +1,32 @@
 import type { Endpoint, PayloadRequest } from "payload";
 import { storeGate } from "./guard";
 import { getStoreSettings } from "../store-settings";
+import { storeLocaleOf } from "../store-locale";
 import { isEmailConfigured } from "@/lib/mailer";
 import { configWarnings } from "@/lib/config-warnings";
+import { roundMoney } from "../../lib/money";
+import { addDays, dayIn, dayStart } from "../../lib/time";
 
 /**
  * GET /cms-api/reports?from=YYYY-MM-DD&to=YYYY-MM-DD  (the store's team; a platform admin with no store chosen: all stores)
  * Everything the dashboard shows, computed from /cms data (incl. new vs returning customers and checkout completion). Sales = website orders that went ahead (confirmed, shipped,
  * out for delivery, delivered) + shop-counter sales – the same rule as Reports → Sales & profit. Pending / unconfirmed,
  * cancelled, refused (RTO) and returned orders are never sales.
- * Days are counted in Pakistan time (UTC+5).
+ * Days are counted in the store's time zone (all stores: the default store's).
  */
 
 type Doc = Record<string, unknown>;
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 const str = (v: unknown) => (typeof v === "string" ? v : "");
-const PKT = 5 * 3600e3;
+/** A "YYYY-MM-DD" query value, or null. */
+const dayParam = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v)) ? v : null);
 const SALE_STATUSES = new Set(["confirmed", "dispatched", "out-for-delivery", "delivered"]);
 const isSale = (o: Doc) => SALE_STATUSES.has(str(o.status));
 
-/** yyyy-mm-dd of a timestamp in Pakistan time */
-const pktDay = (t: number) => new Date(t + PKT).toISOString().slice(0, 10);
-/** Start (UTC ms) of a Pakistan-time day */
-const pktStart = (day: string) => Date.parse(`${day}T00:00:00Z`) - PKT;
-
-function summarize(orders: Doc[]) {
+function summarize(orders: Doc[], currency: string) {
   const counted = orders.filter(isSale);
   const revenue = counted.reduce((s, o) => s + num(o.total), 0);
-  return { orders: orders.length, paidOrders: counted.length, revenue, aov: counted.length ? Math.round(revenue / counted.length) : 0 };
+  return { orders: orders.length, paidOrders: counted.length, revenue, aov: counted.length ? roundMoney(revenue / counted.length, currency) : 0 };
 }
 
 export const reportsEndpoint: Endpoint = {
@@ -37,20 +36,21 @@ export const reportsEndpoint: Endpoint = {
     const gate = await storeGate(req, "store_staff", { allowAll: true });
     if (gate instanceof Response) return gate;
     const { inStore, store, t } = gate;
+    const { payload } = req;
+    const { timezone: tz, currency } = await storeLocaleOf(payload, store, req);
     const url = new URL(req.url ?? "", "http://x");
-    const today = pktDay(Date.now());
-    const to = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get("to") ?? "") ? url.searchParams.get("to")! : today;
-    const defaultFrom = pktDay(pktStart(to) - 29 * 864e5);
-    let from = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get("from") ?? "") ? url.searchParams.get("from")! : defaultFrom;
+    const today = dayIn(Date.now(), tz);
+    const to = dayParam(url.searchParams.get("to")) ?? today;
+    let from = dayParam(url.searchParams.get("from")) ?? addDays(to, -29);
     // a reversed range is read the right way round; at most about 13 months at a time
     if (from > to) from = to;
-    if (pktStart(to) - pktStart(from) > 400 * 864e5) from = pktDay(pktStart(to) - 400 * 864e5);
-    const rangeStart = pktStart(from);
-    const rangeEnd = pktStart(to) + 864e5;
-    const kpiStart = Math.min(rangeStart, pktStart(today) - 29 * 864e5);
-    const yesterdayStart = pktStart(today) - 864e5;
+    if (Date.parse(to) - Date.parse(from) > 400 * 864e5) from = addDays(to, -400);
+    const rangeStart = dayStart(from, tz);
+    const rangeEnd = dayStart(addDays(to, 1), tz);
+    const todayStart = dayStart(today, tz);
+    const kpiStart = Math.min(rangeStart, dayStart(addDays(today, -29), tz));
+    const yesterdayStart = dayStart(addDays(today, -1), tz);
 
-    const { payload } = req;
     const [ordersRes, pending, verify, lowStock, outStock, newWholesale, openMessages, toShip, activeProducts, setupDocs] = await Promise.all([
       payload.find({
         collection: "orders",
@@ -106,10 +106,10 @@ export const reportsEndpoint: Endpoint = {
 
     // Daily series for the range
     const series: { day: string; revenue: number; orders: number }[] = [];
-    for (let t = rangeStart; t < rangeEnd && series.length < 400; t += 864e5) series.push({ day: pktDay(t), revenue: 0, orders: 0 });
+    for (let d = from; d <= to && series.length < 400; d = addDays(d, 1)) series.push({ day: d, revenue: 0, orders: 0 });
     const byDay = new Map(series.map((s) => [s.day, s]));
     for (const o of inRange) {
-      const s = byDay.get(pktDay(at(o)));
+      const s = byDay.get(dayIn(at(o), tz));
       if (!s) continue;
       s.orders++;
       if (isSale(o)) s.revenue += num(o.total);
@@ -148,7 +148,8 @@ export const reportsEndpoint: Endpoint = {
     const before = new Set<string>();
     for (let i = 0; i < phones.length; i += 400) {
       const chunk = phones.slice(i, i + 400);
-      const formatted = chunk.flatMap((d) => (d.length === 11 ? [d, `${d.slice(0, 4)}-${d.slice(4)}`] : [d]));
+      // as phones are saved: Pakistani mobiles "0300-1234567", other countries' numbers "+447700900123"
+      const formatted = chunk.flatMap((d) => (d.length === 11 && d.startsWith("0") ? [d, `${d.slice(0, 4)}-${d.slice(4)}`] : [d, `+${d}`]));
       const earlier = (await payload.find({ collection: "orders", where: { and: [{ placedAt: { less_than: new Date(rangeStart).toISOString() } }, { status: { in: [...SALE_STATUSES] } }, { "customer.phone": { in: formatted } }, ...inStore] }, limit: 0, pagination: false, depth: 0, overrideAccess: true, select: { customer: true } as never })).docs as Doc[];
       for (const o of earlier) before.add(phoneKey(o));
     }
@@ -171,11 +172,11 @@ export const reportsEndpoint: Endpoint = {
     return Response.json({
       range: { from, to },
       kpis: {
-        today: summarize(since(pktStart(today))),
-        yesterday: summarize(all.filter((o) => at(o) >= yesterdayStart && at(o) < pktStart(today))),
-        last7: summarize(since(pktStart(today) - 6 * 864e5)),
-        last30: summarize(since(pktStart(today) - 29 * 864e5)),
-        range: summarize(inRange),
+        today: summarize(since(todayStart), currency),
+        yesterday: summarize(all.filter((o) => at(o) >= yesterdayStart && at(o) < todayStart), currency),
+        last7: summarize(since(dayStart(addDays(today, -6), tz)), currency),
+        last30: summarize(since(dayStart(addDays(today, -29), tz)), currency),
+        range: summarize(inRange, currency),
       },
       todo: {
         pendingOrders: pending.totalDocs,

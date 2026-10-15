@@ -3,8 +3,10 @@ import { absoluteUrl } from "@/lib/site";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { LANDING_CITIES, citySlug } from "@/lib/cities";
 import { storePlace } from "@/lib/site-info";
-import { conditionMeta, effectivePrice, formatPKR } from "@/lib/utils";
+import { conditionMeta, effectivePrice } from "@/lib/utils";
 import { currentAvailability, toStoreUrls } from "@/lib/tenant";
+import { getStoreLocale } from "@/lib/store-locale";
+import { moneyFormatter } from "@/lib/money";
 
 /**
  * /llms.txt – a Markdown summary of the store for AI assistants and LLM-powered search
@@ -21,15 +23,20 @@ export async function GET() {
   if (!availability.open) return new Response("Not found", { status: 404 });
   // the original (default) shop; the city delivery pages and its delivery times are its own
   const original = !store || store.isDefault;
-  const [categories, products, posts, faqs, settings] = await Promise.all([
+  const [categories, products, posts, faqs, settings, loc] = await Promise.all([
     getCategories(),
     getAllProducts(),
     getBlogPosts(),
     getFaqs(),
     getStoreSettings(),
+    getStoreLocale(),
   ]);
   const site = await getSiteInfo(); // live business profile (/cms → Settings → Store details)
   const place = storePlace(site);
+  // prices in the store's currency; Pakistani wording (wallets, "all over Pakistan") only for a store in Pakistan
+  const money = moneyFormatter(loc);
+  const pk = loc.country === "PK";
+  const allOver = pk ? "all over Pakistan" : "nationwide";
   // details the store hasn't filled in are left out (a new store starts with a blank profile)
   const detail = (label: string, value: string) => (value ? [`- ${label}: ${value}`] : []);
 
@@ -51,10 +58,10 @@ export async function GET() {
     ...detail("Email", site.email),
     ...detail("Hours", site.hoursDisplay),
     ...detail("Map", site.mapLink),
-    `- Delivery: all over Pakistan.${original ? " Karachi same/next day, major cities 1–3 working days, other areas 3–5 working days." : ""} Free delivery above ${formatPKR(settings.freeDeliveryThreshold)}.`,
-    `- Payment: Cash on Delivery (all cities), JazzCash, EasyPaisa, bank transfer.`,
+    `- Delivery: ${allOver}.${original && pk ? " Karachi same/next day, major cities 1–3 working days, other areas 3–5 working days." : ""} Free delivery above ${money(settings.freeDeliveryThreshold)}.`,
+    pk ? `- Payment: Cash on Delivery (all cities), JazzCash, EasyPaisa, bank transfer.` : `- Payment: Cash on Delivery, online payment / bank transfer.`,
     ...(site.couriers.length ? [`- Couriers: ${site.couriers.join(", ")}.`] : []),
-    `- All prices are in Pakistani Rupees (PKR) and include the current sale price where applicable.`,
+    `- All prices are in ${loc.currency === "PKR" ? "Pakistani Rupees (PKR)" : loc.currency} and include the current sale price where applicable.`,
     "",
     "## Key pages",
     `- [Shop all products](${absoluteUrl("/shop")})`,
@@ -85,7 +92,7 @@ export async function GET() {
       if (count++ >= MAX_PRODUCTS) break;
       const price = effectivePrice(p);
       const parts = [
-        p.priceOnRequest ? "Price on request (wholesale lot – quote only)" : formatPKR(price) + (price < p.price ? ` (was ${formatPKR(p.price)})` : ""),
+        p.priceOnRequest ? "Price on request (wholesale lot – quote only)" : money(price) + (price < p.price ? ` (was ${money(p.price)})` : ""),
         p.condition ? conditionMeta[p.condition].label : null,
         p.stock > 0 ? "in stock" : "out of stock",
         p.warranty || null,
@@ -104,7 +111,7 @@ export async function GET() {
   push(
     "",
     "## Wholesale",
-    `${site.name} sells wholesale / in bulk${place ? ` from ${place}` : ""} to computer shops, resellers, companies and educational institutes all over Pakistan. Wholesale is quote-only: no wholesale prices are published – buyers send a quote request at ${absoluteUrl("/wholesale#quote")} or message on WhatsApp.`,
+    `${site.name} sells wholesale / in bulk${place ? ` from ${place}` : ""} to computer shops, resellers, companies and educational institutes ${allOver}. Wholesale is quote-only: no wholesale prices are published – buyers send a quote request at ${absoluteUrl("/wholesale#quote")} or message on WhatsApp.`,
     "- Bulk quantities of a single model (e.g. 20× HP EliteBook 840 G5), usually from 5 units per model.",
     "- Mixed laptop lots / pallets (e.g. 25 mixed Dell & HP Core i5 8th Gen, Grade A/B). Grade A = light signs of use; Grade B = visible wear but fully working.",
     "- Accessories in bulk: chargers, batteries, mouse, keyboards, SSDs and RAM for repair shops and resellers.",
@@ -112,7 +119,8 @@ export async function GET() {
     ...lots.map((p) => `- [${p.name}](${absoluteUrl(p.url)}): price on request. ${p.shortDescription}`)
   );
 
-  if (original) {
+  // the city pages exist while the original shop sells in Pakistan (see app/(frontend)/(store)/[category]/page.tsx)
+  if (original && pk) {
     push("", "## Nationwide delivery pages");
     push(LANDING_CITIES.map((city) => `[Laptops in ${city}](${absoluteUrl(`/laptops-in-${citySlug(city)}`)})`).join(" · "));
   }

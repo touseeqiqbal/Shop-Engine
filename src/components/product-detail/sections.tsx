@@ -5,7 +5,9 @@ import {
 import type { Brand, CatalogProduct, LaptopModel, SpecRow } from "@/lib/types";
 import { cn, conditionMeta } from "@/lib/utils";
 import type { DeliveryInfo } from "@/lib/cities";
+import { moneyFormatter } from "@/lib/money";
 import { getSiteInfo } from "@/lib/repo/site-content";
+import { getStoreLocale } from "@/lib/store-locale";
 import { WhatsAppLink } from "@/components/content/whatsapp-link";
 import { ConditionBadge } from "@/components/ui/condition-badge";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
@@ -50,12 +52,13 @@ export function ConditionPanel({ product: p }: { product: CatalogProduct }) {
 const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
 
 /** Trust badges under a product – return period and Cash on Delivery follow /cms → Settings. */
-export function TrustStrip({ className, returnDays, cod }: { className?: string; returnDays: number; cod: boolean }) {
+export async function TrustStrip({ className, returnDays, cod }: { className?: string; returnDays: number; cod: boolean }) {
+  const pk = (await getStoreLocale()).country === "PK"; // Pakistani wallets / "all over Pakistan" only there
   const TRUST = [
     cod
       ? { icon: Wallet, title: "Cash on Delivery", text: "Pay when it arrives", tone: "text-emerald-400" }
-      : { icon: Wallet, title: "Easy payment", text: "JazzCash, EasyPaisa or bank", tone: "text-emerald-400" },
-    { icon: Truck, title: "All over Pakistan", text: "Delivery to every city", tone: "text-sky-400" },
+      : { icon: Wallet, title: "Easy payment", text: pk ? "JazzCash, EasyPaisa or bank" : "Online or bank transfer", tone: "text-emerald-400" },
+    { icon: Truck, title: pk ? "All over Pakistan" : "Nationwide delivery", text: "Delivery to every city", tone: "text-sky-400" },
     { icon: ShieldCheck, title: "Warranty", text: "Checking + store warranty", tone: "text-violet-400" },
     { icon: BadgeCheck, title: "Checked & tested", text: "30+ point inspection", tone: "text-amber-400" },
     { icon: RotateCcw, title: "Easy returns", text: `Within ${days(returnDays)}`, tone: "text-rose-400" },
@@ -153,22 +156,32 @@ export function CompatibilityList({ product, models, brands }: { product: Catalo
   );
 }
 
-/** Delivery times: the shipping zones' own estimates when set in /cms, otherwise the built-in ones. */
-function deliveryText(delivery: DeliveryInfo) {
+/** Delivery times: the shipping zones' own estimates when set in /cms, otherwise the built-in ones (Pakistani cities for the original shop). */
+function deliveryText(delivery: DeliveryInfo, pk: boolean) {
   const zones = (delivery.zones ?? []).filter((z) => z.estimate?.trim());
-  if (!zones.length) return "Karachi: same / next day. Lahore, Islamabad & major cities: 1–3 working days. Other cities: 3–5 working days via TCS, Leopards, M&P or PostEx.";
+  if (!zones.length)
+    return pk
+      ? "Karachi: same / next day. Lahore, Islamabad & major cities: 1–3 working days. Other cities: 3–5 working days via TCS, Leopards, M&P or PostEx."
+      : "We deliver to every city – the delivery time for yours is confirmed with your order.";
   return zones.map((z) => `${z.rest ? "Other cities" : z.name}: ${z.estimate!.trim()}`).join(". ") + ".";
 }
 
 export async function WarrantyDelivery({ product, returnDays, delivery }: { product: CatalogProduct; returnDays: number; delivery: DeliveryInfo }) {
   const { address } = await getSiteInfo(); // where the store is (Settings → Store details)
+  const locale = await getStoreLocale();
+  const money = moneyFormatter(locale);
+  const pk = locale.country === "PK"; // Pakistani wallets / "all over Pakistan" only there
   const rows = [
     { icon: ShieldCheck, title: "Warranty", text: `${product.warranty}. Keep the box and invoice – warranty claims are handled at our ${address.area ? `${address.area} ` : ""}store or via courier.` },
     { icon: PackageCheck, title: "Checked before dispatch", text: "Every item is tested and packed with bubble wrap and a sealed box. We share a video/photo before dispatch on request." },
-    { icon: Truck, title: "Delivery all over Pakistan", text: deliveryText(delivery) },
+    { icon: Truck, title: pk ? "Delivery all over Pakistan" : "Delivery nationwide", text: deliveryText(delivery, pk) },
     delivery.cod.enabled
-      ? { icon: Wallet, title: "Cash on Delivery", text: `Pay cash when you receive your parcel${delivery.cod.maxOrder ? ` (orders up to Rs ${delivery.cod.maxOrder.toLocaleString("en-PK")})` : ""}. JazzCash, EasyPaisa and bank transfer are also available.` }
-      : { icon: Wallet, title: "Payment", text: "Pay by JazzCash, EasyPaisa or bank transfer – we confirm your payment before dispatch." },
+      ? {
+          icon: Wallet,
+          title: "Cash on Delivery",
+          text: `Pay cash when you receive your parcel${delivery.cod.maxOrder ? ` (orders up to ${money(delivery.cod.maxOrder)})` : ""}. ${pk ? "JazzCash, EasyPaisa" : "Online payment"} and bank transfer are also available.`,
+        }
+      : { icon: Wallet, title: "Payment", text: `Pay ${pk ? "by JazzCash, EasyPaisa or bank transfer" : "online or by bank transfer"} – we confirm your payment before dispatch.` },
     { icon: RotateCcw, title: "Easy returns", text: `Faulty or not as described? Report within ${days(returnDays)} of delivery for a replacement or refund.` },
   ];
   return (

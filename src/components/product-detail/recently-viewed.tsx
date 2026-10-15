@@ -4,6 +4,7 @@ import type { CatalogProduct } from "@/lib/types";
 import { effectivePrice } from "@/lib/utils";
 import { useLists } from "@/store/lists";
 import { trackEvent } from "@/components/analytics";
+import { useStoreLocale } from "@/components/providers/locale";
 import { ProductCarousel } from "@/components/product/product-carousel";
 import { SectionHeading } from "@/components/ui/section-heading";
 
@@ -13,10 +14,11 @@ import { SectionHeading } from "@/components/ui/section-heading";
  */
 export function RecentlyViewed({ product }: { product: Pick<CatalogProduct, "id" | "sku" | "name" | "brandName" | "categoryName" | "price" | "salePrice"> }) {
   const [items, setItems] = useState<CatalogProduct[]>([]);
+  const { currency } = useStoreLocale();
 
   useEffect(() => {
     trackEvent("view_item", {
-      currency: "PKR",
+      currency,
       value: effectivePrice(product),
       items: [{ item_id: product.sku, item_name: product.name, item_brand: product.brandName, item_category: product.categoryName, price: effectivePrice(product) }],
     });
@@ -36,7 +38,7 @@ export function RecentlyViewed({ product }: { product: Pick<CatalogProduct, "id"
     // Wait for the persisted store to rehydrate from localStorage before reading it.
     if (useLists.persist.hasHydrated()) run();
     else return useLists.persist.onFinishHydration(run);
-  }, [product]);
+  }, [product, currency]);
 
   if (!items.length) return null;
   return (

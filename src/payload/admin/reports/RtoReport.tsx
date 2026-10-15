@@ -1,13 +1,14 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useAdminLocale, useAdminMoney } from "../ui/store-context";
+import { addDays, dayIn } from "../../../lib/time";
 
 /** Refused-parcel (RTO) report: where parcels get refused, with which courier, and by whom. */
 
 type Row = { key: string; label: string; delivered: number; refused: number; returned: number; lost: number; rate: number };
 type Data = { from: string; to: string; totals: { delivered: number; refused: number; returned: number; lost: number; rate: number }; byCity: Row[]; byZone: Row[]; byCourier: Row[]; byCustomer: Row[] };
 
-const rs = (n: number) => `Rs ${Math.round(n).toLocaleString("en-PK")}`;
-const day = (offset: number) => new Date(Date.now() + 5 * 3600e3 - offset * 864e5).toISOString().slice(0, 10);
+const todayIn = (timezone: string) => dayIn(Date.now(), timezone);
 const RANGES = [
   { label: "30 days", days: 29 },
   { label: "90 days", days: 89 },
@@ -19,13 +20,17 @@ export function RtoReport() {
   const [tab, setTab] = useState<"byCity" | "byZone" | "byCourier" | "byCustomer">("byCity");
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState("");
+  // days in the store's time zone, amounts in its currency
+  const money = useAdminMoney();
+  const { timezone } = useAdminLocale();
+  const today = todayIn(timezone);
   useEffect(() => {
     setData(null);
-    fetch(`/cms-api/order-tools/rto?from=${day(range)}&to=${day(0)}`, { credentials: "include" })
+    fetch(`/cms-api/order-tools/rto?from=${addDays(today, -range)}&to=${today}`, { credentials: "include" })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Could not load the report"))))
       .then(setData)
       .catch((e) => setError((e as Error).message));
-  }, [range]);
+  }, [range, today]);
 
   const rows = data?.[tab] ?? [];
   const tone = (rate: number) => (rate >= 20 ? "r" : rate >= 10 ? "y" : "g");
@@ -51,7 +56,7 @@ export function RtoReport() {
         <Stat label="Refused" value={data ? String(data.totals.refused) : "…"} />
         <Stat label="Delivered" value={data ? String(data.totals.delivered) : "…"} />
         <Stat label="Refusal rate" value={data ? `${data.totals.rate}%` : "…"} />
-        <Stat label="Lost on delivery (est.)" value={data ? rs(data.totals.lost) : "…"} />
+        <Stat label="Lost on delivery (est.)" value={data ? money(data.totals.lost) : "…"} />
       </div>
       <nav className="urko-tabs" aria-label="Group by">
         {(
@@ -98,7 +103,7 @@ export function RtoReport() {
                   <td className="n">
                     <span className={`urko-badge urko-badge--${tone(r.rate)}`}>{r.rate}%</span>
                   </td>
-                  <td className="n">{rs(r.lost)}</td>
+                  <td className="n">{money(r.lost)}</td>
                 </tr>
               ))}
             </tbody>

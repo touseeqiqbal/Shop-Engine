@@ -1,6 +1,9 @@
 import type { Endpoint, PayloadRequest } from "payload";
 import { storeGate } from "./guard";
 import { hasStoreRole } from "../tenancy";
+import { storeLocaleOf } from "../store-locale";
+import { roundMoney } from "../../lib/money";
+import { addDays, dayIn, dayStart } from "../../lib/time";
 
 /**
  * GET /cms-api/reports/sales?from=YYYY-MM-DD&to=YYYY-MM-DD&basis=booked|delivered   (owners and managers)
@@ -13,25 +16,23 @@ import { hasStoreRole } from "../tenancy";
  * refunds paid in the period (by credit-note date) and adds back the cost of returned items put back in stock.
  * Cost = the cost saved on the line
  * when it was sold; for older lines the laptop's own cost (serial numbers) or today's product cost ("estimated").
- * Days are Pakistan time (UTC+5). Voided counter sales never count.
+ * Days are in the store's time zone (all stores: the default store's). Voided counter sales never count.
  */
 
 type Doc = Record<string, unknown>;
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v) || 0);
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const relId = (v: unknown) => (v && typeof v === "object" ? Number((v as Doc).id) : v == null ? null : Number(v));
-const PKT = 5 * 3600e3;
-const pktDay = (t: number) => new Date(t + PKT).toISOString().slice(0, 10);
-const pktStart = (day: string) => Date.parse(`${day}T00:00:00Z`) - PKT;
-const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** A "YYYY-MM-DD" query value, or null. */
+const dayParam = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v)) ? v : null);
 
 const BOOKED = new Set(["confirmed", "dispatched", "out-for-delivery", "delivered"]);
 const OPEN = new Set(["pending", "awaiting-confirmation"]);
-const METHOD_LABEL: Record<string, string> = { cod: "Cash on delivery", jazzcash: "JazzCash", easypaisa: "EasyPaisa", bank: "Bank transfer", card: "Card", cash: "Cash (counter)" };
+const METHOD_LABEL: Record<string, string> = { cod: "Cash on delivery", jazzcash: "JazzCash", easypaisa: "EasyPaisa", bank: "Bank transfer", card: "Card", cash: "Cash (counter)", other: "Wallet / other (counter)" };
 
 type Group = { key: string; label: string; orders: number; qty: number; sales: number; cost: number; profit: number; costKnown: boolean };
 type Line = { productId: number | null; title: string; qty: number; revenue: number; cost: number | null; estimated: boolean };
-type Sale = { channel: "website" | "counter"; delivered: boolean; day: string; total: number; delivery: number; discount: number; city: string; payments: { method: string; amount: number }[]; lines: Line[] };
+type Sale = { channel: "website" | "counter"; delivered: boolean; day: string; total: number; delivery: number; discount: number; city: string; payments: { method: string; amount: number; label?: string }[]; lines: Line[] };
 
 export const salesReportEndpoint: Endpoint = {
   path: "/reports/sales",
@@ -42,15 +43,16 @@ export const salesReportEndpoint: Endpoint = {
     const { inStore } = gate;
     // costs and profit: the store's owner (or a platform admin)
     const owner = gate.t.platformAdmin || hasStoreRole(gate.t, gate.store, "store_owner");
+    const { payload } = req;
+    const { timezone: tz, currency } = await storeLocaleOf(payload, gate.store, req);
     const url = new URL(req.url ?? "", "http://x");
-    const today = pktDay(Date.now());
-    const to = DAY_RE.test(url.searchParams.get("to") ?? "") ? url.searchParams.get("to")! : today;
-    let from = DAY_RE.test(url.searchParams.get("from") ?? "") ? url.searchParams.get("from")! : pktDay(pktStart(to) - 29 * 864e5);
+    const today = dayIn(Date.now(), tz);
+    const to = dayParam(url.searchParams.get("to")) ?? today;
+    let from = dayParam(url.searchParams.get("from")) ?? addDays(to, -29);
     if (from > to) from = to;
     const basis = url.searchParams.get("basis") === "delivered" ? "delivered" : "booked";
-    const start = new Date(pktStart(from)).toISOString();
-    const end = new Date(pktStart(to) + 864e5).toISOString();
-    const { payload } = req;
+    const start = new Date(dayStart(from, tz)).toISOString();
+    const end = new Date(dayStart(addDays(to, 1), tz)).toISOString();
 
     const [ordersRes, posRes, refundsRes, catsRes, brandsRes] = await Promise.all([
       payload.find({ collection: "orders", where: { and: [{ placedAt: { greater_than_equal: start } }, { placedAt: { less_than: end } }, ...inStore] }, limit: 0, pagination: false, depth: 0, overrideAccess: true }),
@@ -137,12 +139,13 @@ export const salesReportEndpoint: Endpoint = {
       all.push({
         channel: "website",
         delivered: status === "delivered",
-        day: pktDay(Date.parse(str(o.placedAt))),
+        day: dayIn(Date.parse(str(o.placedAt)), tz),
         total,
         delivery: num(o.deliveryCharge),
         discount: num(o.discount),
         city: str((o.customer as Doc | undefined)?.city) || "Unknown",
-        payments: [{ method: str(o.paymentMethod) || "cod", amount: total }],
+        // a store's own method keeps the name it had when the order was placed
+        payments: [{ method: str(o.paymentMethod) || "cod", amount: total, label: str(o.paymentMethodLabel) || undefined }],
         lines: ((Array.isArray(o.items) ? o.items : []) as Doc[]).map((i) => {
           const pid = relId(i.product);
           const qty = num(i.qty);
@@ -157,7 +160,7 @@ export const salesReportEndpoint: Endpoint = {
       all.push({
         channel: "counter",
         delivered: true,
-        day: pktDay(Date.parse(str(s.createdAt))),
+        day: dayIn(Date.parse(str(s.createdAt)), tz),
         total: num(s.total),
         delivery: 0,
         discount: num(s.discount),
@@ -248,7 +251,7 @@ export const salesReportEndpoint: Endpoint = {
     const byPayment = new Map<string, { key: string; label: string; orders: number; sales: number }>();
     const byChannel = new Map<string, { key: string; label: string; orders: number; sales: number }>();
     const series = new Map<string, { day: string; orders: number; sales: number; counter: number }>();
-    for (let t = pktStart(from); t < pktStart(to) + 864e5 && series.size < 400; t += 864e5) series.set(pktDay(t), { day: pktDay(t), orders: 0, sales: 0, counter: 0 });
+    for (let d = from; d <= to && series.size < 400; d = addDays(d, 1)) series.set(d, { day: d, orders: 0, sales: 0, counter: 0 });
     const add = (m: Map<string, { key: string; label: string; orders: number; sales: number }>, key: string, label: string, amount: number, count = 1) => {
       const g = m.get(key) ?? { key, label, orders: 0, sales: 0 };
       g.orders += count;
@@ -258,7 +261,7 @@ export const salesReportEndpoint: Endpoint = {
     for (const s of sales) {
       add(byCity, s.city, s.city, s.total);
       add(byChannel, s.channel, s.channel === "website" ? "Website" : "Shop counter", s.total);
-      s.payments.forEach((p, i) => add(byPayment, p.method, METHOD_LABEL[p.method] ?? p.method, p.amount, i === 0 ? 1 : 0));
+      s.payments.forEach((p, i) => add(byPayment, p.method, METHOD_LABEL[p.method] ?? p.label ?? p.method, p.amount, i === 0 ? 1 : 0));
       const d = series.get(s.day);
       if (d) {
         d.orders++;
@@ -276,7 +279,7 @@ export const salesReportEndpoint: Endpoint = {
       totals: {
         sales: totalSales,
         orders: sales.length,
-        aov: sales.length ? Math.round(totalSales / sales.length) : 0,
+        aov: sales.length ? roundMoney(totalSales / sales.length, currency) : 0,
         bookedSales: values.booked + counterTotal,
         deliveredSales: values.delivered + counterTotal,
         website: { booked: { count: counts.booked, value: values.booked }, delivered: { count: counts.delivered, value: values.delivered } },

@@ -9,6 +9,7 @@ import { ProductGrid } from "@/components/product/product-grid";
 import { PageHero } from "@/components/shop/page-hero";
 import { EmptyState } from "@/components/shop/product-listing";
 import { getSiteInfo } from "@/lib/repo/site-content";
+import { getStoreLocale } from "@/lib/store-locale";
 
 /** Product collections from /cms → Catalog → Collections. */
 
@@ -21,6 +22,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const [c, site] = await Promise.all([getCollection(slug), getSiteInfo()]);
   if (!c) return {};
   return pageMetadata({
+    locale: await getStoreLocale(),
     title: c.seoTitle || `${c.title} – Buy Online in Pakistan | ${site.name}`,
     description: c.seoDescription || c.description.replace(/\*\*/g, "").slice(0, 160) || `${c.title} at ${site.name} – Cash on Delivery all over Pakistan.`,
     image: c.seoImage ?? c.image ?? c.products[0]?.images[0],

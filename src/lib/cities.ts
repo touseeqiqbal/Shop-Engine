@@ -1,4 +1,5 @@
 import type { StoreSettings } from "./types";
+import { findCheckoutMethod } from "./payments/methods";
 
 export const MAJOR_CITIES = [
   "Karachi",
@@ -67,16 +68,29 @@ export function deliveryZone(city: string): DeliveryZone {
   return "other";
 }
 
-/** The configured shipping zone for a city (named zone first, then the "rest of Pakistan" zone). */
-export function shippingZoneFor(city: string, settings: Pick<StoreSettings, "zones">) {
-  const zones = settings.zones ?? [];
-  const c = city.trim().toLowerCase();
-  return zones.find((z) => !z.rest && z.cities.some((x) => x.trim().toLowerCase() === c)) ?? zones.find((z) => z.rest) ?? null;
+const norm = (v: string) => v.trim().toLowerCase().replace(/\s+/g, " ");
+const postcode = (v: string) => v.toUpperCase().replace(/\s+/g, "");
+
+/** Does a zone's typed place match? "Dubai" = that city / area; "SW1*" = postcodes starting with SW1; "10001" = that postcode. */
+function placeMatches(place: string, city: string, postalCode: string) {
+  const p = place.trim();
+  if (!p) return false;
+  if (p.endsWith("*")) return Boolean(postalCode) && postcode(postalCode).startsWith(postcode(p.slice(0, -1)));
+  return norm(p) === norm(city) || (Boolean(postalCode) && postcode(p) === postcode(postalCode));
 }
 
-export function deliveryEstimate(city: string, settings?: Pick<StoreSettings, "zones">) {
-  const custom = settings ? shippingZoneFor(city, settings)?.estimate?.trim() : "";
+/** The configured shipping zone for a city (named zone first, then the "rest of the country" zone). */
+export function shippingZoneFor(city: string, settings: Pick<StoreSettings, "zones">, postalCode = "") {
+  const zones = settings.zones ?? [];
+  const c = norm(city);
+  return zones.find((z) => !z.rest && (z.cities.some((x) => norm(x) === c) || (z.places ?? []).some((p) => placeMatches(p, city, postalCode)))) ?? zones.find((z) => z.rest) ?? null;
+}
+
+export function deliveryEstimate(city: string, settings?: Pick<StoreSettings, "zones" | "country">, postalCode = "") {
+  const custom = settings ? shippingZoneFor(city, settings, postalCode)?.estimate?.trim() : "";
   if (custom) return { label: custom, days: custom };
+  // the built-in estimates know Pakistan's cities only
+  if (settings?.country && settings.country !== "PK") return { label: "2–5 working days", days: "2–5 days" };
   switch (deliveryZone(city)) {
     case "karachi":
       return { label: "Same day / Next day", days: "0–1 days" };
@@ -87,10 +101,10 @@ export function deliveryEstimate(city: string, settings?: Pick<StoreSettings, "z
   }
 }
 
-export function deliveryCharge(city: string, subtotal: number, settings: StoreSettings) {
+export function deliveryCharge(city: string, subtotal: number, settings: StoreSettings, postalCode = "") {
   if (settings.zones?.length) {
     // Zones from /cms → Settings → Shipping
-    const zone = city ? shippingZoneFor(city, settings) : null;
+    const zone = city ? shippingZoneFor(city, settings, postalCode) : null;
     const freeAbove = zone?.freeAbove ?? settings.freeDeliveryThreshold;
     if (freeAbove > 0 && subtotal >= freeAbove) return 0;
     return zone ? zone.charge : settings.defaultDeliveryCharge;
@@ -102,16 +116,16 @@ export function deliveryCharge(city: string, subtotal: number, settings: StoreSe
 }
 
 /** Cart total above which delivery is free for this city (0 = never free). */
-export function freeDeliveryAbove(city: string, settings: Pick<StoreSettings, "zones" | "freeDeliveryThreshold">) {
+export function freeDeliveryAbove(city: string, settings: Pick<StoreSettings, "zones" | "freeDeliveryThreshold">, postalCode = "") {
   if (!settings.zones?.length) return settings.freeDeliveryThreshold;
-  return (city ? shippingZoneFor(city, settings)?.freeAbove : null) ?? settings.freeDeliveryThreshold;
+  return (city ? shippingZoneFor(city, settings, postalCode)?.freeAbove : null) ?? settings.freeDeliveryThreshold;
 }
 
 /** localStorage key of the delivery city picked on a product page */
 export const CITY_KEY = "urko-delivery-city";
 
 /** The small part of the settings the product page and cart drawer need (not the whole settings object). */
-export interface DeliveryInfo extends Pick<StoreSettings, "zones" | "freeDeliveryThreshold"> {
+export interface DeliveryInfo extends Pick<StoreSettings, "zones" | "freeDeliveryThreshold" | "country"> {
   cod: { enabled: boolean; maxOrder: number | null };
 }
 
@@ -119,6 +133,7 @@ export function deliveryInfo(settings: StoreSettings): DeliveryInfo {
   return {
     zones: settings.zones,
     freeDeliveryThreshold: settings.freeDeliveryThreshold,
+    country: settings.country,
     cod: { enabled: paymentEnabled("cod", settings), maxOrder: settings.payments?.cod.maxOrder ?? null },
   };
 }
@@ -126,14 +141,10 @@ export function deliveryInfo(settings: StoreSettings): DeliveryInfo {
 /** Cash-on-delivery handling fee (0 unless set in /cms → Settings → Payments). */
 export const codFee = (settings: StoreSettings) => settings.payments?.cod.fee ?? 0;
 
-/** Is a payment method offered? Cards only once the store's online payment account is connected and switched on. */
-export function paymentEnabled(method: "cod" | "jazzcash" | "easypaisa" | "bank" | "card", settings: StoreSettings) {
-  if (method === "card") return Boolean(settings.cardReady && settings.payments?.card?.enabled);
-  const on = settings.payments ? settings.payments[method].enabled : true;
-  if (!on) return false;
-  // never show a payment method without real account details (customers would send money nowhere)
-  if (method === "bank") return Boolean(settings.bank?.accountNumber?.replace(/[\s0-]/g, "") || settings.bank?.iban?.replace(/[\sPK0A-Z]/gi, ""));
-  if (method === "jazzcash") return Boolean(settings.jazzcash?.number?.trim());
-  if (method === "easypaisa") return Boolean(settings.easypaisa?.number?.trim());
-  return true;
+/**
+ * Is a payment method offered? (lib/payments/methods.ts decides: cards only once the store's payment account is
+ * connected and switched on; wallets and bank only with real account details; JazzCash / EasyPaisa in Pakistan.)
+ */
+export function paymentEnabled(method: string, settings: StoreSettings) {
+  return findCheckoutMethod(method, settings) !== null;
 }

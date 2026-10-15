@@ -1,11 +1,13 @@
 import "server-only";
 import { listAll } from "@/lib/repo/db";
 import type { CatalogProduct, Coupon, OrderItem } from "@/lib/types";
-import { formatPKR } from "@/lib/utils";
 import { isCmsConfigured } from "@/lib/db/config";
 import { automaticDiscountsCms, couponUsesByCustomerCms, findCouponCms } from "@/lib/cms/sales";
 import { getCategories } from "@/lib/repo/catalog";
 import { currentStoreId } from "@/lib/tenant";
+import { DEFAULT_LOCALE } from "@/lib/locale";
+import { moneyFormatter, roundMoney, type Money } from "@/lib/money";
+import { localeOfStore } from "@/lib/store-locale";
 
 /**
  * Discounts, always worked out on the server from the store's own discounts (the browser only shows the result).
@@ -22,14 +24,20 @@ export type CouponCheck =
 
 export type DiscountLine = Pick<OrderItem, "productId" | "unitPrice" | "qty">;
 
-/** Percent / amount off a (part of the) cart – never more than that part; free delivery takes nothing off the items. */
-export function couponDiscount(coupon: Pick<Coupon, "kind" | "value">, subtotal: number) {
+/**
+ * Percent / amount off a (part of the) cart – never more than that part; free delivery takes nothing off the items.
+ * Rounded to the store's currency (whole rupees, cents …).
+ */
+export function couponDiscount(coupon: Pick<Coupon, "kind" | "value">, subtotal: number, currency: string = DEFAULT_LOCALE.currency) {
   if (coupon.kind === "free_shipping") return 0;
   const raw = coupon.kind === "percent" ? (subtotal * coupon.value) / 100 : coupon.value;
-  return Math.max(0, Math.min(Math.round(raw), subtotal));
+  return Math.max(0, Math.min(roundMoney(raw, currency), subtotal));
 }
 
-const label = (c: Coupon) => (c.kind === "free_shipping" ? "free delivery" : c.kind === "percent" ? `${c.value}% off` : `${formatPKR(c.value)} off`);
+const label = (c: Coupon, money: Money) => (c.kind === "free_shipping" ? "free delivery" : c.kind === "percent" ? `${c.value}% off` : `${money(c.value)} off`);
+
+/** Amounts in messages and discounts in the store's own currency. */
+const moneyOfStore = async (storeId: number | null) => moneyFormatter(await localeOfStore(storeId));
 
 /** The part of the cart a discount applies to (the whole cart for "whole order" discounts). */
 export async function eligibleSubtotal(c: Coupon, lines: DiscountLine[], products: CatalogProduct[]): Promise<number> {
@@ -63,7 +71,7 @@ export async function eligibleSubtotal(c: Coupon, lines: DiscountLine[], product
 type Ctx = { lines: DiscountLine[]; products: CatalogProduct[]; customer?: { email?: string | null; phone?: string | null }; storeId?: number | null };
 
 /** Is this discount usable for this cart right now? Returns the amount it takes off (0 for free delivery). */
-async function evaluate(c: Coupon, ctx: Ctx, storeId: number | null): Promise<{ ok: true; discount: number; base: number } | { ok: false; message: string }> {
+async function evaluate(c: Coupon, ctx: Ctx, storeId: number | null, money: Money): Promise<{ ok: true; discount: number; base: number } | { ok: false; message: string }> {
   const now = Date.now();
   if (!c.active) return { ok: false, message: "This coupon code is not valid" };
   if (c.startsAt && Date.parse(c.startsAt) > now) return { ok: false, message: "This coupon isn't active yet" };
@@ -71,12 +79,12 @@ async function evaluate(c: Coupon, ctx: Ctx, storeId: number | null): Promise<{ 
   if (c.usageLimit != null && c.used >= c.usageLimit) return { ok: false, message: "This coupon has reached its usage limit" };
   const base = await eligibleSubtotal(c, ctx.lines, ctx.products);
   if (base <= 0) return { ok: false, message: "This coupon doesn't apply to the items in your cart" };
-  if (base < c.minOrder) return { ok: false, message: `Add ${formatPKR(c.minOrder - base)} more${c.appliesTo && c.appliesTo !== "all" ? " of the eligible items" : ""} to use this coupon (min. ${formatPKR(c.minOrder)})` };
+  if (base < c.minOrder) return { ok: false, message: `Add ${money(c.minOrder - base)} more${c.appliesTo && c.appliesTo !== "all" ? " of the eligible items" : ""} to use this coupon (min. ${money(c.minOrder)})` };
   if (c.perCustomerLimit && isCmsConfigured && (ctx.customer?.email || ctx.customer?.phone)) {
     const used = await couponUsesByCustomerCms(c.code, storeId, ctx.customer ?? {});
     if (used >= c.perCustomerLimit) return { ok: false, message: c.perCustomerLimit === 1 ? "You've already used this coupon" : `You've already used this coupon ${used} times` };
   }
-  return { ok: true, discount: couponDiscount(c, base), base };
+  return { ok: true, discount: couponDiscount(c, base, money.currency), base };
 }
 
 /** Validates a typed code for this cart (cart page "Apply", checkout). */
@@ -88,9 +96,10 @@ export async function checkCoupon(rawCode: string, ctx: Ctx): Promise<CouponChec
     ? await findCouponCms(code, storeId) // /cms → Sales → Discounts (this store's)
     : (await listAll("coupons", { privileged: true }).catch(() => listAll("coupons"))).find((c) => c.code.toUpperCase() === code);
   if (!coupon || !coupon.active || coupon.automatic) return { ok: false, code, message: "This coupon code is not valid" };
-  const r = await evaluate(coupon, ctx, storeId);
+  const money = await moneyOfStore(storeId);
+  const r = await evaluate(coupon, ctx, storeId, money);
   if (!r.ok) return { ok: false, code, message: r.message };
-  return { ok: true, coupon, code: coupon.code, discount: r.discount, message: `${coupon.code} applied – ${label(coupon)}` };
+  return { ok: true, coupon, code: coupon.code, discount: r.discount, message: `${coupon.code} applied – ${label(coupon, money)}` };
 }
 
 export type DiscountResult =
@@ -105,12 +114,13 @@ export async function resolveDiscounts(rawCode: string | null | undefined, ctx: 
   const storeId = ctx.storeId === undefined ? await currentStoreId() : ctx.storeId;
   const typed = rawCode?.trim() ? await checkCoupon(rawCode, { ...ctx, storeId }) : null;
   if (typed && !typed.ok) return typed;
+  const money = await moneyOfStore(storeId);
 
   // the best automatic discount for this cart (free delivery counts as worth the delivery charge – compared by amount)
   let auto: { coupon: Coupon; discount: number } | null = null;
   if (isCmsConfigured) {
     for (const c of await automaticDiscountsCms(storeId).catch(() => [] as Coupon[])) {
-      const r = await evaluate(c, ctx, storeId);
+      const r = await evaluate(c, ctx, storeId, money);
       if (!r.ok) continue;
       const worth = c.kind === "free_shipping" ? 1 : r.discount;
       if (!auto || worth > (auto.coupon.kind === "free_shipping" ? 1 : auto.discount)) auto = { coupon: c, discount: r.discount };
@@ -124,12 +134,12 @@ export async function resolveDiscounts(rawCode: string | null | undefined, ctx: 
   } else if (typed?.ok) picks.push({ coupon: typed.coupon, discount: typed.discount, automatic: false });
   else if (auto) picks.push({ coupon: auto.coupon, discount: auto.discount, automatic: true });
 
-  const discount = Math.min(ctx.subtotal, picks.reduce((s, p) => s + p.discount, 0));
+  const discount = Math.min(ctx.subtotal, money.round(picks.reduce((s, p) => s + p.discount, 0)));
   return {
     ok: true,
     discount,
     freeShipping: picks.some((p) => p.coupon.kind === "free_shipping"),
     code: picks.find((p) => !p.automatic)?.coupon.code ?? null,
-    applied: picks.map((p) => ({ code: p.coupon.code, label: label(p.coupon), automatic: p.automatic, amount: p.discount })),
+    applied: picks.map((p) => ({ code: p.coupon.code, label: label(p.coupon, money), automatic: p.automatic, amount: p.discount })),
   };
 }

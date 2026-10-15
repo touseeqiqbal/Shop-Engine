@@ -7,6 +7,8 @@
  *  3. anything else (the main site address, localhost, the Railway address) → the default store
  */
 
+import { storeLocale } from "./locale";
+
 /** Cookie naming the store being previewed – honoured only while Draft Mode is on (set by /api/preview for a store's team). */
 export const PREVIEW_STORE_COOKIE = "se-preview-store";
 
@@ -30,6 +32,7 @@ export type StoreDirectoryEntry = {
 };
 
 const s = (v: unknown) => (typeof v === "string" ? v : "");
+const pickLocale = ({ country, currency, timezone }: { country: string; currency: string; timezone: string }) => ({ country, currency, timezone });
 
 /** A Stores document → its routing details. */
 export function toDirectoryEntry(d: Record<string, unknown>): StoreDirectoryEntry {
@@ -43,9 +46,8 @@ export function toDirectoryEntry(d: Record<string, unknown>): StoreDirectoryEntr
     subdomain: s(d.subdomain) || null,
     customDomain: s(d.customDomain) || null,
     domainVerified: Boolean(d.domainVerifiedAt),
-    currency: s(d.currency) || "PKR",
-    country: s(d.country) || "Pakistan",
-    timezone: s(d.timezone) || "Asia/Karachi",
+    // money, clock and country: missing or invalid values fall back to the country's (lib/locale.ts)
+    ...pickLocale(storeLocale(d as { country?: string; currency?: string; timezone?: string })),
     language: s(d.defaultLanguage) || "en",
     orderPrefix: s(d.orderPrefix),
     trialEndsAt: s(d.trialEndsAt) || null,

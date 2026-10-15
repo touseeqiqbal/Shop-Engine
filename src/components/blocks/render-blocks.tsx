@@ -26,6 +26,7 @@ import {
 } from "@/lib/repo/catalog";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { getCurrentStore } from "@/lib/tenant";
+import { getMoney } from "@/lib/store-locale";
 import { DEFAULT_HOME, DEFAULT_HOME_SEO_COPY, NEUTRAL_SECTION_TEXT, SECTION_DEFAULTS, type HomeSectionType } from "@/lib/content/home";
 import { fillTokens, tokenValues } from "@/lib/content/page-defaults";
 import { AUTO_LIMIT, type BlockText, type PageBlock, type PageData } from "@/lib/cms/blocks-types";
@@ -47,9 +48,10 @@ const none = <T,>(v: T) => Promise.resolve(v);
 export async function RenderBlocks({ page }: { page: PageData }) {
   const blocks = page.blocks;
   const needsProducts = has(blocks, "deals", "products", "categories");
-  const [info, store, storeSettings] = await Promise.all([getSiteInfo(), getCurrentStore(), has(blocks, "richText") ? getStoreSettings() : none(null)]);
+  const [info, store, storeSettings, money] = await Promise.all([getSiteInfo(), getCurrentStore(), has(blocks, "richText") ? getStoreSettings() : none(null), getMoney()]);
   const original = !store || store.isDefault;
-  const tokens = tokenValues(info, storeSettings);
+  // {{freeDelivery}} and friends in the store's own currency
+  const tokens = tokenValues(info, storeSettings, money);
   const fill = (s: string | null | undefined) => (s ? fillTokens(s, tokens) : s);
   /** A section's text, with the original shop's built-in wording swapped for plain text on any other store. */
   const own = (type: HomeSectionType, t: BlockText): BlockText => {
@@ -316,7 +318,7 @@ export async function RenderBlocks({ page }: { page: PageData }) {
             markdown={fill(b.markdown)}
             boxed={Boolean(b.boxed)}
             narrow={b.width === "narrow"}
-            label={page.slug === "home" && b.boxed ? "About buying laptops in Pakistan" : undefined}
+            label={original && page.slug === "home" && b.boxed ? "About buying laptops in Pakistan" : undefined}
           />
         );
         break;

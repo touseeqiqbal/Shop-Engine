@@ -2,7 +2,8 @@
 import { z } from "zod";
 import { rateLimit } from "@/lib/rate-limit";
 import { saveContactMessage } from "@/lib/repo/messages";
-import { normalizePkPhone } from "@/lib/utils";
+import { normalizePhone, phonePlaceholder } from "@/lib/phone";
+import { getStoreLocale } from "@/lib/store-locale";
 import { BOT_MESSAGE, verifyTurnstile } from "@/lib/turnstile";
 import { HONEYPOT } from "@/lib/honeypot";
 import { log } from "@/lib/log";
@@ -13,17 +14,19 @@ export interface ContactState {
   errors?: Partial<Record<"name" | "phone" | "email" | "subject" | "message", string>>;
 }
 
-const schema = z.object({
-  name: z.string().trim().min(2, "Please enter your name").max(80, "Name is too long"),
-  phone: z
-    .string()
-    .trim()
-    .transform((v) => normalizePkPhone(v) ?? "")
-    .refine((v) => v.length > 0, "Enter a valid Pakistani mobile number, e.g. 0342-6693115"),
-  email: z.union([z.literal(""), z.string().trim().email("Enter a valid email address").max(120)]).optional(),
-  subject: z.string().trim().max(120, "Subject is too long").optional(),
-  message: z.string().trim().min(10, "Please write a little more (at least 10 characters)").max(3000, "Message is too long"),
-});
+/** `country` = the store's country (ISO code): phone numbers are checked for it. */
+const schema = (country: string) =>
+  z.object({
+    name: z.string().trim().min(2, "Please enter your name").max(80, "Name is too long"),
+    phone: z
+      .string()
+      .trim()
+      .transform((v) => normalizePhone(v, country) ?? "")
+      .refine((v) => v.length > 0, country === "PK" ? "Enter a valid Pakistani mobile number, e.g. 0342-6693115" : `Enter a valid phone number, e.g. ${phonePlaceholder(country)}`),
+    email: z.union([z.literal(""), z.string().trim().email("Enter a valid email address").max(120)]).optional(),
+    subject: z.string().trim().max(120, "Subject is too long").optional(),
+    message: z.string().trim().min(10, "Please write a little more (at least 10 characters)").max(3000, "Message is too long"),
+  });
 
 export async function submitContact(_prev: ContactState, formData: FormData): Promise<ContactState> {
   // Honeypot – real users never fill this hidden field.
@@ -32,7 +35,7 @@ export async function submitContact(_prev: ContactState, formData: FormData): Pr
   }
   if (!(await verifyTurnstile(formData, "contact"))) return { ok: false, message: BOT_MESSAGE };
 
-  const parsed = schema.safeParse({
+  const parsed = schema((await getStoreLocale()).country).safeParse({
     name: formData.get("name") ?? "",
     phone: formData.get("phone") ?? "",
     email: formData.get("email") ?? "",

@@ -1,3 +1,6 @@
+import { CountryField as CountryField_7c1608e96418e2056e21dd52ace8dc01 } from '../../../payload/admin/RegionFields'
+import { CurrencyField as CurrencyField_7c1608e96418e2056e21dd52ace8dc01 } from '../../../payload/admin/RegionFields'
+import { TimezoneField as TimezoneField_7c1608e96418e2056e21dd52ace8dc01 } from '../../../payload/admin/RegionFields'
 import { TwoFactorField as TwoFactorField_961a0e8e4a0c8ed64f190ba4c953a099 } from '../../../payload/admin/security/TwoFactorField'
 import { CustomerNameCell as CustomerNameCell_5e317783318e80c2dab60c751044bbfc } from '../../../payload/admin/customers/Cells'
 import { AccountCell as AccountCell_5e317783318e80c2dab60c751044bbfc } from '../../../payload/admin/customers/Cells'
@@ -54,6 +57,8 @@ import { OrderStatusCell as OrderStatusCell_1f34406c91ec986f36abefff1423fdc4 } f
 import { OrderCustomerCell as OrderCustomerCell_1f34406c91ec986f36abefff1423fdc4 } from '../../../payload/admin/orders/Cells'
 import { UpgradesField as UpgradesField_50a376e9b8bf18df386de475e211e27f } from '../../../payload/admin/orders/UpgradesField'
 import { OrderTotalCell as OrderTotalCell_1f34406c91ec986f36abefff1423fdc4 } from '../../../payload/admin/orders/Cells'
+import { PaymentMethodCell as PaymentMethodCell_93658cebac4f9133c671b8127ba060c6 } from '../../../payload/admin/orders/PaymentMethodField'
+import { PaymentMethodField as PaymentMethodField_93658cebac4f9133c671b8127ba060c6 } from '../../../payload/admin/orders/PaymentMethodField'
 import { OrderPaymentCell as OrderPaymentCell_1f34406c91ec986f36abefff1423fdc4 } from '../../../payload/admin/orders/Cells'
 import { AfterSalesPanel as AfterSalesPanel_c3716ceef9f804f9d2fda22441fbc731 } from '../../../payload/admin/aftersales/AfterSalesPanel'
 import { DiscountValueCell as DiscountValueCell_aaef90522b25c765d7edc6fe2a1db73a } from '../../../payload/admin/marketing/DiscountCells'
@@ -63,8 +68,12 @@ import { DiscountStatusCell as DiscountStatusCell_aaef90522b25c765d7edc6fe2a1db7
 import { MenuRowLabel as MenuRowLabel_24f67a374aa8f39956a3c103508218a9 } from '../../../payload/admin/RowLabel'
 import { CountReport as CountReport_db8907ada6fb4af05d873f19789b3a00 } from '../../../payload/admin/inventory/CountReport'
 import { TitleRowLabel as TitleRowLabel_24f67a374aa8f39956a3c103508218a9 } from '../../../payload/admin/RowLabel'
+import { PakistanOnlySelect as PakistanOnlySelect_5fc75a7e6cb8d415ce1c7463ff701b71 } from '../../../payload/admin/CountryOnly'
 import { ZoneRowLabel as ZoneRowLabel_24f67a374aa8f39956a3c103508218a9 } from '../../../payload/admin/RowLabel'
 import { ShippingFeeTester as ShippingFeeTester_625432db74deb1e615f7c95aeadcf55f } from '../../../payload/admin/ShippingFeeTester'
+import { PakistanOnlyGroup as PakistanOnlyGroup_5fc75a7e6cb8d415ce1c7463ff701b71 } from '../../../payload/admin/CountryOnly'
+import { PaymentIdeas as PaymentIdeas_4066ad3e0bee4867d90c9c20e3d45d4e } from '../../../payload/admin/PaymentIdeas'
+import { PaymentMethodRowLabel as PaymentMethodRowLabel_24f67a374aa8f39956a3c103508218a9 } from '../../../payload/admin/RowLabel'
 import { FeedUrls as FeedUrls_76463ca4a3a77ee0e68aa14554c5c965 } from '../../../payload/admin/FeedUrls'
 import { FormatField as FormatField_cdf7e044479f899a31f804427d568b36 } from '@payloadcms/plugin-import-export/rsc'
 import { LimitField as LimitField_cdf7e044479f899a31f804427d568b36 } from '@payloadcms/plugin-import-export/rsc'
@@ -101,6 +110,9 @@ import { S3ClientUploadHandler as S3ClientUploadHandler_f97aa6c64367fa259c5bc056
 
 /** @type import('payload').ImportMap */
 export const importMap = {
+  "/payload/admin/RegionFields#CountryField": CountryField_7c1608e96418e2056e21dd52ace8dc01,
+  "/payload/admin/RegionFields#CurrencyField": CurrencyField_7c1608e96418e2056e21dd52ace8dc01,
+  "/payload/admin/RegionFields#TimezoneField": TimezoneField_7c1608e96418e2056e21dd52ace8dc01,
   "/payload/admin/security/TwoFactorField#TwoFactorField": TwoFactorField_961a0e8e4a0c8ed64f190ba4c953a099,
   "/payload/admin/customers/Cells#CustomerNameCell": CustomerNameCell_5e317783318e80c2dab60c751044bbfc,
   "/payload/admin/customers/Cells#AccountCell": AccountCell_5e317783318e80c2dab60c751044bbfc,
@@ -157,6 +169,8 @@ export const importMap = {
   "/payload/admin/orders/Cells#OrderCustomerCell": OrderCustomerCell_1f34406c91ec986f36abefff1423fdc4,
   "/payload/admin/orders/UpgradesField#UpgradesField": UpgradesField_50a376e9b8bf18df386de475e211e27f,
   "/payload/admin/orders/Cells#OrderTotalCell": OrderTotalCell_1f34406c91ec986f36abefff1423fdc4,
+  "/payload/admin/orders/PaymentMethodField#PaymentMethodCell": PaymentMethodCell_93658cebac4f9133c671b8127ba060c6,
+  "/payload/admin/orders/PaymentMethodField#PaymentMethodField": PaymentMethodField_93658cebac4f9133c671b8127ba060c6,
   "/payload/admin/orders/Cells#OrderPaymentCell": OrderPaymentCell_1f34406c91ec986f36abefff1423fdc4,
   "/payload/admin/aftersales/AfterSalesPanel#AfterSalesPanel": AfterSalesPanel_c3716ceef9f804f9d2fda22441fbc731,
   "/payload/admin/marketing/DiscountCells#DiscountValueCell": DiscountValueCell_aaef90522b25c765d7edc6fe2a1db73a,
@@ -166,8 +180,12 @@ export const importMap = {
   "/payload/admin/RowLabel#MenuRowLabel": MenuRowLabel_24f67a374aa8f39956a3c103508218a9,
   "/payload/admin/inventory/CountReport#CountReport": CountReport_db8907ada6fb4af05d873f19789b3a00,
   "/payload/admin/RowLabel#TitleRowLabel": TitleRowLabel_24f67a374aa8f39956a3c103508218a9,
+  "/payload/admin/CountryOnly#PakistanOnlySelect": PakistanOnlySelect_5fc75a7e6cb8d415ce1c7463ff701b71,
   "/payload/admin/RowLabel#ZoneRowLabel": ZoneRowLabel_24f67a374aa8f39956a3c103508218a9,
   "/payload/admin/ShippingFeeTester#ShippingFeeTester": ShippingFeeTester_625432db74deb1e615f7c95aeadcf55f,
+  "/payload/admin/CountryOnly#PakistanOnlyGroup": PakistanOnlyGroup_5fc75a7e6cb8d415ce1c7463ff701b71,
+  "/payload/admin/PaymentIdeas#PaymentIdeas": PaymentIdeas_4066ad3e0bee4867d90c9c20e3d45d4e,
+  "/payload/admin/RowLabel#PaymentMethodRowLabel": PaymentMethodRowLabel_24f67a374aa8f39956a3c103508218a9,
   "/payload/admin/FeedUrls#FeedUrls": FeedUrls_76463ca4a3a77ee0e68aa14554c5c965,
   "@payloadcms/plugin-import-export/rsc#FormatField": FormatField_cdf7e044479f899a31f804427d568b36,
   "@payloadcms/plugin-import-export/rsc#LimitField": LimitField_cdf7e044479f899a31f804427d568b36,

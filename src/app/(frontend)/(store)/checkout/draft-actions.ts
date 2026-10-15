@@ -6,7 +6,8 @@ import { log } from "@/lib/log";
 import { rateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { priceCart } from "@/lib/cart-pricing";
 import { MAX_QTY_PER_ITEM } from "@/lib/cart-limits";
-import { normalizePkPhone } from "@/lib/utils";
+import { normalizePhone } from "@/lib/phone";
+import { getStoreLocale } from "@/lib/store-locale";
 
 /**
  * Checkout started: remember the cart against the phone / email so a reminder can bring the shopper back.
@@ -18,7 +19,7 @@ const DRAFT_COOKIE = "se-cart-draft";
 
 export async function saveDraft(d: { name: string; phone: string; email: string; items: { productId: string; qty: number; upgradeIds?: string[] }[] }): Promise<void> {
   if (!isCmsConfigured) return;
-  const phone = normalizePkPhone(d.phone ?? "");
+  const phone = normalizePhone(d.phone ?? "", (await getStoreLocale()).country);
   const email = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email ?? "") && d.email.length <= 120 ? d.email.trim().toLowerCase() : null;
   if (!phone && !email) return;
   const lines = (Array.isArray(d.items) ? d.items : [])

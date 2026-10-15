@@ -8,6 +8,7 @@ import { getSiteInfo } from "@/lib/repo/site-content";
 import { storePlace } from "@/lib/site-info";
 import { blogTagSlug, blogTags } from "@/lib/blog";
 import { pageMetadata } from "@/lib/seo";
+import { getStoreLocale } from "@/lib/store-locale";
 
 export const revalidate = 300;
 
@@ -30,6 +31,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!name) return {};
   const place = storePlace(site);
   return pageMetadata({
+    locale: await getStoreLocale(),
     title: `${name.charAt(0).toUpperCase() + name.slice(1)} – Articles & Guides | ${site.name}`,
     description: `Read ${posts.length} ${site.name} article${posts.length === 1 ? "" : "s"} about ${name}: buying advice, prices in Pakistan and expert tips from our ${place ? `${place} ` : ""}laptop shop.`,
     path: `/blog/tag/${tag}`,

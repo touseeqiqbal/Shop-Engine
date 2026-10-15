@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useAllFormFields, useDocumentInfo } from "@payloadcms/ui";
+import { useAdminMoney } from "../ui/store-context";
 
 /**
  * Right-hand summary on the product editor: is it ready to sell (checklist + score),
@@ -10,7 +11,6 @@ import { useAllFormFields, useDocumentInfo } from "@payloadcms/ui";
 type Fields = Record<string, { value?: unknown } | undefined>;
 const num = (v: unknown) =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
-const rs = (n: number) => `Rs ${Math.round(n).toLocaleString("en-PK")}`;
 const relId = (v: unknown) =>
   v && typeof v === "object"
     ? ((v as { id?: unknown; value?: unknown }).id ??
@@ -37,6 +37,8 @@ export function ProductSummary() {
   const [fields] = useAllFormFields() as unknown as [Fields];
   const { id } = useDocumentInfo();
   const val = (k: string) => fields[k]?.value;
+  // the product's store's currency
+  const money = useAdminMoney(relId(val("store")));
 
   const price = num(val("price"));
   const was = num(val("compareAtPrice"));
@@ -152,7 +154,7 @@ export function ProductSummary() {
                     profit != null && profit < 0 ? "is-loss" : undefined
                   }
                 >
-                  {profit == null ? "Add your cost" : rs(profit)}
+                  {profit == null ? "Add your cost" : money(profit)}
                 </dd>
               </div>
               {margin != null && (

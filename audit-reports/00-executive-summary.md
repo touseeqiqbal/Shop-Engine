@@ -6,8 +6,9 @@
 storefront/tenancy/billing, infra/tests/database), plus running the unit tests, typecheck, lint, `npm audit` and the Payload migrations on an
 empty local PostgreSQL. Evidence for every claim is in reports 01–10.
 
-> **Remediation status (later on 14 Oct 2026):** the findings below were fixed in the working tree (not committed yet). Broken features
-> 24 → 0, confirmed coverage 44.2 % → 86.3 %, SEC-01…03 closed, migrations added and run. What changed, how it was verified and what is
+> **Remediation status (14–15 Oct 2026):** the findings below were fixed in the working tree (not committed yet). Broken features
+> 24 → 0, confirmed coverage 44.2 % → 86.9 %, SEC-01…03 closed, migrations added and run; on 15 Oct every store got its own country,
+> currency, time zone and payment methods (payment provider plugins, Stripe first). What changed, how it was verified and what is
 > still open: **`11-remediation-log.md`**; per-feature evidence after the fixes: **`12-feature-checklist-after.md`**. The text below is
 > the audit of commit `aab6879` and is kept unchanged as the baseline.
 

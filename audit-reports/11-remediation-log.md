@@ -2,7 +2,7 @@
 # 11 · Remediation log (what was fixed and built after the audit)
 
 **Baseline:** the audit in reports 00–10 describes commit `aab6879`. This log describes the **working tree on top of it** (not committed),
-14 October 2026. Every claim below was checked by reading the code; where it says "run", it was actually run. Nothing here was run against
+14 October 2026, with the international work of 15 October 2026 (§2.12). Every claim below was checked by reading the code; where it says "run", it was actually run. Nothing here was run against
 Stripe, an email/WhatsApp provider, GitHub Actions or production.
 
 ## 1. Result
@@ -17,23 +17,25 @@ Stripe, an email/WhatsApp provider, GitHub Actions or production.
   - SaaS billing with trials, grace periods, expiry and plan limits;
   - a transactional outbox, invitations, custom domains;
   - merchant webhooks, partial shipments and saved carts.
+  - **stores in any country (15 Oct):** each store's country sets its currency, time zone, phone format, address form
+    and payment methods; payment methods are plugins (built-in, the store's own, and provider plugins with Stripe first).
 - **Fixed:** all 24 broken features.
 
 | Metric | Audit (`aab6879`) | Now |
 |---|---|---|
-| Complete / Partial / Missing / Broken / Not verified | 85 / 91 / 91 / 24 / 4 | **230 / 49 / 12 / 0 / 4** |
-| Confirmed feature coverage (same 295 rows and scoring as report 01) | 44.2 % | **86.3 %** |
-| Verified-only coverage | 44.8 % | **87.5 %** |
+| Complete / Partial / Missing / Broken / Not verified | 85 / 91 / 91 / 24 / 4 | **234 / 45 / 12 / 0 / 4** |
+| Confirmed feature coverage (same 295 rows and scoring as report 01) | 44.2 % | **86.9 %** |
+| Verified-only coverage | 44.8 % | **88.1 %** |
 | Critical security issues (SEC-01…03) | 3 open | 0 open |
 | App boots / migrations match the config | No / No | Yes / Yes (run) |
-| Unit tests | 40 pass (asserting insecure behaviour) | **77 / 77 pass** (secure behaviour) |
-| Database / server tests | none | **6 scripts, 68 checks, all pass** (§5) – 4 of them run in CI |
+| Unit tests | 40 pass (asserting insecure behaviour) | **97 / 97 pass** (secure behaviour; 20 for currencies, time zones, phones, payment methods) |
+| Database / server tests | none | **7 scripts, 96 checks, all pass** (§5) – 5 of them run in CI |
 
 | Module | Audit | Now | Module | Audit | Now |
 |---|---|---|---|---|---|
 | Access control | 35.0 % | 85.0 % | Orders | 56.5 % | 95.7 % |
-| Onboarding | 30.8 % | 92.3 % | Shipping & fulfillment | 53.6 % | 67.9 % |
-| Store management | 13.2 % | 86.8 % | Customers | 63.6 % | 95.5 % |
+| Onboarding | 30.8 % | 96.2 % | Shipping & fulfillment | 53.6 % | 67.9 % |
+| Store management | 13.2 % | 92.1 % | Customers | 63.6 % | 100 % |
 | Products | 73.3 % | 100 % | Discounts & marketing | 46.9 % | 87.5 % |
 | Variants | 65.0 % | 100 % | Analytics | 41.7 % | 66.7 % |
 | Collections | 78.6 % | 92.9 % | SaaS billing | 12.5 % | 100 % |
@@ -223,6 +225,53 @@ Row-by-row evidence is in **`12-feature-checklist-after.md`**. Report 01 stays a
 | Notifications lost when building a message failed | order lifecycle test log | build errors now retry via the outbox |
 | Saved cart not restored after signing in (client-side navigation) | two-device browser test | re-check when leaving the sign-in page |
 
+### 2.12 Stores in every country (15 October 2026)
+
+Asked for: "currency for all world not only PKR, time zone according to country, and payment method plugins for
+different countries". The original shop keeps **exactly** what it showed before (Rs, Pakistan time, 0300-1234567,
+JazzCash / EasyPaisa) – checked by comparing old and new output.
+
+- **Country → currency, time zone, phone code** – `src/lib/locale.ts` (≈190 countries; names from `Intl.DisplayNames`).
+  Stores → Region has pickers (`payload/admin/RegionFields.tsx`); choosing a country fills in its currency and time
+  zone (both editable). The Stores hook stores ISO codes ("Pakistan" → `PK`), refuses unknown countries, currencies and
+  time zones, and a new store without a country is in Pakistan as before. Onboarding (Account → Stores) has the same pickers.
+- **Money** – `src/lib/money.ts`: every amount is formatted in the store's currency with its own decimals
+  (`$1,234.50`, `€`, 3 decimals for KWD; rupees stay whole numbers, PKR stays "Rs 145,000") and **rounded to the
+  currency's smallest unit** everywhere totals are made: checkout and cart (`lib/order-totals.ts`), the Orders hook
+  (admin orders used to round to whole units – `59.97` became `60`), coupons, POS, reports. Orders keep the
+  **currency they were placed in** (`orders.currency`), so a later currency change never relabels old orders.
+  Stripe is charged in the order's currency.
+- **Time** – `src/lib/time.ts` replaces the fixed "+5 hours" Pakistan maths in 11 files: order, receipt, return and
+  credit-note numbers, "today" in the dashboard, POS day and cash-up, sales / RTO / order reports, message deadlines and
+  printed dates all use the store's time zone (daylight saving handled). Checked against the old formula for Pakistan.
+- **Phones** – `src/lib/phone.ts`: Pakistan keeps `0300-1234567`; other countries store `+447700900123` (a local number
+  gets the store's dialling code). Every form and server action (checkout, account, address book, contact, returns,
+  wholesale, trade-in, track order, cart drafts) checks with the store's country; WhatsApp / SMS use international digits.
+- **Checkout and addresses** – outside Pakistan the city is typed and there are State / province and Postcode fields
+  (stored on the order and saved addresses; shown on invoices, slips, emails). Shipping zones take typed cities, areas
+  and postcode starts (`SW1*`) next to the Pakistani city list; the fee tester takes a postcode.
+- **Payment methods as plugins** – `src/lib/payments/methods.ts` (one list for the checkout page and the server):
+  - built in: Cash on Delivery, bank transfer, card (provider plugin); JazzCash / EasyPaisa only for stores in Pakistan
+    (their settings are hidden elsewhere);
+  - **the store's own methods** (Settings → Payments → Other payment methods): any wallet or bank app (UPI, M-Pesa, PIX,
+    bKash, Zelle …) paid before shipping with receipt + transaction id, or paid on delivery / pickup like COD. Each gets
+    a stable id; renaming keeps old orders right. The page suggests what is popular in the store's country.
+  - orders keep the method's **name** and **when it is paid** (`paymentMethodLabel`, `paymentDue`); "paid before
+    shipping" blocks shipping until approved, for every method (`lib/order-money.ts`).
+  - **payment provider plugins** – `PaymentGateway` interface (`lib/payments/gateway-types.ts`), registry
+    (`lib/payments/gateways.ts`), Stripe as the first plugin (`lib/payments/stripe-gateway.ts`, countries where Stripe
+    onboards businesses; accounts are opened in the store's country). One webhook handler for every provider
+    (`/api/webhooks/payments/<provider>`, `/api/webhooks/stripe` kept); refunds and reconciliation go through the
+    plugin. How to add Razorpay / Paystack / Mercado Pago …: `docs/PAYMENT-PLUGINS.md`.
+- **Everything else that assumed Pakistan** – storefront copy ("all over Pakistan" → "nationwide"), SEO (Open Graph
+  locale, `priceCurrency`, shipping country, structured data), product feeds, the `/laptops-in-{city}` pages (Pakistani
+  original shop only), courier suggestions and tracking links (DHL, FedEx, UPS, USPS, Aramex, Royal Mail added), the
+  shop counter ("Wallet / other" instead of JazzCash / EasyPaisa elsewhere), platform revenue (totals per currency –
+  never added across currencies), the abandoned-cart text, and "(Rs)" labels in `/cms`.
+- **Migration** `20261015_114028_international` – additive apart from two enum → text changes (marked
+  `allow-destructive` with the reason: every value is kept). Backfills stores to ISO codes and every existing order's
+  currency, payment name and due time. Run up → down → up on the local database.
+
 ## 3. Branding
 The platform is **ShopEngine** (admin, login, emails to merchants and staff, 2-step issuer, admin icon). The original shop is the
 **default store** and keeps its own name, texts, icons and city pages.
@@ -252,13 +301,15 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
 | Check | Result |
 |---|---|
 | `tsc --noEmit` · `eslint . --max-warnings=0` | clean · clean |
-| `vitest run` | **77 / 77** (access rules, routing, availability, Stripe signatures, totals/tax, discounts, plans, outbox) |
+| `vitest run` | **97 / 97** (access rules, routing, availability, Stripe signatures, totals/tax, discounts, plans, outbox; currencies and rounding, store-local days incl. daylight saving, phone numbers from any country, payment methods by country, postcode zones) |
 | `npm run test:tenants` (real DB, in CI) | **18 / 18**: own-store reads only; no cross-store writes or creates; no self-promotion or joining other teams; another store's payment settings unreadable and unwritable; same discount code in two stores without interference; merchants can't see other stores' people or delete accounts |
 | `npm run test:orders` (real DB, in CI) | **13 / 13**: placed through the checkout's transaction; stock and coupon taken; "order received" queued; status messages once per change; cancel gives stock and coupon back exactly once; repeated cancel changes nothing; re-open takes them again |
 | `npm run test:billing` (real DB, in CI) | **7 / 7**: trial end → past due + grace; grace over → expired and offline; default store untouched |
 | `npm run test:shipments` (real DB, in CI) | **8 / 8**: can't over-ship; other store can't ship; partly shipped + parcel message; rest → dispatched; parcels delivered → delivered |
-| `npm run test:webhooks` (running server, locally signed events) | **15 / 15**: paid only on exact match; replay ignored; wrong amount or account never pays; bad or old signature 400; expiry cancels; SaaS invoice failed → past due → paid → active; subscription cancelled |
-| `npm run test:store-webhooks` (real DB + local receiver) | **7 / 7**: delivered once and signed; other store gets nothing; failing endpoint retried; private addresses recognised |
+| `npm run test:webhooks` (running server, locally signed events) | **17 / 17**: paid only on exact match; replay ignored (also through the provider-plugin address `/api/webhooks/payments/stripe`); unknown provider 404; wrong amount or account never pays; bad or old signature 400; expiry cancels; SaaS invoice failed → past due → paid → active; subscription cancelled |
+| `npm run test:store-webhooks` (real DB + local receiver) | **7 / 7**: delivered once and signed; other store gets nothing; failing endpoint retried; private addresses recognised (the test now first removes test endpoints an interrupted earlier run left behind) |
+| `npm run test:international` (real DB, in CI) | **26 / 26**: a country name becomes its code and brings currency + time zone; a store without a country is in Pakistan; unknown country / currency / time zone refused; money with cents, the original shop still "Rs"; own payment methods get stable unique ids; checkout offers no Pakistani wallets elsewhere; postcode zones; a dollar order keeps cents, currency, method name, due time and the full address; order numbers use the store's date; "paid before shipping" holds the order, "on delivery" doesn't; admin orders keep cents and get the store's currency |
+| Running dev server, a US demo store and the original shop (curl) | the US store's pages show `$`, `en_US`; its shipping page shows its zones in dollars; the original shop still shows `Rs`, `en_PK` and `PKR` |
 | Migrations on a DB with legacy-shaped rows | up → down → up; zero rows without a store; team, customers, coupons, fulfilment backfilled |
 | Running dev server, two stores (curl) | each store shows only its own categories, products and search; product URLs 404 on the other store; per-store canonical, sitemap, robots, titles and icons; draft store "Opening soon" and disallow; unknown sub-domain 404 |
 | Browser – storefront checkout (default store) | coupon applied, free-delivery hint after discount, totals right; order saved with store, coupon counted, stock down, notification sent through the outbox |
@@ -278,8 +329,11 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
   - platform-admin and owner screens (2-step login wasn't automated), apart from the access rules tested through Payload's API;
   - merchant onboarding (Account → Stores).
 - **Not re-measured:** mobile layout and page speed (still Not Verified).
+- **International work (15 Oct) not seen in a browser:** the browser tool couldn't connect, so the new checkout form,
+  the Region / Payments admin pickers and the order screens were checked by type checks, unit / database tests and the
+  server's HTML (curl), not by clicking through them.
 
-## 7. Remaining gaps (12 Missing, 49 Partial – see report 12)
+## 7. Remaining gaps (12 Missing, 45 Partial – see report 12)
 
 **Missing:**
 - **Access and permissions:** custom permissions / a granular role builder; platform integrations.
@@ -290,8 +344,12 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
 - **Testing:** an automated browser end-to-end suite in CI.
 
 **Notable partials:**
-- Prices are shown in PKR whatever the store's currency (card charges use the store's currency).
-- Store timezone and language are stored but not applied.
+- One currency per store (no conversion or multi-currency prices); a store ships within its own country (the order
+  records the country, but checkout has no country picker for shipping abroad).
+- A store's language sets number / date formats and the page language; storefront text is English (plus the existing
+  Urdu toggle).
+- Only Stripe exists as a card provider plugin; stores in countries Stripe doesn't serve (e.g. Pakistan) use their own
+  methods, bank transfer and COD until another plugin is added.
 - Card payments capture immediately (no separate authorise/capture step).
 - COD remittance isn't reconciled.
 - Platform revenue is current figures only (no history or charts).
@@ -299,7 +357,8 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
 - The storefront session lasts 30 days.
 
 ## 8. Deploying this
-1. **Back up the database**, then deploy. Both migrations run on start, are additive, and backfill the default store.
+1. **Back up the database**, then deploy. The three migrations run on start and backfill existing data
+   (`international` turns two enums into text – every value kept).
    - Optional: `DEFAULT_STORE_NAME`, `DEFAULT_STORE_SLUG`, `DEFAULT_STORE_ORDER_PREFIX`.
    - Existing orders keep `UTS-`.
 2. **Domains.**
@@ -307,10 +366,10 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
    - Recommended: serve `/cms` and the main site on a different registrable domain from merchant sub-domains.
 3. **Stripe.**
    - Set `STRIPE_SECRET_KEY`.
-   - Create two webhook endpoints at `/api/webhooks/stripe`: the platform account → `STRIPE_WEBHOOK_SECRET`; connected accounts → `STRIPE_CONNECT_WEBHOOK_SECRET`.
+   - Create two webhook endpoints at `/api/webhooks/stripe` (or `/api/webhooks/payments/stripe`): the platform account → `STRIPE_WEBHOOK_SECRET`; connected accounts → `STRIPE_CONNECT_WEBHOOK_SECRET`.
    - Optional: `PLATFORM_FEE_PERCENT`.
    - In `/cms` → Plans, set each paid plan's Stripe price ids and **review the seeded prices**.
 4. **Email.** Set `EMAIL_FROM` explicitly (see §4).
 5. **Housekeeping.** Keep the internal timer or `/api/cron` (`CRON_SECRET`). It also delivers the outbox and reconciles payments.
-6. **After deploying,** run the four CI database tests against staging, and `npm run test:webhooks` against a staging server.
+6. **After deploying,** run the five CI database tests against staging, and `npm run test:webhooks` against a staging server.
    - **Never against production:** they create and delete test records.

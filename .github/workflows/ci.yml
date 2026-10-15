@@ -81,6 +81,10 @@ jobs:
       - name: Partial shipments
         run: npm run test:shipments
 
+      # stores outside Pakistan: currency and time zone from the country, cents kept, own payment methods, postcode zones
+      - name: Stores in other countries
+        run: npm run test:international
+
       # checkout's transaction, status messages queued once, stock and coupon given back exactly once on cancel
       - name: Order lifecycle
         run: npm run test:orders

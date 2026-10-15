@@ -207,7 +207,7 @@ export const Users: CollectionConfig = {
         description: "Off = made automatically from a guest order (no password yet). It turns on when the customer signs up or sets a password with the emailed link.",
       },
     },
-    { name: "phone", type: "text", admin: { description: "Pakistani mobile, e.g. 0300-1234567" } },
+    { name: "phone", type: "text", admin: { description: "Mobile number, e.g. 0300-1234567 or +44 7700 900123" } },
     {
       name: "role",
       type: "select",

@@ -18,17 +18,21 @@ import {
   ShoppingBag,
   Smartphone,
   Truck,
+  Wallet,
   X,
 } from "lucide-react";
 import { placeOrder, type CheckoutField, type PlaceOrderState } from "@/app/(frontend)/(store)/checkout/actions";
 import { trackEvent } from "@/components/analytics";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { readLocalAddresses, writeLocalAddresses } from "@/lib/addresses";
-import { deliveryEstimate, freeDeliveryAbove, paymentEnabled } from "@/lib/cities";
+import { deliveryEstimate, freeDeliveryAbove } from "@/lib/cities";
 import { orderTotals } from "@/lib/order-totals";
-import { PAYMENT_LABEL, paymentAccountLines } from "@/lib/order-display";
+import { checkoutMethods, type CheckoutMethod, type PaymentIcon } from "@/lib/payments/methods";
+import { countryName } from "@/lib/locale";
+import { normalizePhone, phonePlaceholder } from "@/lib/phone";
 import type { PaymentMethod, SavedAddress, StoreSettings } from "@/lib/types";
-import { cn, formatPKR, normalizePkPhone } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { useMoney, useStoreLocale } from "@/components/providers/locale";
 import { cartCount, cartSubtotal, useCart } from "@/store/cart";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CityCombobox } from "./city-combobox";
@@ -42,8 +46,9 @@ import { honeypotProps } from "@/lib/honeypot";
 
 const MAX_FILE = 5 * 1024 * 1024;
 const FILE_TYPES = ["image/jpeg", "image/png", "image/webp"];
-const ONLINE: PaymentMethod[] = ["jazzcash", "easypaisa", "bank"];
-const FIELD_ORDER: CheckoutField[] = ["name", "phone", "email", "city", "address", "landmark", "notes", "paymentMethod", "screenshot", "paymentReference"];
+const FIELD_ORDER: CheckoutField[] = ["name", "phone", "email", "city", "region", "postalCode", "address", "landmark", "notes", "paymentMethod", "screenshot", "paymentReference"];
+const REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._/-]{3,59}$/;
+const METHOD_ICON: Record<PaymentIcon, React.ComponentType<{ className?: string }>> = { cash: Banknote, wallet: Smartphone, bank: Landmark, card: CreditCard, other: Wallet };
 
 type Errors = Partial<Record<CheckoutField, string>>;
 
@@ -83,20 +88,26 @@ export function CheckoutForm({
   const acceptedTotal = useRef<number | null>(null);
   const uid = useId();
   const fid = (k: string) => `${uid}-${k}`;
+  // the store's country: Pakistan picks its city from a list; elsewhere city, state and postcode are typed
+  const loc = useStoreLocale();
+  const money = useMoney();
+  const pk = loc.country === "PK";
 
   const [f, setF] = useState({
     name: prefill?.name ?? "",
-    phone: prefill?.phone ? formatPhoneInput(prefill.phone) : "",
+    phone: prefill?.phone ? formatPhoneInput(prefill.phone, loc.country) : "",
     email: prefill?.email ?? "",
     city: "",
+    region: "",
+    postalCode: "",
     address: "",
     landmark: "",
     notes: "",
   });
   // Started checkout with a phone or email → remember the cart for a reminder if they leave (abandoned cart)
-  const draftKey = `${f.name}|${normalizePkPhone(f.phone) ?? ""}|${f.email.trim()}|${lines.map((l) => `${l.productId}x${l.qty}`).join(",")}`;
+  const draftKey = `${f.name}|${normalizePhone(f.phone, loc.country) ?? ""}|${f.email.trim()}|${lines.map((l) => `${l.productId}x${l.qty}`).join(",")}`;
   useEffect(() => {
-    if (!lines.length || (!normalizePkPhone(f.phone) && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim()))) return;
+    if (!lines.length || (!normalizePhone(f.phone, loc.country) && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim()))) return;
     const t = setTimeout(() => {
       void saveDraft({
         name: f.name,
@@ -109,11 +120,13 @@ export function CheckoutForm({
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
-  // First payment method offered in /cms → Settings → Payments (COD unless switched off)
-  const [method, setMethod] = useState<PaymentMethod>(() => (["cod", "jazzcash", "easypaisa", "bank"] as const).find((m) => paymentEnabled(m, settings)) ?? "cod");
+  // what this store offers (lib/payments/methods.ts) – first one that isn't paid on another site (COD unless switched off)
+  const methods = useMemo(() => checkoutMethods(settings), [settings]);
+  const [method, setMethod] = useState<PaymentMethod>(() => (methods.find((m) => m.kind !== "gateway") ?? methods[0])?.id ?? "cod");
+  const current: CheckoutMethod | null = methods.find((m) => m.id === method) ?? null;
   const emailNeeded = emailRequired;
   const [file, setFile] = useState<File | null>(null);
-  // the transaction id from the JazzCash / EasyPaisa / bank receipt (one receipt pays for one order)
+  // the transaction id from the wallet / bank transfer receipt (one receipt pays for one order)
   const [reference, setReference] = useState("");
   // set when the server says this customer / city must pay an advance for cash on delivery
   const [advanceRequired, setAdvanceRequired] = useState(false);
@@ -128,7 +141,7 @@ export function CheckoutForm({
   const began = useRef(false);
 
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const v = k === "phone" ? formatPhoneInput(e.target.value) : e.target.value;
+    const v = k === "phone" ? formatPhoneInput(e.target.value, loc.country) : e.target.value;
     setF((s) => ({ ...s, [k]: v }));
     if (errors[k as CheckoutField]) setErrors((er) => ({ ...er, [k]: undefined }));
   };
@@ -143,8 +156,8 @@ export function CheckoutForm({
   useEffect(() => {
     if (!hydrated || began.current || lines.length === 0) return;
     began.current = true;
-    trackEvent("begin_checkout", { currency: "PKR", value: cartSubtotal(lines), items: lines.map((l) => ({ item_id: l.productId, item_name: l.name, price: l.unitPrice, quantity: l.qty })) });
-  }, [hydrated, lines]);
+    trackEvent("begin_checkout", { currency: loc.currency, value: cartSubtotal(lines), items: lines.map((l) => ({ item_id: l.productId, item_name: l.name, price: l.unitPrice, quantity: l.qty })) });
+  }, [hydrated, lines, loc.currency]);
 
   // screenshot preview URL lifecycle
   useEffect(() => {
@@ -157,7 +170,7 @@ export function CheckoutForm({
   const focusFirst = (errs: Errors) => {
     const first = FIELD_ORDER.find((k) => errs[k]);
     if (!first) return;
-    const el = document.getElementById(first === "paymentMethod" ? fid("pm-cod") : fid(first));
+    const el = document.getElementById(first === "paymentMethod" ? fid(`pm-${methods[0]?.id ?? "cod"}`) : fid(first));
     el?.focus({ preventScroll: true });
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
@@ -173,11 +186,11 @@ export function CheckoutForm({
         const dup = list.some((a) => a.address.trim().toLowerCase() === f.address.trim().toLowerCase() && a.city === f.city);
         if (!dup)
           writeLocalAddresses([
-            { id: crypto.randomUUID(), label: list.length ? `Address ${list.length + 1}` : "Home", name: f.name, phone: f.phone, city: f.city, address: f.address, landmark: f.landmark || undefined },
+            { id: crypto.randomUUID(), label: list.length ? `Address ${list.length + 1}` : "Home", name: f.name, phone: f.phone, city: f.city, address: f.address, landmark: f.landmark || undefined, region: f.region || undefined, postalCode: f.postalCode || undefined },
             ...list,
           ]);
       }
-      trackEvent("purchase", { transaction_id: state.orderNumber, value: state.total, currency: "PKR", items: state.items });
+      trackEvent("purchase", { transaction_id: state.orderNumber, value: state.total, currency: loc.currency, items: state.items });
       clearCart();
       // card: on to the payment provider's secure page (the order is marked paid only when the provider confirms it)
       if (state.paymentUrl) window.location.assign(state.paymentUrl);
@@ -195,13 +208,24 @@ export function CheckoutForm({
 
   const subtotal = cartSubtotal(lines);
   // the same arithmetic the server uses (lib/order-totals.ts) – the server's total is the one that counts
-  const totals = orderTotals({ subtotal, discount: coupon.discount, city: f.city, method, settings, freeShipping: coupon.freeShipping });
+  const totals = orderTotals({ subtotal, discount: coupon.discount, city: f.city, postalCode: f.postalCode, method, settings, freeShipping: coupon.freeShipping });
   const { discount, delivery, fee, total } = totals;
-  const eta = f.city ? deliveryEstimate(f.city, settings) : null;
+  const eta = f.city ? deliveryEstimate(f.city, settings, f.postalCode) : null;
   const codMax = settings.payments?.cod.maxOrder ?? null;
-  const advanceEligible = method === "cod" && settings.advanceAmount > 0 && (total >= settings.advanceThreshold || advanceRequired);
-  const needsProof = ONLINE.includes(method);
-  const accountLines = useMemo(() => paymentAccountLines(method, settings), [method, settings]);
+  const onDelivery = current?.due === "on-delivery";
+  const advanceEligible = onDelivery && settings.advanceAmount > 0 && (total >= settings.advanceThreshold || advanceRequired);
+  const needsProof = Boolean(current?.proof);
+  const accountLines = current?.account ?? [];
+  // where an advance for cash on delivery can be sent: every method with a receipt
+  const advanceTargets = methods
+    .filter((m) => m.proof)
+    .map((m) =>
+      m.id === "jazzcash" || m.id === "easypaisa"
+        ? `${m.label} (${settings[m.id].number})`
+        : m.id === "bank"
+          ? `bank (${settings.bank.bankName} · ${settings.bank.accountNumber})`
+          : `${m.label}${m.account.length ? ` (${m.account.map((a) => a.value).join(" · ")})` : ""}`,
+    );
 
   const pickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = e.target.files?.[0] ?? null;
@@ -216,16 +240,17 @@ export function CheckoutForm({
   const validate = (): Errors => {
     const e: Errors = {};
     if (f.name.trim().length < 3) e.name = "Please enter your full name";
-    if (!normalizePkPhone(f.phone)) e.phone = "Enter a valid mobile number, e.g. 0300-1234567";
+    if (!normalizePhone(f.phone, loc.country)) e.phone = pk ? "Enter a valid mobile number, e.g. 0300-1234567" : `Enter a valid phone number, e.g. ${phonePlaceholder(loc.country)}`;
     if (f.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim())) e.email = "Enter a valid email address";
     else if (emailNeeded && !f.email.trim()) e.email = "Enter your email address";
-    if (!f.city) e.city = "Please choose your city from the list";
-    if (f.address.trim().length < 10) e.address = "Please enter your complete address (house, street, area)";
-    if (!paymentEnabled(method, settings)) e.paymentMethod = "Please choose a payment method";
-    else if (method === "cod" && codMax && total > codMax) e.paymentMethod = `Cash on Delivery is available for orders up to ${formatPKR(codMax)} – please pay online`;
+    if (pk ? !f.city : f.city.trim().length < 2) e.city = pk ? "Please choose your city from the list" : "Please enter your city";
+    if (f.postalCode.trim() && !/^[A-Za-z0-9][A-Za-z0-9 -]{1,11}$/.test(f.postalCode.trim())) e.postalCode = "Enter a valid postcode";
+    if (f.address.trim().length < (pk ? 10 : 5)) e.address = "Please enter your complete address (house, street, area)";
+    if (!current) e.paymentMethod = "Please choose a payment method";
+    else if (method === "cod" && codMax && total > codMax) e.paymentMethod = `Cash on Delivery is available for orders up to ${money(codMax)} – please pay online`;
     if (needsProof && !file) e.screenshot = "Upload a screenshot of your payment (JPG, PNG or WebP)";
-    if (needsProof && !/^[A-Za-z0-9-]{4,40}$/.test(reference.trim())) e.paymentReference = "Enter the transaction ID from your payment receipt";
-    if (method === "cod" && advanceRequired && !file) e.screenshot = "Upload the screenshot of your advance payment";
+    if (needsProof && !REFERENCE.test(reference.trim())) e.paymentReference = "Enter the transaction ID from your payment receipt";
+    if (onDelivery && advanceRequired && !file) e.screenshot = "Upload the screenshot of your advance payment";
     return e;
   };
 
@@ -299,6 +324,7 @@ export function CheckoutForm({
       total={total}
       eta={eta?.label ?? null}
       city={f.city}
+      postalCode={f.postalCode}
     />
   );
 
@@ -318,7 +344,7 @@ export function CheckoutForm({
             {summaryOpen ? "Hide" : "Show"} order summary ({cartCount(lines)})
             <ChevronDown className={cn("size-4 transition-transform", summaryOpen && "rotate-180")} aria-hidden="true" />
           </span>
-          <span className="font-display text-lg font-bold tabular-nums">{formatPKR(total)}</span>
+          <span className="font-display text-lg font-bold tabular-nums">{money(total)}</span>
         </button>
         <AnimatePresence initial={false}>
           {summaryOpen && (
@@ -370,12 +396,12 @@ export function CheckoutForm({
                 {...fieldAria(fid("phone"), errors.phone, "hint")}
                 name="phone"
                 type="tel"
-                inputMode="numeric"
-                autoComplete="tel-national"
-                placeholder="03XX-XXXXXXX"
+                inputMode={pk ? "numeric" : "tel"}
+                autoComplete={pk ? "tel-national" : "tel"}
+                placeholder={phonePlaceholder(loc.country)}
                 value={f.phone}
                 onChange={set("phone")}
-                maxLength={12}
+                maxLength={pk ? 12 : 20}
                 required
               />
             </Field>
@@ -385,7 +411,7 @@ export function CheckoutForm({
           </div>
         </Section>
 
-        <Section step={2} title="Delivery address" subtitle="We deliver all over Pakistan via TCS, Leopards, M&P, Trax, PostEx & Call Courier">
+        <Section step={2} title="Delivery address" subtitle={pk ? "We deliver all over Pakistan via TCS, Leopards, M&P, Trax, PostEx & Call Courier" : `We deliver across ${countryName(loc.country)}`}>
           {addresses.length > 0 && (
             <div className="mb-5">
               <p className="label">Saved addresses</p>
@@ -395,7 +421,7 @@ export function CheckoutForm({
                     key={a.id}
                     type="button"
                     onClick={() => {
-                      setF((s) => ({ ...s, name: a.name || s.name, phone: a.phone ? formatPhoneInput(a.phone) : s.phone, city: a.city, address: a.address, landmark: a.landmark ?? "" }));
+                      setF((s) => ({ ...s, name: a.name || s.name, phone: a.phone ? formatPhoneInput(a.phone, loc.country) : s.phone, city: a.city, region: a.region ?? "", postalCode: a.postalCode ?? "", address: a.address, landmark: a.landmark ?? "" }));
                       setErrors({});
                     }}
                     className={cn(
@@ -415,22 +441,36 @@ export function CheckoutForm({
             </div>
           )}
           <div className="grid gap-4 sm:grid-cols-2">
-            <CityCombobox
-              id={fid("city")}
-              value={f.city}
-              onChange={(city) => {
-                setF((s) => ({ ...s, city }));
-                setErrors((er) => ({ ...er, city: undefined }));
-              }}
-              required
-              error={errors.city}
-              className="sm:col-span-2"
-            />
+            {pk ? (
+              <CityCombobox
+                id={fid("city")}
+                value={f.city}
+                onChange={(city) => {
+                  setF((s) => ({ ...s, city }));
+                  setErrors((er) => ({ ...er, city: undefined }));
+                }}
+                required
+                error={errors.city}
+                className="sm:col-span-2"
+              />
+            ) : (
+              <>
+                <Field id={fid("city")} label="City / town" required error={errors.city} className="sm:col-span-2">
+                  <input {...fieldAria(fid("city"), errors.city)} name="city" autoComplete="address-level2" value={f.city} onChange={set("city")} maxLength={80} required />
+                </Field>
+                <Field id={fid("region")} label="State / province" optional error={errors.region}>
+                  <input {...fieldAria(fid("region"), errors.region)} name="region" autoComplete="address-level1" value={f.region} onChange={set("region")} maxLength={60} />
+                </Field>
+                <Field id={fid("postalCode")} label="Postcode" optional error={errors.postalCode}>
+                  <input {...fieldAria(fid("postalCode"), errors.postalCode)} name="postalCode" autoComplete="postal-code" value={f.postalCode} onChange={set("postalCode")} maxLength={12} />
+                </Field>
+              </>
+            )}
             {eta && (
               <p className="flex items-center gap-2 rounded-2xl bg-emerald-500/10 px-3.5 py-2.5 text-sm text-emerald-300 sm:col-span-2" aria-live="polite">
                 <Truck className="size-4 shrink-0" aria-hidden="true" />
                 Estimated delivery to {f.city}: <strong>{eta.label}</strong>
-                <span className="ml-auto font-semibold">{delivery === 0 ? "FREE" : formatPKR(delivery ?? 0)}</span>
+                <span className="ml-auto font-semibold">{delivery === 0 ? "FREE" : money(delivery ?? 0)}</span>
               </p>
             )}
             <Field id={fid("address")} label="Complete address" required error={errors.address} className="sm:col-span-2">
@@ -466,25 +506,13 @@ export function CheckoutForm({
           </div>
         </Section>
 
-        <Section step={3} title="Payment method" subtitle="Cash on Delivery available in every city">
+        <Section step={3} title="Payment method" subtitle={pk ? "Cash on Delivery available in every city" : methods.some((m) => m.id === "cod") ? "Cash on Delivery available" : "Choose how you'd like to pay"}>
           <fieldset aria-describedby={errors.paymentMethod ? fid("pm-error") : undefined}>
             <legend className="sr-only">Choose a payment method</legend>
             <div className="grid gap-2.5 sm:grid-cols-2">
-              {paymentEnabled("cod", settings) && (
-                <PayOption id={fid("pm-cod")} value="cod" current={method} onSelect={setMethod} icon={Banknote} title="Cash on Delivery" desc={settings.payments?.cod.note || (fee > 0 ? `Pay the rider in cash when your order arrives · ${formatPKR(fee)} COD fee` : "Pay the rider in cash when your order arrives")} badge="Most popular" />
-              )}
-              {paymentEnabled("jazzcash", settings) && (
-                <PayOption id={fid("pm-jazzcash")} value="jazzcash" current={method} onSelect={setMethod} icon={Smartphone} title="JazzCash" desc={settings.payments?.jazzcash.note || `Send to ${settings.jazzcash.number}`} />
-              )}
-              {paymentEnabled("easypaisa", settings) && (
-                <PayOption id={fid("pm-easypaisa")} value="easypaisa" current={method} onSelect={setMethod} icon={Smartphone} title="EasyPaisa" desc={settings.payments?.easypaisa.note || `Send to ${settings.easypaisa.number}`} />
-              )}
-              {paymentEnabled("bank", settings) && (
-                <PayOption id={fid("pm-bank")} value="bank" current={method} onSelect={setMethod} icon={Landmark} title="Bank Transfer" desc={settings.payments?.bank.note || settings.bank.bankName} />
-              )}
-              {paymentEnabled("card", settings) && (
-                <PayOption id={fid("pm-card")} value="card" current={method} onSelect={setMethod} icon={CreditCard} title="Debit / credit card" desc={settings.payments?.card?.note || "Pay securely on the next page"} />
-              )}
+              {methods.map((m) => (
+                <PayOption key={m.id} id={fid(`pm-${m.id}`)} value={m.id} current={method} onSelect={setMethod} icon={METHOD_ICON[m.icon]} title={m.id === "card" ? "Debit / credit card" : m.label} desc={methodDescription(m, settings, fee, money)} badge={m.id === "cod" ? "Most popular" : undefined} />
+              ))}
             </div>
             {errors.paymentMethod && (
               <p id={fid("pm-error")} className="mt-2 text-xs font-medium text-rose-400">
@@ -498,7 +526,7 @@ export function CheckoutForm({
               <motion.div key={method} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-5 space-y-4 rounded-2xl border border-violet-500/30 bg-violet-500/5 p-4">
                 <div>
                   <p className="text-sm font-semibold">
-                    Send <span className="gradient-text font-bold">{formatPKR(total)}</span> via {PAYMENT_LABEL[method]} to:
+                    Send <span className="gradient-text font-bold">{money(total)}</span> via {current?.label} to:
                   </p>
                   <dl className="mt-2 grid gap-1.5 text-sm">
                     {accountLines.map((l) => (
@@ -508,6 +536,7 @@ export function CheckoutForm({
                       </div>
                     ))}
                   </dl>
+                  {current?.instructions && <p className="mt-2 whitespace-pre-line text-sm">{current.instructions}</p>}
                   <p className="mt-2 text-xs text-muted">Then upload the payment screenshot below. We&apos;ll verify it and confirm your order.</p>
                 </div>
                 <ProofUpload id={fid("screenshot")} required file={file} preview={preview} error={errors.screenshot} onPick={pickFile} onClear={() => setFile(null)} />
@@ -540,16 +569,9 @@ export function CheckoutForm({
                 <div className="text-sm">
                   <p className="font-semibold text-amber-200">{advanceRequired ? "Advance payment needed for this order" : "Advance payment for high-value COD orders"}</p>
                   <p className="mt-1 text-muted">
-                    Pay Rs {Math.min(settings.advanceAmount, total).toLocaleString("en-PK")} advance via{" "}
-                    {[
-                      paymentEnabled("jazzcash", settings) && `JazzCash (${settings.jazzcash.number})`,
-                      paymentEnabled("easypaisa", settings) && `EasyPaisa (${settings.easypaisa.number})`,
-                      paymentEnabled("bank", settings) && `bank (${settings.bank.bankName} · ${settings.bank.accountNumber})`,
-                    ]
-                      .filter(Boolean)
-                      .join(", ")
-                      .replace(/, ([^,]*)$/, " or $1")}{" "}
-                    {advanceRequired ? "to confirm this order." : "to confirm high-value COD orders."} The rest is paid in cash on delivery.
+                    Pay {money(Math.min(settings.advanceAmount, total))} advance via{" "}
+                    {advanceTargets.join(", ").replace(/, ([^,]*)$/, " or $1")}{" "}
+                    {advanceRequired ? "to confirm this order." : "to confirm high-value COD orders."} {method === "cod" ? "The rest is paid in cash on delivery." : "The rest is paid on delivery."}
                   </p>
                   {!advanceRequired && <p className="mt-1 text-xs text-subtle">Optional now – you can also send the screenshot on WhatsApp later.</p>}
                 </div>
@@ -579,13 +601,32 @@ export function CheckoutForm({
       <div className="glass fixed inset-x-0 bottom-16 z-30 flex items-center gap-3 border-x-0 px-4 py-3 lg:hidden">
         <div className="min-w-0">
           <p className="text-xs text-muted">Total</p>
-          <p className="font-display text-lg font-bold tabular-nums">{formatPKR(total)}</p>
+          <p className="font-display text-lg font-bold tabular-nums">{money(total)}</p>
         </div>
         <SubmitButton pending={pending} total={total} compact />
       </div>
       <div className="h-20 lg:hidden" aria-hidden="true" />
     </form>
   );
+}
+
+/** The line under a payment option: the store's note, else what it means. */
+function methodDescription(m: CheckoutMethod, settings: StoreSettings, fee: number, money: (n: number) => string) {
+  if (m.note) return m.note;
+  switch (m.id) {
+    case "cod":
+      return fee > 0 ? `Pay the rider in cash when your order arrives · ${money(fee)} COD fee` : "Pay the rider in cash when your order arrives";
+    case "jazzcash":
+      return `Send to ${settings.jazzcash.number}`;
+    case "easypaisa":
+      return `Send to ${settings.easypaisa.number}`;
+    case "bank":
+      return settings.bank.bankName;
+    case "card":
+      return "Pay securely on the next page";
+  }
+  if (m.due === "on-delivery") return "Pay when your order arrives";
+  return m.account[0] ? `${m.account[0].label}: ${m.account[0].value}` : "Pay, then upload the receipt";
 }
 
 function Section({ step, title, subtitle, children }: { step: number; title: string; subtitle?: string; children: React.ReactNode }) {
@@ -618,9 +659,9 @@ function PayOption({
   className,
 }: {
   id: string;
-  value: PaymentMethod;
-  current: PaymentMethod;
-  onSelect: (m: PaymentMethod) => void;
+  value: string;
+  current: string;
+  onSelect: (m: string) => void;
   icon: React.ComponentType<{ className?: string }>;
   title: string;
   desc: string;
@@ -727,6 +768,7 @@ function ProofUpload({
 }
 
 function SubmitButton({ pending, total, compact }: { pending: boolean; total: number; compact?: boolean }) {
+  const money = useMoney();
   return (
     <button type="submit" disabled={pending} aria-disabled={pending} className={cn("btn btn-primary", compact ? "flex-1" : "btn-lg w-full")}>
       {pending ? (
@@ -735,7 +777,7 @@ function SubmitButton({ pending, total, compact }: { pending: boolean; total: nu
         </>
       ) : (
         <>
-          <Lock className="size-4" aria-hidden="true" /> {compact ? "Place order" : `Place order · ${formatPKR(total)}`}
+          <Lock className="size-4" aria-hidden="true" /> {compact ? "Place order" : `Place order · ${money(total)}`}
         </>
       )}
     </button>
@@ -763,6 +805,7 @@ function OrderSummary({
   total,
   eta,
   city,
+  postalCode,
 }: {
   settings: StoreSettings;
   coupon: ReturnType<typeof useCartCoupon>;
@@ -775,9 +818,11 @@ function OrderSummary({
   total: number;
   eta: string | null;
   city: string;
+  postalCode: string;
 }) {
   const lines = useCart((s) => s.lines);
-  const freeAbove = freeDeliveryAbove(city, settings);
+  const money = useMoney();
+  const freeAbove = freeDeliveryAbove(city, settings, postalCode);
   // free delivery is judged on the items after any discount (same as the server)
   const remaining = coupon.freeShipping || freeAbove <= 0 ? 0 : Math.max(0, freeAbove - (subtotal - discount));
   return (
@@ -793,7 +838,7 @@ function OrderSummary({
               <p className="line-clamp-2 text-sm font-medium leading-snug">{l.name}</p>
               {l.upgrades.length > 0 && <p className="mt-0.5 text-xs text-violet-300">+ {l.upgrades.map((u) => u.label).join(", ")}</p>}
             </div>
-            <p className="text-sm font-semibold tabular-nums">{formatPKR(l.unitPrice * l.qty)}</p>
+            <p className="text-sm font-semibold tabular-nums">{money(l.unitPrice * l.qty)}</p>
           </li>
         ))}
       </ul>
@@ -804,30 +849,30 @@ function OrderSummary({
       <dl className="space-y-2 border-t border-border pt-4 text-sm">
         <div className="flex justify-between">
           <dt className="text-muted">Subtotal</dt>
-          <dd className="tabular-nums">{formatPKR(subtotal)}</dd>
+          <dd className="tabular-nums">{money(subtotal)}</dd>
         </div>
         {discount > 0 && (
           <div className="flex justify-between text-emerald-400">
             <dt>{coupon.code ? `Discount (${coupon.code})` : "Discount"}</dt>
-            <dd className="tabular-nums">− {formatPKR(discount)}</dd>
+            <dd className="tabular-nums">− {money(discount)}</dd>
           </div>
         )}
         <div className="flex justify-between">
           <dt className="text-muted">Delivery{city ? ` to ${city}` : ""}</dt>
           <dd className="tabular-nums">
-            {delivery === null ? <span className="text-muted">Choose city</span> : delivery === 0 ? <span className="font-semibold text-emerald-400">FREE</span> : formatPKR(delivery)}
+            {delivery === null ? <span className="text-muted">Choose city</span> : delivery === 0 ? <span className="font-semibold text-emerald-400">FREE</span> : money(delivery)}
           </dd>
         </div>
         {fee > 0 && (
           <div className="flex justify-between">
             <dt className="text-muted">Cash on Delivery fee</dt>
-            <dd className="tabular-nums">{formatPKR(fee)}</dd>
+            <dd className="tabular-nums">{money(fee)}</dd>
           </div>
         )}
         {tax > 0 && (
           <div className="flex justify-between">
             <dt className="text-muted">{taxAdded > 0 ? settings.tax?.label || "Tax" : `Incl. ${settings.tax?.label || "tax"}`}</dt>
-            <dd className="tabular-nums">{taxAdded > 0 ? formatPKR(taxAdded) : formatPKR(tax)}</dd>
+            <dd className="tabular-nums">{taxAdded > 0 ? money(taxAdded) : money(tax)}</dd>
           </div>
         )}
         {eta && (
@@ -838,12 +883,12 @@ function OrderSummary({
         )}
         <div className="flex items-baseline justify-between border-t border-border pt-3">
           <dt className="font-semibold">Total</dt>
-          <dd className="font-display text-2xl font-extrabold tabular-nums">{formatPKR(total)}</dd>
+          <dd className="font-display text-2xl font-extrabold tabular-nums">{money(total)}</dd>
         </div>
       </dl>
       {remaining > 0 && (
         <p className="rounded-xl bg-surface-strong px-3 py-2 text-xs text-muted">
-          Add <strong className="text-fg">{formatPKR(remaining)}</strong> more for FREE delivery.
+          Add <strong className="text-fg">{money(remaining)}</strong> more for FREE delivery.
         </p>
       )}
     </div>

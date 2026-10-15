@@ -3,7 +3,9 @@ import { absoluteUrl, site } from "./site";
 import { DEFAULT_SITE_INFO, socialLinks, type SiteInfo } from "./site-info";
 import type { BlogPost, CatalogProduct, FaqItem, Review } from "./types";
 import { effectivePrice } from "./utils";
-import { paymentEnabled } from "@/lib/cities";
+import { DEFAULT_LOCALE, countryName, ogLocale, type StoreLocale } from "./locale";
+import { currencySymbol } from "./money";
+import { checkoutMethods } from "@/lib/payments/methods";
 import type { StoreSettings } from "@/lib/types";
 
 /**
@@ -23,6 +25,8 @@ interface PageMetaInput {
   canonical?: string;
   publishedTime?: string;
   modifiedTime?: string;
+  /** The store's language and country for Open Graph (`await getStoreLocale()`); the original shop's when left out */
+  locale?: Pick<StoreLocale, "locale">;
 }
 
 /** Should this page be in the sitemap? Not when hidden from search engines or pointing at another original. */
@@ -32,7 +36,7 @@ export const indexable = (s: { seoNoindex?: boolean; seoCanonical?: string }) =>
  * Builds unique metadata with canonical URL, Open Graph & Twitter cards.
  * `title` is used as-is (the root layout template appends the brand only when a plain string is passed).
  */
-export function pageMetadata({ title, description, path, image, type = "website", noindex, canonical, publishedTime, modifiedTime }: PageMetaInput): Metadata {
+export function pageMetadata({ title, description, path, image, type = "website", noindex, canonical, publishedTime, modifiedTime, locale = DEFAULT_LOCALE }: PageMetaInput): Metadata {
   // relative links: Next.js resolves them against the store's own address (metadataBase in the root layout)
   const rel = (p: string) => (p.startsWith("/") ? p : `/${p}`);
   const url = rel(path);
@@ -50,7 +54,7 @@ export function pageMetadata({ title, description, path, image, type = "website"
       url,
       title,
       description,
-      locale: "en_PK",
+      locale: ogLocale(locale),
       images,
       ...(type === "article" ? { publishedTime, modifiedTime } : {}),
     },
@@ -65,10 +69,20 @@ export const ORG_ID = `${site.url}/#organization`;
 export const STORE_ID = `${site.url}/#store`;
 
 /** `info` = live business profile from `getSiteInfo()` (defaults to the built-in `site` details). */
+/** `loc` = the store's country, currency and language from `getStoreLocale()` (defaults to the original shop's). */
 /** A logo / image path or URL as an absolute URL. */
 const abs = (src: string) => (/^https?:\/\//.test(src) ? src : absoluteUrl(src));
 
-export function organizationJsonLd(info: SiteInfo = DEFAULT_SITE_INFO, logo = "/icon.svg") {
+/** "de-DE" → "German" (structured data names languages in English). */
+function languageName(tag: string) {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "language" }).of(tag.split("-")[0]) ?? "English";
+  } catch {
+    return "English";
+  }
+}
+
+export function organizationJsonLd(info: SiteInfo = DEFAULT_SITE_INFO, logo = "/icon.svg", loc: StoreLocale = DEFAULT_LOCALE) {
   return {
     "@context": "https://schema.org",
     "@type": "Organization",
@@ -81,21 +95,21 @@ export function organizationJsonLd(info: SiteInfo = DEFAULT_SITE_INFO, logo = "/
       "@type": "ContactPoint",
       telephone: p.tel,
       contactType: "sales",
-      areaServed: "PK",
-      availableLanguage: ["English", "Urdu"],
+      areaServed: loc.country,
+      availableLanguage: loc.country === "PK" ? ["English", "Urdu"] : [languageName(loc.locale)],
     })),
     sameAs: socialLinks(info).map((l) => l.href),
   };
 }
 
 /** Payment methods switched on in /cms → Delivery & payments → Payment methods, in words for Google. */
+/** The ways this store takes payment (built-in and its own methods), e.g. "Cash on Delivery, JazzCash, Bank Transfer, Debit / Credit Card". */
 export function paymentsAcceptedText(settings?: StoreSettings | null) {
   if (!settings) return "Cash on Delivery, JazzCash, EasyPaisa, Bank Transfer";
-  const names: [Parameters<typeof paymentEnabled>[0], string][] = [["cod", "Cash on Delivery"], ["jazzcash", "JazzCash"], ["easypaisa", "EasyPaisa"], ["bank", "Bank Transfer"]];
-  return names.filter(([m]) => paymentEnabled(m, settings)).map(([, n]) => n).join(", ") || "Cash";
+  return checkoutMethods(settings).map((m) => m.label).join(", ") || "Cash";
 }
 
-export function localBusinessJsonLd(info: SiteInfo = DEFAULT_SITE_INFO, settings?: StoreSettings | null, logo = "/icon.svg") {
+export function localBusinessJsonLd(info: SiteInfo = DEFAULT_SITE_INFO, settings?: StoreSettings | null, logo = "/icon.svg", loc: StoreLocale = DEFAULT_LOCALE) {
   return {
     "@context": "https://schema.org",
     "@type": ["ElectronicsStore", "LocalBusiness"],
@@ -107,8 +121,8 @@ export function localBusinessJsonLd(info: SiteInfo = DEFAULT_SITE_INFO, settings
     logo: abs(logo),
     email: info.email,
     telephone: info.phones[0]?.tel,
-    priceRange: "Rs",
-    currenciesAccepted: "PKR",
+    priceRange: currencySymbol(loc),
+    currenciesAccepted: loc.currency,
     paymentAccepted: paymentsAcceptedText(settings),
     address: {
       "@type": "PostalAddress",
@@ -127,12 +141,12 @@ export function localBusinessJsonLd(info: SiteInfo = DEFAULT_SITE_INFO, settings
       closes: h.closes,
     })),
     contactPoint: info.phones.map((p) => ({ "@type": "ContactPoint", telephone: p.tel, contactType: "customer service" })),
-    areaServed: { "@type": "Country", name: "Pakistan" },
+    areaServed: { "@type": "Country", name: countryName(loc.country) },
     parentOrganization: { "@id": ORG_ID },
   };
 }
 
-export function websiteJsonLd(info: SiteInfo = DEFAULT_SITE_INFO) {
+export function websiteJsonLd(info: SiteInfo = DEFAULT_SITE_INFO, loc: StoreLocale = DEFAULT_LOCALE) {
   return {
     "@context": "https://schema.org",
     "@type": "WebSite",
@@ -140,7 +154,7 @@ export function websiteJsonLd(info: SiteInfo = DEFAULT_SITE_INFO) {
     url: site.url,
     name: info.name,
     publisher: { "@id": ORG_ID },
-    inLanguage: "en-PK",
+    inLanguage: loc.locale,
     potentialAction: {
       "@type": "SearchAction",
       target: { "@type": "EntryPoint", urlTemplate: `${site.url}/shop?q={search_term_string}` },
@@ -173,7 +187,7 @@ const CONDITION_SCHEMA: Record<string, string> = {
 /** Shipping cost and return window for Google's merchant listings (from Delivery charges and Returns & warranty rules). */
 export type OfferExtras = { shippingRate?: number; returnDays?: number; restockingFee?: boolean };
 
-export function productJsonLd(p: CatalogProduct, reviews: Review[] = [], extras: OfferExtras = {}) {
+export function productJsonLd(p: CatalogProduct, reviews: Review[] = [], extras: OfferExtras = {}, loc: StoreLocale = DEFAULT_LOCALE) {
   const priceValidUntil = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
   return {
     "@context": "https://schema.org",
@@ -192,7 +206,7 @@ export function productJsonLd(p: CatalogProduct, reviews: Review[] = [], extras:
       // options (colour / size …): Google reads each variant as its own offer
       offers: {
         "@type": "AggregateOffer",
-        priceCurrency: "PKR",
+        priceCurrency: loc.currency,
         lowPrice: Math.min(...p.variants.map(effectivePrice)),
         highPrice: Math.max(...p.variants.map(effectivePrice)),
         offerCount: p.variants.length,
@@ -202,7 +216,7 @@ export function productJsonLd(p: CatalogProduct, reviews: Review[] = [], extras:
           sku: v.sku,
           name: v.name,
           url: absoluteUrl(v.url),
-          priceCurrency: "PKR",
+          priceCurrency: loc.currency,
           price: effectivePrice(v),
           priceValidUntil,
           availability: v.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
@@ -213,7 +227,7 @@ export function productJsonLd(p: CatalogProduct, reviews: Review[] = [], extras:
     } : { offers: {
       "@type": "Offer",
       url: absoluteUrl(p.url),
-      priceCurrency: "PKR",
+      priceCurrency: loc.currency,
       price: effectivePrice(p),
       priceValidUntil,
       availability: p.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
@@ -221,8 +235,8 @@ export function productJsonLd(p: CatalogProduct, reviews: Review[] = [], extras:
       seller: { "@id": STORE_ID },
       shippingDetails: {
         "@type": "OfferShippingDetails",
-        ...(extras.shippingRate != null ? { shippingRate: { "@type": "MonetaryAmount", value: extras.shippingRate, currency: "PKR" } } : {}),
-        shippingDestination: { "@type": "DefinedRegion", addressCountry: "PK" },
+        ...(extras.shippingRate != null ? { shippingRate: { "@type": "MonetaryAmount", value: extras.shippingRate, currency: loc.currency } } : {}),
+        shippingDestination: { "@type": "DefinedRegion", addressCountry: loc.country },
         deliveryTime: {
           "@type": "ShippingDeliveryTime",
           handlingTime: { "@type": "QuantitativeValue", minValue: 0, maxValue: 1, unitCode: "DAY" },
@@ -233,7 +247,7 @@ export function productJsonLd(p: CatalogProduct, reviews: Review[] = [], extras:
         ? {
             hasMerchantReturnPolicy: {
               "@type": "MerchantReturnPolicy",
-              applicableCountry: "PK",
+              applicableCountry: loc.country,
               ...(extras.returnDays > 0
                 ? {
                     returnPolicyCategory: "https://schema.org/MerchantReturnFiniteReturnWindow",

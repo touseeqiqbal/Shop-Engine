@@ -19,7 +19,8 @@ import { rateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { canSendOrderLookup, notifyFromStorefront } from "@/lib/notify";
 import { listOrdersByPhone } from "@/lib/repo/orders";
 import type { SavedAddress } from "@/lib/types";
-import { normalizePkPhone } from "@/lib/utils";
+import { normalizePhone, phonePlaceholder } from "@/lib/phone";
+import { getStoreLocale } from "@/lib/store-locale";
 import { safePath } from "@/lib/safe-path";
 import { HONEYPOT } from "@/lib/honeypot";
 import { BOT_MESSAGE, verifyTurnstile } from "@/lib/turnstile";
@@ -56,18 +57,23 @@ export async function loginAction(_prev: AuthFormState, fd: FormData): Promise<A
   redirect(safeNext(fd.get("next")));
 }
 
-const registerSchema = z.object({
-  name: z.string().trim().min(3, "Please enter your full name").max(80),
-  email: z.email("Enter a valid email address").max(120),
-  phone: z.string().refine((v) => v === "" || !!normalizePkPhone(v), "Enter a valid mobile number, e.g. 0300-1234567"),
-  password: z.string().min(8, "Use at least 8 characters").max(200),
-});
+/** Phone numbers are checked for the store's country (`country` = its ISO code); Pakistan keeps its familiar example. */
+const phoneError = (country: string) => (country === "PK" ? "Enter a valid mobile number, e.g. 0300-1234567" : `Enter a valid phone number, e.g. ${phonePlaceholder(country)}`);
+
+const registerSchema = (country: string) =>
+  z.object({
+    name: z.string().trim().min(3, "Please enter your full name").max(80),
+    email: z.email("Enter a valid email address").max(120),
+    phone: z.string().refine((v) => v === "" || !!normalizePhone(v, country), phoneError(country)),
+    password: z.string().min(8, "Use at least 8 characters").max(200),
+  });
 
 export async function registerAction(_prev: AuthFormState, fd: FormData): Promise<AuthFormState> {
   if (!isDatabaseConfigured) return { error: "Customer accounts activate once the store database is connected.", ts: Date.now() };
   if (fd.get(HONEYPOT)) return { error: "Could not create account.", ts: Date.now() };
   if (!(await verifyTurnstile(fd, "register"))) return { error: BOT_MESSAGE, ts: Date.now() };
-  const parsed = registerSchema.safeParse({
+  const { country } = await getStoreLocale();
+  const parsed = registerSchema(country).safeParse({
     name: String(fd.get("name") ?? ""),
     email: String(fd.get("email") ?? "").trim().toLowerCase(),
     phone: String(fd.get("phone") ?? "").trim(),
@@ -75,7 +81,7 @@ export async function registerAction(_prev: AuthFormState, fd: FormData): Promis
   });
   if (!parsed.success) return { fieldErrors: issuesToFields(parsed.error.issues), ts: Date.now() };
   if (!(await rateLimit("customer-register", 5, 30 * 60_000))) return { error: "Too many sign-ups from your network – please try later.", ts: Date.now() };
-  const phone = parsed.data.phone ? normalizePkPhone(parsed.data.phone)! : undefined;
+  const phone = parsed.data.phone ? normalizePhone(parsed.data.phone, country)! : undefined;
   const res = await registerCustomer({ name: parsed.data.name, email: parsed.data.email, password: parsed.data.password, phone });
   if (!res.ok) return { error: res.error || "Could not create your account.", ts: Date.now() };
   redirect(safeNext(fd.get("next")));
@@ -145,23 +151,31 @@ async function requireCustomerId() {
   return user?.id ?? null;
 }
 
-const addressSchema = z.object({
-  id: z.string().min(1).max(64),
-  label: z.string().trim().min(1, "Label required").max(30),
-  name: z.string().trim().min(3, "Name required").max(80),
-  phone: z.string().refine((v) => !!normalizePkPhone(v), "Invalid mobile number"),
-  city: z.string().refine((c) => PAKISTAN_CITIES.includes(c), "Choose a city from the list"),
-  address: z.string().trim().min(10, "Complete address required").max(300),
-  landmark: z.string().trim().max(120).optional(),
-});
+/** Same rules as checkout: Pakistan picks a city from the list; elsewhere city, state and postcode are typed. */
+const addressSchema = (country: string) =>
+  z.object({
+    id: z.string().min(1).max(64),
+    label: z.string().trim().min(1, "Label required").max(30),
+    name: z.string().trim().min(3, "Name required").max(80),
+    phone: z.string().refine((v) => !!normalizePhone(v, country), phoneError(country)),
+    city:
+      country === "PK"
+        ? z.string().refine((c) => PAKISTAN_CITIES.includes(c), "Choose a city from the list")
+        : z.string().trim().min(2, "Please enter your city").max(80, "City name is too long"),
+    region: z.string().trim().max(60, "State / province is too long").optional(),
+    postalCode: z.string().trim().max(12, "Postcode is too long").optional(),
+    address: z.string().trim().min(country === "PK" ? 10 : 5, "Complete address required").max(300),
+    landmark: z.string().trim().max(120).optional(),
+  });
 
 /** Replaces the signed-in customer's saved addresses (max 10). */
 export async function saveAddressesAction(addresses: SavedAddress[]): Promise<{ ok: boolean; error?: string; addresses?: SavedAddress[] }> {
   const userId = await requireCustomerId();
   if (!userId) return { ok: false, error: "Please sign in again." };
-  const parsed = z.array(addressSchema).max(10).safeParse(addresses);
+  const { country } = await getStoreLocale();
+  const parsed = z.array(addressSchema(country)).max(10).safeParse(addresses);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid address" };
-  const clean = parsed.data.map((a) => ({ ...a, phone: normalizePkPhone(a.phone)!, landmark: a.landmark || undefined })) as SavedAddress[];
+  const clean = parsed.data.map((a) => ({ ...a, phone: normalizePhone(a.phone, country)!, landmark: a.landmark || undefined, region: a.region || undefined, postalCode: a.postalCode || undefined })) as SavedAddress[];
   try {
     await updateUserProfile(userId, { addresses: clean });
     return { ok: true, addresses: clean };
@@ -207,8 +221,9 @@ export type FindOrdersState = { status: "idle" } | { status: "error"; message: s
  */
 export async function findOrdersByPhoneAction(_prev: FindOrdersState, fd: FormData): Promise<FindOrdersState> {
   const ts = Date.now();
-  const phone = normalizePkPhone(String(fd.get("phone") ?? ""));
-  if (!phone) return { status: "error", message: "Enter a valid mobile number, e.g. 0300-1234567", ts };
+  const { country } = await getStoreLocale();
+  const phone = normalizePhone(String(fd.get("phone") ?? ""), country);
+  if (!phone) return { status: "error", message: phoneError(country), ts };
   if (!(await rateLimit("find-orders", 8, 10 * 60_000))) return { status: "error", message: "Too many lookups – please wait a few minutes.", ts };
   if (!canSendOrderLookup()) return { status: "sent", byMessage: false, ts };
   // At most 3 messages a day to one number, whoever asks.

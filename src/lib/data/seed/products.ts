@@ -1,4 +1,6 @@
 import type { Product, SpecRow, UpgradeOption } from "@/lib/types";
+import { DEFAULT_LOCALE } from "@/lib/locale";
+import { addDays, dayIn, dayStart } from "@/lib/time";
 
 /*
  * Seed catalog. Images are generated placeholders in /public/images/products (run `npm run images`);
@@ -9,15 +11,15 @@ const DAY = 864e5;
 const BASE = Date.UTC(2026, 8, 1); // 1 Sep 2026
 const created = (daysAgo: number) => new Date(BASE - daysAgo * DAY).toISOString();
 
-/** Rolling weekly deal end: next Sunday 23:59 PKT. */
-function nextSundayPkt() {
-  const now = new Date();
-  const pkt = new Date(now.getTime() + 5 * 3600e3);
-  const daysToSunday = (7 - pkt.getUTCDay()) % 7 || 7;
-  const end = Date.UTC(pkt.getUTCFullYear(), pkt.getUTCMonth(), pkt.getUTCDate() + daysToSunday, 23, 59) - 5 * 3600e3;
+/** Rolling weekly deal end: next Sunday 23:59 in the default store's time zone (Asia/Karachi). */
+function nextSundayLocal(timezone = DEFAULT_LOCALE.timezone) {
+  const today = dayIn(Date.now(), timezone);
+  const daysToSunday = (7 - new Date(`${today}T12:00:00Z`).getUTCDay()) % 7 || 7;
+  // 23:59 on that Sunday = one minute before the next local midnight (right on DST days too)
+  const end = dayStart(addDays(today, daysToSunday + 1), timezone) - 60e3;
   return new Date(end).toISOString();
 }
-export const SEED_DEAL_END = nextSundayPkt();
+export const SEED_DEAL_END = nextSundayLocal();
 
 const img = (slug: string, n = 2) => Array.from({ length: n }, (_, i) => `/images/products/${slug}-${i + 1}.svg`);
 

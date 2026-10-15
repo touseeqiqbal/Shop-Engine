@@ -53,8 +53,8 @@ export const TradeIns: CollectionConfig = {
         { label: "Bought", value: "bought" },
         { label: "Not bought", value: "declined" },
       ], admin: { width: "34%" } },
-      { name: "offerPrice", type: "number", min: 0, label: "Our offer (Rs)", admin: { width: "33%" } },
-      { name: "expectedPrice", type: "number", min: 0, label: "Customer expects (Rs)", admin: { width: "33%" } },
+      { name: "offerPrice", type: "number", min: 0, label: "Our offer", admin: { width: "33%" } },
+      { name: "expectedPrice", type: "number", min: 0, label: "Customer expects", admin: { width: "33%" } },
     ] },
     { name: "summary", type: "text", admin: { readOnly: true } },
     { type: "row", fields: [
@@ -176,7 +176,7 @@ export const StockAlerts: CollectionConfig = {
     ] },
     { type: "row", fields: [
       { name: "contact", type: "text", required: true, label: "Email or phone", admin: { width: "50%" } },
-      { name: "priceAtSignup", type: "number", label: "Price when they asked (Rs)", admin: { width: "50%" } },
+      { name: "priceAtSignup", type: "number", label: "Price when they asked", admin: { width: "50%" } },
     ] },
     { name: "sentAt", type: "date", admin: { readOnly: true, date: { pickerAppearance: "dayAndTime" } } },
   ],
@@ -211,7 +211,7 @@ export const AbandonedCarts: CollectionConfig = {
         { label: "Came back & ordered", value: "recovered" },
         { label: "Stopped (asked not to)", value: "stopped" },
       ], admin: { width: "34%" } },
-      { name: "total", type: "number", label: "Cart value (Rs)", admin: { width: "33%" } },
+      { name: "total", type: "number", label: "Cart value", admin: { width: "33%" } },
       { name: "remindersSent", type: "number", defaultValue: 0, admin: { width: "33%", readOnly: true } },
     ] },
     { type: "row", fields: [
@@ -244,7 +244,7 @@ export const ConversionSettings: GlobalConfig = {
       fields: [
         { name: "emiEnabled", type: "checkbox", defaultValue: false, label: "Show the installments block on product pages" },
         { type: "row", fields: [
-          { name: "emiMinPrice", type: "number", min: 0, defaultValue: 30000, label: "Only for products from (Rs)", admin: { width: "50%" } },
+          { name: "emiMinPrice", type: "number", min: 0, defaultValue: 30000, label: "Only for products from", admin: { width: "50%" } },
           { name: "emiHeading", type: "text", defaultValue: "Pay in easy installments", label: "Heading", admin: { width: "50%" } },
         ] },
         { name: "emiNote", type: "textarea", defaultValue: "Available with credit cards of the banks below. Final amount is confirmed by your bank. WhatsApp us to apply.", label: "Small print" },
@@ -257,7 +257,7 @@ export const ConversionSettings: GlobalConfig = {
             { name: "bank", type: "text", required: true, admin: { width: "40%" } },
             { name: "months", type: "number", required: true, min: 1, max: 60, admin: { width: "20%" } },
             { name: "markupPercent", type: "number", min: 0, defaultValue: 0, label: "Markup % (total)", admin: { width: "20%" } },
-            { name: "minAmount", type: "number", min: 0, label: "Min Rs", admin: { width: "20%" } },
+            { name: "minAmount", type: "number", min: 0, label: "Min amount", admin: { width: "20%" } },
           ] }],
         },
       ],
@@ -272,7 +272,7 @@ export const ConversionSettings: GlobalConfig = {
           { name: "cartSecondHours", type: "number", min: 0, defaultValue: 24, label: "Second reminder after (hours, 0 = none)", admin: { width: "50%" } },
         ] },
         { name: "cartSubject", type: "text", defaultValue: "You left something in your cart", label: "Email subject" },
-        { name: "cartMessage", type: "textarea", defaultValue: "Your items are still waiting – stock is limited, so complete your order before they're gone. Cash on delivery all over Pakistan.", label: "Message" },
+        { name: "cartMessage", type: "textarea", defaultValue: "Your items are still waiting – stock is limited, so complete your order before they're gone.", label: "Message" },
         { name: "cartCoupon", type: "text", label: "Coupon code to offer (optional)", admin: { description: "Create it first in Marketing → Discount codes." } },
       ],
     },

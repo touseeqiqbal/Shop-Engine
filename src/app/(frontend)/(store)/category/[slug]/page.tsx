@@ -13,6 +13,7 @@ import { ProductListing } from "@/components/shop/product-listing";
 import { FinderPanel } from "@/components/shop/finder-panel";
 import { getCategoryCounts } from "@/components/shop/data";
 import { shouldNoindex, type RawSearchParams } from "@/components/shop/params";
+import { getStoreLocale } from "@/lib/store-locale";
 
 /*
  * Category / sub-category listing. Filters live in the URL – see src/components/shop/params.ts for the scheme:
@@ -33,6 +34,7 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
   if (!category) return { title: "Category not found", robots: { index: false } };
   const place = storePlace(site);
   return pageMetadata({
+    locale: await getStoreLocale(),
     title: category.seoTitle || `${category.name} Price in Pakistan | ${site.name}`,
     description:
       category.seoDescription ||

@@ -3,6 +3,7 @@ import { useId, useState, type ReactNode } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import type { Condition, Facet } from "@/lib/types";
 import { cn, conditionMeta } from "@/lib/utils";
+import { useStoreLocale } from "@/components/providers/locale";
 import { useListing } from "./listing-context";
 import { PriceRange, RangeSlider } from "./price-range";
 
@@ -21,6 +22,7 @@ const CONDITION_ORDER: Condition[] = ["new", "open-box", "used-a-plus", "used-a"
 export function Filters({ data, className }: { data: FilterData; className?: string }) {
   const { params, update, getList, toggleInList } = useListing();
   const uid = useId().replace(/:/g, "");
+  const { currency } = useStoreLocale();
   const min = params.get("min");
   const max = params.get("max");
 
@@ -38,7 +40,7 @@ export function Filters({ data, className }: { data: FilterData; className?: str
       </div>
 
       {data.priceRange[1] > 0 && (
-        <Section title="Price (PKR)">
+        <Section title={`Price (${currency})`}>
           <PriceRange
             bounds={data.priceRange}
             value={[min ? Number(min) : undefined, max ? Number(max) : undefined]}

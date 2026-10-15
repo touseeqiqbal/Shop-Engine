@@ -21,13 +21,14 @@ import { faqJsonLd, itemListJsonLd } from "@/lib/seo";
 import { getPageMeta } from "@/lib/page-seo";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { getCurrentStore } from "@/lib/tenant";
-import { formatPKR } from "@/lib/utils";
+import { getMoney, getStoreLocale } from "@/lib/store-locale";
 
 /**
  * Single-segment storefront URLs. Handles the nationwide SEO landing pages `/laptops-in-{city}`.
  * (The segment is named `[category]` because it shares its level with `[category]/[product]`.)
  * Any other single segment that matches a category slug permanently redirects to `/category/{slug}`.
- * The city pages are written around the original shop's Karachi store, so only that store has them.
+ * The city pages are written around the original shop's Karachi store (Pakistani cities, Karachi same-day delivery),
+ * so only that store has them – and only while it sells in Pakistan.
  */
 
 export const revalidate = 300;
@@ -36,10 +37,10 @@ type Props = { params: Promise<{ category: string }> };
 
 const PREFIX = "laptops-in-";
 const cityOf = (segment: string) => (segment.startsWith(PREFIX) ? cityFromSlug(segment.slice(PREFIX.length)) : null);
-/** The original (default) store – or demo mode, which is that store. */
+/** The original (default) store – or demo mode, which is that store – while its country is Pakistan. */
 const isOriginalStore = async () => {
-  const store = await getCurrentStore();
-  return !store || store.isDefault;
+  const [store, loc] = await Promise.all([getCurrentStore(), getStoreLocale()]);
+  return (!store || store.isDefault) && loc.country === "PK";
 };
 
 export function generateStaticParams() {
@@ -52,6 +53,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!city || !(await isOriginalStore())) return {};
   const { name } = await getSiteInfo();
   const est = deliveryEstimate(city);
+  // Pakistan only (see isOriginalStore): the Karachi page is the walk-in shop's own
   const karachi = city === "Karachi";
   // /cms → Online store → Page texts → "City landing pages" can override these with a {city} template.
   return getPageMeta("/laptops-in-{city}", {
@@ -78,7 +80,7 @@ export default async function SingleSegmentPage({ params }: Props) {
 }
 
 async function CityLanding({ city }: { city: string }) {
-  const [all, settings, site] = await Promise.all([getAllProducts(), getStoreSettings(), getSiteInfo()]);
+  const [all, settings, site, money] = await Promise.all([getAllProducts(), getStoreSettings(), getSiteInfo(), getMoney()]);
   const info = cityInfo(city);
   const est = deliveryEstimate(city, settings);
   const zone = deliveryZone(city);
@@ -86,9 +88,9 @@ async function CityLanding({ city }: { city: string }) {
   // same rules as checkout (/cms → Delivery & payments → Delivery charges)
   const chargeRs = deliveryCharge(city, 0, settings);
   const freeAboveRs = freeDeliveryAbove(city, settings);
-  const charge = chargeRs > 0 ? formatPKR(chargeRs) : "Free";
-  const free = freeAboveRs > 0 ? formatPKR(freeAboveRs) : "";
-  const faqs = cityFaqs(city, settings);
+  const charge = chargeRs > 0 ? money(chargeRs) : "Free";
+  const free = freeAboveRs > 0 ? money(freeAboveRs) : "";
+  const faqs = cityFaqs(city, settings, money);
 
   const byPopular = [...all].sort((a, b) => b.soldCount - a.soldCount);
   const laptops = byPopular.filter((p) => p.topCategorySlug === "laptops").slice(0, 8);

@@ -3,11 +3,13 @@ import Link from "next/link";
 import { ArrowUpRight, CalendarDays, Clock } from "lucide-react";
 import type { BlogPost } from "@/lib/types";
 import { blogCategoryHref } from "@/lib/blog";
-import { cn, formatDate, readingTime } from "@/lib/utils";
+import { getDateFormatter } from "@/lib/store-locale";
+import { cn, readingTime } from "@/lib/utils";
 
 /** Blog post teaser. `featured` renders a large horizontal hero card. */
-export function PostCard({ post, featured, className, headingLevel = "h2" }: { post: BlogPost; featured?: boolean; className?: string; headingLevel?: "h2" | "h3" }) {
+export async function PostCard({ post, featured, className, headingLevel = "h2" }: { post: BlogPost; featured?: boolean; className?: string; headingLevel?: "h2" | "h3" }) {
   const H = headingLevel;
+  const date = await getDateFormatter(); // the store's language and time zone
   return (
     <article
       className={cn(
@@ -33,7 +35,7 @@ export function PostCard({ post, featured, className, headingLevel = "h2" }: { p
           </Link>
           <span className="inline-flex items-center gap-1">
             <CalendarDays className="size-3.5" aria-hidden="true" />
-            <time dateTime={post.publishedAt}>{formatDate(post.publishedAt)}</time>
+            <time dateTime={post.publishedAt}>{date(post.publishedAt)}</time>
           </span>
           <span className="inline-flex items-center gap-1">
             <Clock className="size-3.5" aria-hidden="true" />

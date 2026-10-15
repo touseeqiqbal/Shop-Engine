@@ -1,5 +1,7 @@
 import { adminRequest, canSeeStore } from "@/payload/route-access";
 import { storeIdOf } from "@/payload/tenancy";
+import { storeLocaleOf } from "@/payload/store-locale";
+import { moneyFormatter, type Money } from "@/lib/money";
 import { absoluteUrl } from "@/lib/site";
 import { storeDirectory, storeOrigin } from "@/lib/tenant";
 
@@ -13,7 +15,6 @@ export const dynamic = "force-dynamic";
 
 type Doc = Record<string, unknown>;
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-const rs = (n: number) => `Rs ${Math.round(n).toLocaleString("en-PK")}`;
 
 export async function GET(req: Request) {
   // the store's team only (owners/managers must have 2-step on – same rule as the rest of /cms)
@@ -39,6 +40,13 @@ export async function GET(req: Request) {
     const origin = s ? storeOrigin(s) : "";
     return origin ? `${origin}${path}` : absoluteUrl(path);
   };
+  // prices in each product's own store currency
+  const prices = new Map<number | null, Promise<Money>>();
+  const priceIn = (store: unknown) => {
+    const id = storeIdOf(store);
+    if (!prices.has(id)) prices.set(id, storeLocaleOf(payload, id).then(moneyFormatter));
+    return prices.get(id)!;
+  };
 
   const labels: string[] = [];
   for (const d of docs) {
@@ -54,7 +62,7 @@ export async function GET(req: Request) {
     }
     const qr = withQr && pageUrl ? await QR.toString(pageUrl, { type: "svg", margin: 0, width: 64 }) : "";
     const price = Number(product.price) || 0;
-    const html = `<div class="label"><div class="t">${esc(product.title)}</div>${type === "units" && d.conditionNotes ? `<div class="m">${esc(d.conditionNotes)}</div>` : ""}<div class="row"><div class="bc">${barcode}</div>${qr ? `<div class="qr">${qr}</div>` : ""}</div>${price && !product.priceOnRequest ? `<div class="p">${rs(price)}</div>` : ""}</div>`;
+    const html = `<div class="label"><div class="t">${esc(product.title)}</div>${type === "units" && d.conditionNotes ? `<div class="m">${esc(d.conditionNotes)}</div>` : ""}<div class="row"><div class="bc">${barcode}</div>${qr ? `<div class="qr">${qr}</div>` : ""}</div>${price && !product.priceOnRequest ? `<div class="p">${esc((await priceIn(product.store ?? d.store))(price))}</div>` : ""}</div>`;
     for (let i = 0; i < copies; i++) labels.push(html);
   }
 

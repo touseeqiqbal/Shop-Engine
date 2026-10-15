@@ -16,6 +16,7 @@ import { getSiteInfo } from "@/lib/repo/site-content";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { currentAvailability } from "@/lib/tenant";
+import { getStoreLocale } from "@/lib/store-locale";
 
 const CLOSED: Record<string, { title: string; text: string }> = {
   "setting-up": { title: "Opening soon", text: "This shop is getting ready. Please check back soon." },
@@ -44,7 +45,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
       </main>
     );
   }
-  const [topCategories, settings, info, chrome] = await Promise.all([getTopCategories(), getStoreSettings(), getSiteInfo(), getChrome()]);
+  const [topCategories, settings, info, chrome, loc] = await Promise.all([getTopCategories(), getStoreSettings(), getSiteInfo(), getChrome(), getStoreLocale()]);
   // Header menu from /cms → Online store → Header; built-in category mega menu until one is assigned.
   const menu = chrome.header.menu ?? (await defaultMainMenu());
   // the store's own logo for Google (the original shop's mark only on the original shop)
@@ -52,7 +53,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
 
   return (
     <>
-      <JsonLd data={[organizationJsonLd(info, logo), localBusinessJsonLd(info, settings, logo), websiteJsonLd(info)]} />
+      <JsonLd data={[organizationJsonLd(info, logo, loc), localBusinessJsonLd(info, settings, logo, loc), websiteJsonLd(info, loc)]} />
       <TopBar announcement={chrome.announcement} legacyText={settings.announcement} />
       <Navbar menu={menu} mobileMenu={chrome.header.mobileMenu} />
       <main id="main" className="min-h-[60vh]">

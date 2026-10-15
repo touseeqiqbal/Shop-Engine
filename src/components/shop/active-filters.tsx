@@ -1,7 +1,8 @@
 "use client";
 import { X } from "lucide-react";
 import type { Condition } from "@/lib/types";
-import { conditionMeta, formatPKR } from "@/lib/utils";
+import { conditionMeta } from "@/lib/utils";
+import { useMoney } from "@/components/providers/locale";
 import { useListing } from "./listing-context";
 
 export interface FilterLabels {
@@ -19,6 +20,7 @@ interface Chip {
 /** Removable chips for every active filter, plus "Clear all". Hidden when nothing is filtered. */
 export function ActiveFilters({ labels, keepParams = [] }: { labels: FilterLabels; keepParams?: string[] }) {
   const { params, update } = useListing();
+  const money = useMoney();
   const chips: Chip[] = [];
 
   const removeFromList = (key: string, value: string) => (p: URLSearchParams) => {
@@ -52,7 +54,7 @@ export function ActiveFilters({ labels, keepParams = [] }: { labels: FilterLabel
   if (min || max)
     chips.push({
       key: "price",
-      label: `${min ? formatPKR(Number(min)) : "Any"} – ${max ? formatPKR(Number(max)) : "Any"}`,
+      label: `${min ? money(Number(min)) : "Any"} – ${max ? money(Number(max)) : "Any"}`,
       remove: (p) => (p.delete("min"), p.delete("max")),
     });
 

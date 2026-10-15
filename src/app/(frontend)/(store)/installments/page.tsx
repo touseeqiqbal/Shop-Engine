@@ -13,6 +13,9 @@ import { faqJsonLd } from "@/lib/seo";
 import { getPageMeta } from "@/lib/page-seo";
 import { getResolvedPageContent } from "@/lib/repo/site-content";
 import { getConversionSettings } from "@/lib/cms/engagement";
+import { countryName } from "@/lib/locale";
+import { moneyFormatter } from "@/lib/money";
+import { getStoreLocale } from "@/lib/store-locale";
 import type { FaqItem } from "@/lib/types";
 
 export const revalidate = 300;
@@ -67,14 +70,15 @@ const LIVE_FAQS: FaqItem[] = [
   },
 ];
 
-const FAQS: FaqItem[] = [
+/** `pk` = a store in Pakistan (its amounts are in rupees). */
+const FAQS = (pk: boolean): FaqItem[] => [
   {
     q: "Can I buy a laptop on installments right now?",
     a: "Bank instalment plans are not live yet. Until they launch, message us on WhatsApp – we can suggest budget options, reserve a laptop with a small advance, or let you know as soon as instalments become available.",
   },
   {
     q: "Which laptops will be available on installments?",
-    a: "We plan to offer instalments on most new and refurbished laptops above Rs 50,000, and on selected bundles. Eligibility will be shown on each product page.",
+    a: `We plan to offer instalments on most new and refurbished laptops${pk ? " above Rs 50,000" : ""}, and on selected bundles. Eligibility will be shown on each product page.`,
   },
   {
     q: "Will there be markup on installment plans?",
@@ -87,11 +91,13 @@ const FAQS: FaqItem[] = [
 ];
 
 export default async function InstallmentsPage() {
-  const [c, conversion] = await Promise.all([getResolvedPageContent("/installments"), getConversionSettings()]);
+  const [c, conversion, loc] = await Promise.all([getResolvedPageContent("/installments"), getConversionSettings(), getStoreLocale()]);
+  const money = moneyFormatter(loc);
+  const pk = loc.country === "PK";
   const plans = conversion.emiEnabled ? conversion.emiPlans : [];
   // the page talks about plans as "coming soon" only while none are switched on
   const live = plans.length > 0;
-  const faqs = live ? LIVE_FAQS : FAQS;
+  const faqs = live ? LIVE_FAQS : FAQS(pk);
   return (
     <PolicyLayout path="/installments" name="Installment Plans" eyebrow={c.eyebrow || undefined} title={<InlineText text={c.title} />} description={c.description} updated={c.updated}>
       <JsonLd data={faqJsonLd(faqs)} />
@@ -162,7 +168,7 @@ export default async function InstallmentsPage() {
                       <td className="p-3 font-semibold text-fg">{p.bank}</td>
                       <td className="p-3">{p.months}</td>
                       <td className="p-3">{p.markupPercent ? `${p.markupPercent}%` : "0%"}</td>
-                      <td className="p-3">{p.minAmount ? `Rs ${p.minAmount.toLocaleString("en-PK")}` : "Any"}</td>
+                      <td className="p-3">{p.minAmount ? money(p.minAmount) : "Any"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -171,7 +177,7 @@ export default async function InstallmentsPage() {
           </>
         ) : (
           <>
-            <p className="mb-5 text-sm text-muted">We&apos;re finalising partnerships with banks in Pakistan. Partner names, eligible cards and exact terms will be announced at launch.</p>
+            <p className="mb-5 text-sm text-muted">We&apos;re finalising partnerships with banks in {countryName(loc.country)}. Partner names, eligible cards and exact terms will be announced at launch.</p>
             <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {BANKS.map((b) => (
                 <li key={b} className="card flex flex-col items-center justify-center gap-1 p-5 text-center">
@@ -195,7 +201,7 @@ export default async function InstallmentsPage() {
             <span>
               Browse our{" "}
               <Link href="/category/budget-laptops" className="font-semibold text-fg underline-offset-4 hover:underline">
-                budget laptops under Rs 100,000
+                {pk ? "budget laptops under Rs 100,000" : "budget laptops"}
               </Link>{" "}
               and{" "}
               <Link href="/category/used-refurbished-laptops" className="font-semibold text-fg underline-offset-4 hover:underline">
@@ -204,19 +210,22 @@ export default async function InstallmentsPage() {
               – Core i5 performance for much less.
             </span>
           </li>
+          {/* the rupee buying guide is written for Pakistan */}
+          {pk && (
+            <li className="flex gap-3">
+              <MessageCircle className="mt-0.5 size-4 shrink-0 text-emerald-400" aria-hidden="true" />
+              <span>
+                Read our{" "}
+                <Link href="/blog/best-laptops-under-100000-pakistan" className="font-semibold text-fg underline-offset-4 hover:underline">
+                  best laptops under Rs 100,000
+                </Link>{" "}
+                guide.
+              </span>
+            </li>
+          )}
           <li className="flex gap-3">
             <MessageCircle className="mt-0.5 size-4 shrink-0 text-emerald-400" aria-hidden="true" />
-            <span>
-              Read our{" "}
-              <Link href="/blog/best-laptops-under-100000-pakistan" className="font-semibold text-fg underline-offset-4 hover:underline">
-                best laptops under Rs 100,000
-              </Link>{" "}
-              guide.
-            </span>
-          </li>
-          <li className="flex gap-3">
-            <MessageCircle className="mt-0.5 size-4 shrink-0 text-emerald-400" aria-hidden="true" />
-            <span>Pay with Cash on Delivery anywhere in Pakistan – no card needed.</span>
+            <span>Pay with Cash on Delivery {pk ? "anywhere in Pakistan" : "nationwide"} – no card needed.</span>
           </li>
         </ul>
       </section>

@@ -2,7 +2,11 @@ import { randomInt } from "node:crypto";
 import { commitTransaction, initTransaction, killTransaction, type Endpoint, type PayloadRequest, type Where } from "payload";
 import { sameStoreAs, storeGate, type StoreGate } from "./guard";
 import { hasStoreRole } from "../tenancy";
+import { storeLocaleOf, storeMoneyOf } from "../store-locale";
 import { log } from "../../lib/log";
+import { roundMoney } from "../../lib/money";
+import { addDays, compactDay, dayIn, dayStart } from "../../lib/time";
+import type { StoreLocale } from "../../lib/locale";
 
 /**
  * Shop counter (POS) API – the store's team, always for the store being worked in.
@@ -16,10 +20,8 @@ import { log } from "../../lib/log";
 type Doc = Record<string, unknown>;
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v) || 0);
 const str = (v: unknown) => (typeof v === "string" ? v : "");
-const PKT = 5 * 3600e3;
-const pktDay = (t: number) => new Date(t + PKT).toISOString().slice(0, 10);
-const pktStart = (day: string) => Date.parse(`${day}T00:00:00Z`) - PKT;
-const METHODS = new Set(["cash", "card", "bank", "jazzcash", "easypaisa"]);
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const METHODS = new Set(["cash", "card", "bank", "jazzcash", "easypaisa", "other"]);
 const bad = (message: string, status = 400) => Response.json({ error: message }, { status });
 /** Staff may give up to this much discount on a sale; lower prices or bigger discounts need an owner or manager. */
 const STAFF_MAX_DISCOUNT_PERCENT = 10;
@@ -84,7 +86,10 @@ const sale: Endpoint = {
       customerPhone?: string;
       notes?: string;
     } | null;
-    const lines = (body?.lines ?? []).map((l) => ({ productId: Math.trunc(num(l.productId)), unitId: l.unitId ? Math.trunc(num(l.unitId)) : undefined, qty: Math.trunc(num(l.qty)), unitPrice: Math.round(num(l.unitPrice)) }));
+    // amounts in the store's currency (whole rupees, cents …); receipt numbers by its date
+    const { timezone } = await storeLocaleOf(req.payload, gate.store, req);
+    const money = await storeMoneyOf(req.payload, gate.store, req);
+    const lines = (body?.lines ?? []).map((l) => ({ productId: Math.trunc(num(l.productId)), unitId: l.unitId ? Math.trunc(num(l.unitId)) : undefined, qty: Math.trunc(num(l.qty)), unitPrice: money.round(num(l.unitPrice)) }));
     if (!lines.length) return bad("The sale is empty.");
     if (lines.some((l) => l.productId <= 0 || l.qty <= 0 || l.qty > 100 || l.unitPrice < 0 || (l.unitId && l.qty !== 1))) return bad("Check the quantities and prices.");
     const unitIds = lines.filter((l) => l.unitId).map((l) => l.unitId!);
@@ -109,24 +114,25 @@ const sale: Endpoint = {
       if (!p) return bad("A product in the sale no longer exists.");
       if (p.trackUnits && !l.unitId) return bad(`Scan or pick the serial number for “${str(p.title)}”.`);
       if (l.unitPrice < num(p.price)) {
-        if (!manager) return bad(`Only an owner or manager can sell “${str(p.title)}” below its price (Rs ${num(p.price).toLocaleString("en-PK")}).`, 403);
+        if (!manager) return bad(`Only an owner or manager can sell “${str(p.title)}” below its price (${money(num(p.price))}).`, 403);
         overrides.push(`${str(p.sku) || p.id}: ${num(p.price)} → ${l.unitPrice}`);
       }
     }
 
-    const subtotal = lines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
-    const discount = Math.min(subtotal, Math.max(0, Math.round(num(body?.discount))));
+    // sums rounded to the currency too (cents add up without floating-point crumbs)
+    const subtotal = money.round(lines.reduce((s, l) => s + l.qty * l.unitPrice, 0));
+    const discount = Math.min(subtotal, Math.max(0, money.round(num(body?.discount))));
     if (!manager && subtotal > 0 && discount > (subtotal * STAFF_MAX_DISCOUNT_PERCENT) / 100)
       return bad(`Discounts above ${STAFF_MAX_DISCOUNT_PERCENT}% need an owner or manager.`, 403);
-    const total = subtotal - discount;
-    const payments = (body?.payments ?? []).filter((p) => METHODS.has(p.method) && num(p.amount) > 0).map((p) => ({ method: p.method, amount: Math.round(num(p.amount)) }));
-    const paid = payments.reduce((s, p) => s + p.amount, 0);
-    if (paid < total) return bad(`Payment is Rs ${(total - paid).toLocaleString("en-PK")} short.`);
+    const total = money.round(subtotal - discount);
+    const payments = (body?.payments ?? []).filter((p) => METHODS.has(p.method) && num(p.amount) > 0).map((p) => ({ method: p.method, amount: money.round(num(p.amount)) }));
+    const paid = money.round(payments.reduce((s, p) => s + p.amount, 0));
+    if (paid < total) return bad(`Payment is ${money(total - paid)} short.`);
     if (paid > total && !payments.some((p) => p.method === "cash")) return bad("Only cash can be overpaid (for change).");
-    const cashPart = payments.filter((p) => p.method === "cash").reduce((s, p) => s + p.amount, 0);
-    const change = paid - total;
+    const cashPart = money.round(payments.filter((p) => p.method === "cash").reduce((s, p) => s + p.amount, 0));
+    const change = money.round(paid - total);
     // store what was actually kept: cash minus change
-    const kept = payments.map((p) => (p.method === "cash" ? { ...p, amount: p.amount - change } : p)).filter((p) => p.amount > 0);
+    const kept = payments.map((p) => (p.method === "cash" ? { ...p, amount: money.round(p.amount - change) } : p)).filter((p) => p.amount > 0);
 
     // Stock, serial numbers and the receipt in ONE transaction – all or nothing (also after a crash)
     const { takeStock, sellUnit, linkUnitsToSale, setStockLog, lockProducts } = await import("../stock");
@@ -139,7 +145,7 @@ const sale: Endpoint = {
     try {
       let receiptNumber = "";
       for (let attempt = 0; attempt < 5 && !receiptNumber; attempt++) {
-        const candidate = `POS-${pktDay(Date.now()).slice(2).replace(/-/g, "")}-${randomInt(100000, 1000000)}`;
+        const candidate = `POS-${compactDay(timezone)}-${randomInt(100000, 1000000)}`;
         const taken = await payload.count({ collection: "pos-sales", where: { receiptNumber: { equals: candidate } }, overrideAccess: true, req });
         if (!taken.totalDocs) receiptNumber = candidate;
       }
@@ -208,6 +214,8 @@ const voidSale: Endpoint = {
     const body = (await req.json?.().catch(() => null)) as { saleId?: number; reason?: string } | null;
     const reason = str(body?.reason).trim();
     if (!reason) return bad("Say why the sale is being voided.");
+    // "today" in the store's time zone
+    const { timezone } = await storeLocaleOf(req.payload, gate.store, req);
     const { putBackStock, unsellUnit, lockRowStatus, setStockLog } = await import("../stock");
     await initTransaction(req);
     let s: Doc | null = null;
@@ -229,8 +237,8 @@ const voidSale: Endpoint = {
         return bad("Sale not found.", 404);
       }
       // only today's sales; a closed (cashed-up) day can't change; a sale with a return is settled in Returns
-      const saleDay = pktDay(Date.parse(str(s.createdAt)));
-      if (saleDay !== pktDay(Date.now())) {
+      const saleDay = dayIn(Date.parse(str(s.createdAt)), timezone);
+      if (saleDay !== dayIn(Date.now(), timezone)) {
         await killTransaction(req);
         return bad("Only today's sales can be voided. For an older sale, record a return / refund instead.");
       }
@@ -265,11 +273,14 @@ const voidSale: Endpoint = {
   },
 };
 
-async function dayTotals(req: PayloadRequest, day: string, gate: StoreGate) {
-  const start = pktStart(day);
+/** A store-local day's counter takings (`loc` = the store's: its time zone and currency). */
+async function dayTotals(req: PayloadRequest, day: string, gate: StoreGate, loc: StoreLocale) {
+  const start = dayStart(day, loc.timezone);
+  // a day is 23 or 25 hours long when the clocks change
+  const end = dayStart(addDays(day, 1), loc.timezone);
   const res = await req.payload.find({
     collection: "pos-sales",
-    where: { and: [{ createdAt: { greater_than_equal: new Date(start).toISOString() } }, { createdAt: { less_than: new Date(start + 864e5).toISOString() } }, ...gate.inStore] },
+    where: { and: [{ createdAt: { greater_than_equal: new Date(start).toISOString() } }, { createdAt: { less_than: new Date(end).toISOString() } }, ...gate.inStore] },
     limit: 0,
     pagination: false,
     depth: 0,
@@ -291,14 +302,16 @@ async function dayTotals(req: PayloadRequest, day: string, gate: StoreGate) {
   // cash refunds paid out of the drawer that day (returns refunded in cash) come off the expected cash
   const refunds = await req.payload.find({
     collection: "return-requests",
-    where: { and: [{ status: { equals: "refunded" } }, { refundMethod: { equals: "cash" } }, { creditNoteDate: { greater_than_equal: new Date(start).toISOString() } }, { creditNoteDate: { less_than: new Date(start + 864e5).toISOString() } }, ...gate.inStore] },
+    where: { and: [{ status: { equals: "refunded" } }, { refundMethod: { equals: "cash" } }, { creditNoteDate: { greater_than_equal: new Date(start).toISOString() } }, { creditNoteDate: { less_than: new Date(end).toISOString() } }, ...gate.inStore] },
     limit: 0,
     pagination: false,
     depth: 0,
     overrideAccess: true,
   });
-  const cashRefunds = (refunds.docs as unknown as Doc[]).reduce((s, r) => s + num(r.refundAmount), 0);
-  return { day, count, voided, total, byMethod, cashRefunds, cash: (byMethod.cash ?? 0) - cashRefunds };
+  const round = (n: number) => roundMoney(n, loc.currency);
+  for (const m of Object.keys(byMethod)) byMethod[m] = round(byMethod[m]);
+  const cashRefunds = round((refunds.docs as unknown as Doc[]).reduce((s, r) => s + num(r.refundAmount), 0));
+  return { day, count, voided, total: round(total), byMethod, cashRefunds, cash: round((byMethod.cash ?? 0) - cashRefunds) };
 }
 
 const cashupGet: Endpoint = {
@@ -307,9 +320,10 @@ const cashupGet: Endpoint = {
   handler: async (req) => {
     const gate = await storeGate(req, "store_staff", { feature: "pos" });
     if (gate instanceof Response) return gate;
+    const loc = await storeLocaleOf(req.payload, gate.store, req);
     const d = new URL(req.url ?? "", "http://x").searchParams.get("day") ?? "";
-    const day = /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : pktDay(Date.now());
-    const [totals, existing] = await Promise.all([dayTotals(req, day, gate), req.payload.find({ collection: "cash-ups", where: { and: [{ day: { equals: day } }, ...gate.inStore] }, limit: 5, sort: "-createdAt", depth: 1, overrideAccess: true })]);
+    const day = DAY_RE.test(d) ? d : dayIn(Date.now(), loc.timezone);
+    const [totals, existing] = await Promise.all([dayTotals(req, day, gate, loc), req.payload.find({ collection: "cash-ups", where: { and: [{ day: { equals: day } }, ...gate.inStore] }, limit: 5, sort: "-createdAt", depth: 1, overrideAccess: true })]);
     return Response.json({ ...totals, cashUps: existing.docs });
   },
 };
@@ -321,16 +335,18 @@ const cashupPost: Endpoint = {
     const gate = await storeGate(req, "store_staff", { write: true, feature: "pos" });
     if (gate instanceof Response) return gate;
     const body = (await req.json?.().catch(() => null)) as { day?: string; openingFloat?: number; countedCash?: number; notes?: string } | null;
-    const day = /^\d{4}-\d{2}-\d{2}$/.test(str(body?.day)) ? str(body?.day) : pktDay(Date.now());
+    const loc = await storeLocaleOf(req.payload, gate.store, req);
+    const money = await storeMoneyOf(req.payload, gate.store, req);
+    const day = DAY_RE.test(str(body?.day)) ? str(body?.day) : dayIn(Date.now(), loc.timezone);
     if (body?.countedCash == null || num(body.countedCash) < 0) return bad("Enter the cash you counted.");
-    const totals = await dayTotals(req, day, gate);
-    const opening = Math.max(0, Math.round(num(body?.openingFloat)));
-    const expectedCash = opening + totals.cash;
-    const countedCash = Math.round(num(body.countedCash));
+    const totals = await dayTotals(req, day, gate, loc);
+    const opening = Math.max(0, money.round(num(body?.openingFloat)));
+    const expectedCash = money.round(opening + totals.cash);
+    const countedCash = money.round(num(body.countedCash));
     const doc = await req.payload.create({
       collection: "cash-ups",
       overrideAccess: true,
-      data: { store: gate.store, day, openingFloat: opening, expectedCash, countedCash, difference: countedCash - expectedCash, byMethod: totals.byMethod, salesCount: totals.count, notes: str(body?.notes).slice(0, 1000) || null, closedBy: (req.user as { id: number }).id } as never,
+      data: { store: gate.store, day, openingFloat: opening, expectedCash, countedCash, difference: money.round(countedCash - expectedCash), byMethod: totals.byMethod, salesCount: totals.count, notes: str(body?.notes).slice(0, 1000) || null, closedBy: (req.user as { id: number }).id } as never,
     });
     log.info("pos.cashup", { day, expectedCash, countedCash, by: (req.user as { id: number }).id });
     return Response.json({ cashUp: doc });

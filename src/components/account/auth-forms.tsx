@@ -14,7 +14,9 @@ import {
 } from "@/app/(frontend)/(store)/account/actions";
 import { Field, fieldAria } from "@/components/checkout/field";
 import { formatPhoneInput } from "@/components/checkout/phone";
+import { useStoreLocale } from "@/components/providers/locale";
 import { honeypotProps } from "@/lib/honeypot";
+import { phonePlaceholder } from "@/lib/phone";
 import { Turnstile } from "@/components/ui/turnstile";
 
 function Submit({ children }: { children: React.ReactNode }) {
@@ -89,6 +91,8 @@ export function LoginForm({ next }: { next?: string }) {
 export function RegisterForm({ next }: { next?: string }) {
   const [state, action] = useActionState<AuthFormState, FormData>(registerAction, {});
   const [phone, setPhone] = useState("");
+  const { country } = useStoreLocale();
+  const pk = country === "PK"; // other countries type the number with its +code
   const fe = state.fieldErrors ?? {};
   return (
     <form action={action} className="space-y-4" noValidate>
@@ -108,12 +112,12 @@ export function RegisterForm({ next }: { next?: string }) {
           {...fieldAria("reg-phone", fe.phone, "hint")}
           name="phone"
           type="tel"
-          inputMode="numeric"
-          placeholder="03XX-XXXXXXX"
-          autoComplete="tel-national"
+          inputMode={pk ? "numeric" : "tel"}
+          placeholder={phonePlaceholder(country)}
+          autoComplete={pk ? "tel-national" : "tel"}
           value={phone}
-          onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
-          maxLength={12}
+          onChange={(e) => setPhone(formatPhoneInput(e.target.value, country))}
+          maxLength={pk ? 12 : 20}
         />
       </Field>
       <Field id="reg-password" label="Password" required error={fe.password} hint="At least 8 characters">

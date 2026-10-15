@@ -1,14 +1,17 @@
 import type { Condition, Product } from "./types";
+import { formatMoney } from "./money";
+import { normalizePkMobile } from "./phone";
 
 export function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-const pkr = new Intl.NumberFormat("en-PK", { maximumFractionDigits: 0 });
-
-/** 145000 → "Rs 145,000" */
+/**
+ * 145000 → "Rs 145,000" – the original shop's currency only.
+ * @deprecated use the store's currency: `useMoney()` (client), `getMoney()` (server) or `formatMoney(amount, locale)`.
+ */
 export function formatPKR(amount: number) {
-  return `Rs ${pkr.format(Math.round(amount))}`;
+  return formatMoney(amount);
 }
 
 export function slugify(input: string) {
@@ -66,19 +69,16 @@ export function readingTime(markdown: string) {
   return Math.max(1, Math.round(markdown.split(/\s+/).length / 220));
 }
 
-export function formatDate(iso: string, opts: Intl.DateTimeFormatOptions = { dateStyle: "medium" }) {
-  return new Intl.DateTimeFormat("en-PK", opts).format(new Date(iso));
+/** A date in the store's language and time zone (`loc` from `useStoreLocale()` / `getStoreLocale()`; default: the original shop's). */
+export function formatDate(iso: string, opts: Intl.DateTimeFormatOptions = { dateStyle: "medium" }, loc: { locale: string; timezone?: string } = { locale: "en-PK" }) {
+  return new Intl.DateTimeFormat(loc.locale, { ...(loc.timezone ? { timeZone: loc.timezone } : {}), ...opts }).format(new Date(iso));
 }
 
-/** Pakistani mobile: 03XX-XXXXXXX (also accepts +92 / 92 prefixes and spaces) */
-export function normalizePkPhone(input: string): string | null {
-  const digits = input.replace(/[^\d+]/g, "");
-  let local = digits;
-  if (local.startsWith("+92")) local = "0" + local.slice(3);
-  else if (local.startsWith("92") && local.length === 12) local = "0" + local.slice(2);
-  if (!/^03\d{9}$/.test(local)) return null;
-  return `${local.slice(0, 4)}-${local.slice(4)}`;
-}
+/**
+ * Pakistani mobile: 03XX-XXXXXXX (also accepts +92 / 92 prefixes and spaces)
+ * @deprecated any country: `normalizePhone(input, storeCountry)` from lib/phone.ts.
+ */
+export const normalizePkPhone = (input: string): string | null => normalizePkMobile(input);
 
 export function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s;

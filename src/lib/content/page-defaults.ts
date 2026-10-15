@@ -5,7 +5,7 @@
  */
 import type { SiteInfo } from "@/lib/site-info";
 import type { StoreSettings } from "@/lib/types";
-import { formatPKR } from "@/lib/utils";
+import { formatMoney } from "@/lib/money";
 import { deliveryCharge } from "@/lib/cities";
 
 export const CONTENT_TOKENS: { token: string; help: string }[] = [
@@ -21,18 +21,19 @@ export const CONTENT_TOKENS: { token: string; help: string }[] = [
   { token: "hours", help: "Opening hours text" },
   { token: "domain", help: "Website domain" },
   { token: "couriers", help: "Courier partners" },
-  { token: "freeDelivery", help: "Free-delivery threshold (Rs)" },
+  { token: "freeDelivery", help: "Free-delivery threshold" },
   { token: "chargeKarachi", help: "Delivery charge – Karachi" },
   { token: "chargeLahore", help: "Delivery charge – Lahore" },
   { token: "chargeDefault", help: "Default delivery charge" },
-  { token: "advanceThreshold", help: "COD advance applies above (Rs)" },
-  { token: "advanceAmount", help: "COD advance amount (Rs)" },
+  { token: "advanceThreshold", help: "COD advance applies above" },
+  { token: "advanceAmount", help: "COD advance amount" },
 ];
 
-export function tokenValues(info: SiteInfo, settings?: StoreSettings | null): Record<string, string> {
+/** `money` = the store's money formatter (`await getMoney()`); the original shop's rupees when left out. */
+export function tokenValues(info: SiteInfo, settings?: StoreSettings | null, money: (amount: number) => string = formatMoney): Record<string, string> {
   const displays = info.phones.map((p) => p.display);
   // same rules as checkout: the zone's charge for that city (/cms → Delivery & payments → Delivery charges)
-  const charge = (city: string) => (settings ? formatPKR(deliveryCharge(city, 0, settings)) : "");
+  const charge = (city: string) => (settings ? money(deliveryCharge(city, 0, settings)) : "");
   return {
     storeName: info.name,
     address: info.address.full,
@@ -47,12 +48,12 @@ export function tokenValues(info: SiteInfo, settings?: StoreSettings | null): Re
     hours: info.hoursDisplay,
     domain: info.url.replace(/^https?:\/\//, ""),
     couriers: info.couriers.join(", "),
-    freeDelivery: settings ? formatPKR(settings.freeDeliveryThreshold) : "",
+    freeDelivery: settings ? money(settings.freeDeliveryThreshold) : "",
     chargeKarachi: charge("Karachi"),
     chargeLahore: charge("Lahore"),
-    chargeDefault: settings ? formatPKR(settings.defaultDeliveryCharge) : "",
-    advanceThreshold: settings ? formatPKR(settings.advanceThreshold) : "",
-    advanceAmount: settings ? formatPKR(settings.advanceAmount) : "",
+    chargeDefault: settings ? money(settings.defaultDeliveryCharge) : "",
+    advanceThreshold: settings ? money(settings.advanceThreshold) : "",
+    advanceAmount: settings ? money(settings.advanceAmount) : "",
   };
 }
 
@@ -395,9 +396,22 @@ const PLAIN_PAGE_CONTENT: Record<string, { eyebrow?: string; title?: string; des
   "/blog": { intro: "News, guides and tips from {{storeName}}." },
 };
 
-/** Terms: the original shop names its city's courts; other stores refer to their own place of business. */
+/**
+ * Terms: the original shop names its city's courts, Pakistani rupees, its wallets and Pakistani law; other stores (any
+ * country, any currency) refer to their own place of business and checkout.
+ */
 const plainTerms = (body: string) =>
-  body.replace("the courts of **Karachi, Sindh**", "the courts where {{storeName}} has its place of business").replace(", by phone or at our shop at {{address}}", " or by phone");
+  body
+    .replace("the courts of **Karachi, Sindh**", "the courts where {{storeName}} has its place of business")
+    .replace(", by phone or at our shop at {{address}}", " or by phone")
+    .replace("All prices are in **Pakistani Rupees (PKR)** and include", "All prices are in the currency shown on our website and include")
+    .replace("Laptop prices in Pakistan change frequently with exchange rates and supply.", "Prices can change with exchange rates and supply.")
+    .replace("We accept **Cash on Delivery**, **JazzCash**, **EasyPaisa** and **bank transfer**. Card payments will be added soon.", "The payment methods we accept are shown at checkout.")
+    .replace("applicable Pakistani consumer protection laws", "applicable consumer protection laws")
+    .replace("governed by the laws of Pakistan", "governed by applicable law");
+
+/** Privacy: Pakistani law and wallets are the original shop's; other stores follow their own. */
+const plainPrivacy = (body: string) => body.replace("when required by Pakistani law", "when required by law").replace("screenshots of bank, JazzCash or EasyPaisa transfers", "screenshots of bank or online transfers");
 
 /** Built-in content per page key (fields not listed are rendered from the page's own JSX). */
 export const DEFAULT_PAGE_CONTENT: Record<string, { eyebrow?: string; title?: string; description?: string; body?: string; intro?: string; seoCopy?: string; updated?: string }> = {
@@ -476,7 +490,8 @@ export type ResolvedPageContent = { eyebrow: string; title: string; description:
 export function resolvePageContent(key: string, saved: Partial<ResolvedPageContent> | null | undefined, opts: { original?: boolean } = {}): ResolvedPageContent {
   const base = DEFAULT_PAGE_CONTENT[key] ?? {};
   // the original shop keeps its own texts; every other store gets the plain ones (its own name and details)
-  const d = opts.original === false ? { ...base, ...(key === "/terms" && base.body ? { body: plainTerms(base.body) } : {}), ...(PLAIN_PAGE_CONTENT[key] ?? {}) } : base;
+  const plainBody = key === "/terms" ? plainTerms : key === "/privacy-policy" ? plainPrivacy : null;
+  const d = opts.original === false ? { ...base, ...(plainBody && base.body ? { body: plainBody(base.body) } : {}), ...(PLAIN_PAGE_CONTENT[key] ?? {}) } : base;
   const pick = (k: keyof ResolvedPageContent) => {
     const v = saved?.[k];
     return typeof v === "string" && v.trim() ? v : d[k] ?? "";

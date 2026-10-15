@@ -1,5 +1,5 @@
 /**
- * Pakistani courier partners and their public tracking pages.
+ * Courier partners (Pakistan's, and the big international ones) and their public tracking pages.
  * `track(cn)` returns a deep link where the courier supports one; otherwise the courier's tracking page.
  * Verify these URLs periodically – couriers occasionally change their tracking pages.
  */
@@ -42,6 +42,37 @@ export const COURIERS: Record<string, CourierInfo> = {
     website: "https://callcourier.com.pk",
     track: (n) => `https://callcourier.com.pk/tracking/?tc=${enc(n)}`,
   },
+  // international
+  dhl: {
+    name: "DHL",
+    website: "https://www.dhl.com",
+    track: (n) => `https://www.dhl.com/global-en/home/tracking/tracking-express.html?submit=1&tracking-id=${enc(n)}`,
+  },
+  fedex: {
+    name: "FedEx",
+    website: "https://www.fedex.com",
+    track: (n) => `https://www.fedex.com/fedextrack/?trknbr=${enc(n)}`,
+  },
+  ups: {
+    name: "UPS",
+    website: "https://www.ups.com",
+    track: (n) => `https://www.ups.com/track?tracknum=${enc(n)}`,
+  },
+  usps: {
+    name: "USPS",
+    website: "https://www.usps.com",
+    track: (n) => `https://tools.usps.com/go/TrackConfirmAction?tLabels=${enc(n)}`,
+  },
+  aramex: {
+    name: "Aramex",
+    website: "https://www.aramex.com",
+    track: (n) => `https://www.aramex.com/track/results?ShipmentNumber=${enc(n)}`,
+  },
+  "royal mail": {
+    name: "Royal Mail",
+    website: "https://www.royalmail.com",
+    track: (n) => `https://www.royalmail.com/track-your-item#/tracking-results/${enc(n)}`,
+  },
 };
 
 const ALIASES: Record<string, string> = {
@@ -55,6 +86,9 @@ const ALIASES: Record<string, string> = {
   "trax logistics": "trax",
   "post ex": "postex",
   callcourier: "call courier",
+  "dhl express": "dhl",
+  "fed ex": "fedex",
+  royalmail: "royal mail",
 };
 
 export function courierInfo(courier?: string | null): CourierInfo | null {

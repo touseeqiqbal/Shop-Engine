@@ -10,9 +10,9 @@ import { deliveryEstimate, freeDeliveryAbove } from "@/lib/cities";
 import { orderTotals } from "@/lib/order-totals";
 import { waLink } from "@/lib/site";
 import { useSiteInfo } from "@/components/providers/site-info";
+import { useMoney, useStoreLocale } from "@/components/providers/locale";
 import { primaryPhone } from "@/lib/site-info";
 import type { StoreSettings } from "@/lib/types";
-import { formatPKR } from "@/lib/utils";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CityCombobox } from "./city-combobox";
@@ -27,6 +27,8 @@ export function CartView({ settings }: { settings: StoreSettings }) {
   const syncNotice = useCartSync(hydrated);
   const [city, setCity] = useState("");
   const site = useSiteInfo(); // live business profile (/cms → Settings → Store details)
+  const money = useMoney();
+  const pk = useStoreLocale().country === "PK"; // "all over Pakistan" only for Pakistani stores
 
   if (!hydrated) return <CartSkeleton />;
 
@@ -38,7 +40,7 @@ export function CartView({ settings }: { settings: StoreSettings }) {
         </div>
         <h2 className="text-xl font-bold">Your cart is empty</h2>
         <p className="max-w-sm text-sm text-muted">
-          Explore new, used & refurbished laptops and accessories – Cash on Delivery all over Pakistan.
+          Explore new, used & refurbished laptops and accessories – {pk ? "Cash on Delivery all over Pakistan" : "fast delivery nationwide"}.
         </p>
         <div className="flex flex-wrap justify-center gap-2">
           <Link href="/shop" className="btn btn-primary">
@@ -64,12 +66,12 @@ export function CartView({ settings }: { settings: StoreSettings }) {
     `Hi ${site.name}, I'd like to order:`,
     ...lines.map(
       (l, i) =>
-        `${i + 1}. ${l.name}${l.upgrades.length ? ` (+ ${l.upgrades.map((u) => u.label).join(", ")})` : ""} × ${l.qty} – ${formatPKR(l.unitPrice * l.qty)}\n   ${site.url}${l.url}`
+        `${i + 1}. ${l.name}${l.upgrades.length ? ` (+ ${l.upgrades.map((u) => u.label).join(", ")})` : ""} × ${l.qty} – ${money(l.unitPrice * l.qty)}\n   ${site.url}${l.url}`
     ),
-    `Subtotal: ${formatPKR(subtotal)}`,
-    discount && coupon.code ? `Coupon ${coupon.code}: −${formatPKR(discount)}` : "",
-    city ? `City: ${city} (delivery ${delivery ? formatPKR(delivery) : "FREE"})` : "",
-    `Total: ${formatPKR(total)}${city ? "" : " + delivery"}`,
+    `Subtotal: ${money(subtotal)}`,
+    discount && coupon.code ? `Coupon ${coupon.code}: −${money(discount)}` : "",
+    city ? `City: ${city} (delivery ${delivery ? money(delivery) : "FREE"})` : "",
+    `Total: ${money(total)}${city ? "" : " + delivery"}`,
     "Name:",
     "Address:",
   ]
@@ -127,7 +129,7 @@ export function CartView({ settings }: { settings: StoreSettings }) {
                     <ul className="mt-1.5 flex flex-wrap gap-1.5" aria-label="Selected upgrades">
                       {l.upgrades.map((u) => (
                         <li key={u.id} className="chip border-violet-500/30 bg-violet-500/10 text-[11px] text-violet-200">
-                          {u.label} <span className="text-violet-300/80">+{formatPKR(u.price)}</span>
+                          {u.label} <span className="text-violet-300/80">+{money(u.price)}</span>
                         </li>
                       ))}
                     </ul>
@@ -135,8 +137,8 @@ export function CartView({ settings }: { settings: StoreSettings }) {
                   <div className="mt-auto flex flex-wrap items-end justify-between gap-3 pt-3">
                     <QtyStepper name={l.name} qty={l.qty} max={Math.max(l.stock, 1)} onChange={(q) => setQty(l.key, q)} />
                     <div className="text-right">
-                      <p className="font-display text-lg font-bold tabular-nums">{formatPKR(l.unitPrice * l.qty)}</p>
-                      {l.qty > 1 && <p className="text-xs text-muted tabular-nums">{formatPKR(l.unitPrice)} each</p>}
+                      <p className="font-display text-lg font-bold tabular-nums">{money(l.unitPrice * l.qty)}</p>
+                      {l.qty > 1 && <p className="text-xs text-muted tabular-nums">{money(l.unitPrice)} each</p>}
                     </div>
                   </div>
                   {l.stock > 0 && l.stock <= 3 && <p className="mt-1 text-xs font-medium text-amber-400">Only {l.stock} left in stock</p>}
@@ -168,23 +170,23 @@ export function CartView({ settings }: { settings: StoreSettings }) {
           <dl className="space-y-2 border-t border-border pt-4 text-sm">
             <div className="flex justify-between">
               <dt className="text-muted">Subtotal ({cartCount(lines)} items)</dt>
-              <dd className="tabular-nums">{formatPKR(subtotal)}</dd>
+              <dd className="tabular-nums">{money(subtotal)}</dd>
             </div>
             {discount > 0 && (
               <div className="flex justify-between text-emerald-400">
                 <dt>Coupon ({coupon.code})</dt>
-                <dd className="tabular-nums">− {formatPKR(discount)}</dd>
+                <dd className="tabular-nums">− {money(discount)}</dd>
               </div>
             )}
             <div className="flex justify-between">
               <dt className="text-muted">Delivery</dt>
               <dd className="tabular-nums">
-                {delivery === null ? <span className="text-muted">Select city</span> : delivery === 0 ? <span className="font-semibold text-emerald-400">FREE</span> : formatPKR(delivery)}
+                {delivery === null ? <span className="text-muted">Select city</span> : delivery === 0 ? <span className="font-semibold text-emerald-400">FREE</span> : money(delivery)}
               </dd>
             </div>
             <div className="flex items-baseline justify-between border-t border-border pt-3">
               <dt className="font-semibold">Total</dt>
-              <dd className="font-display text-2xl font-extrabold tabular-nums">{formatPKR(total)}</dd>
+              <dd className="font-display text-2xl font-extrabold tabular-nums">{money(total)}</dd>
             </div>
           </dl>
           <div className="space-y-2.5">
@@ -197,14 +199,16 @@ export function CartView({ settings }: { settings: StoreSettings }) {
           </div>
           <ul className="grid gap-2 text-xs text-muted">
             <li className="flex items-center gap-2">
-              <Wallet className="size-4 text-violet-300" aria-hidden="true" /> Cash on Delivery all over Pakistan
+              <Wallet className="size-4 text-violet-300" aria-hidden="true" /> {pk ? "Cash on Delivery all over Pakistan" : "Flexible payment options at checkout"}
             </li>
             <li className="flex items-center gap-2">
               <ShieldCheck className="size-4 text-violet-300" aria-hidden="true" /> Checked & tested · warranty on every product
             </li>
             <li className="flex items-center gap-2">
               <Truck className="size-4 text-violet-300" aria-hidden="true" />{" "}
-              {settings.freeDeliveryThreshold > 0 ? `Free delivery above ${formatPKR(settings.freeDeliveryThreshold)}${settings.zones?.length ? " (most cities)" : ""}` : "Fast delivery all over Pakistan"}
+              {settings.freeDeliveryThreshold > 0
+                ? `Free delivery above ${money(settings.freeDeliveryThreshold)}${settings.zones?.length ? " (most cities)" : ""}`
+                : `Fast delivery ${pk ? "all over Pakistan" : "nationwide"}`}
             </li>
           </ul>
         </div>
@@ -214,7 +218,7 @@ export function CartView({ settings }: { settings: StoreSettings }) {
       <div className="glass fixed inset-x-0 bottom-16 z-30 flex items-center gap-3 border-x-0 px-4 py-3 lg:hidden">
         <div className="min-w-0 flex-1">
           <p className="text-xs text-muted">Total</p>
-          <p className="font-display text-lg font-bold tabular-nums">{formatPKR(total)}</p>
+          <p className="font-display text-lg font-bold tabular-nums">{money(total)}</p>
         </div>
         <Link href="/checkout" className="btn btn-primary">
           Checkout <ArrowRight className="size-4" aria-hidden="true" />

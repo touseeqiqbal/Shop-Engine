@@ -1,3 +1,4 @@
+import type { ManualMethodSettings, PaymentDue } from "./payments/methods";
 /* Shared domain types. Mirrors prisma/schema.prisma (same field names). */
 
 export type AttributeKind = "select" | "boolean" | "range";
@@ -225,7 +226,10 @@ export interface OrderRisk {
   reasons: string;
 }
 
-export type PaymentMethod = "cod" | "jazzcash" | "easypaisa" | "bank" | "card";
+/** The payment methods the platform knows (lib/payments/methods.ts). */
+export type BuiltInPaymentMethod = "cod" | "jazzcash" | "easypaisa" | "bank" | "card";
+/** A built-in method or a store's own one ("upi", "m-pesa" …) – see lib/payments/methods.ts. */
+export type PaymentMethod = BuiltInPaymentMethod | (string & {});
 export type PaymentStatus = "unpaid" | "awaiting-verification" | "paid" | "refunded" | "partial" | "partially-refunded";
 
 export interface OrderItem {
@@ -246,6 +250,11 @@ export interface OrderCustomer {
   city: string;
   address: string;
   landmark?: string;
+  /** state / province / county (stores outside Pakistan) */
+  region?: string;
+  postalCode?: string;
+  /** ISO code; the store's country unless the store ships abroad */
+  country?: string;
 }
 
 export interface OrderEvent {
@@ -268,6 +277,12 @@ export interface Order {
   total: number;
   advancePaid?: number;
   paymentMethod: PaymentMethod;
+  /** the method's name when the order was placed ("Bank Transfer", "UPI") */
+  paymentMethodLabel?: string | null;
+  /** paid before shipping, or when delivered (cash on delivery and the like) */
+  paymentDue?: PaymentDue | null;
+  /** ISO currency of every amount on the order (the store's when it was placed) */
+  currency?: string;
   paymentStatus: PaymentStatus;
   paymentScreenshotUrl?: string | null;
   courier?: string | null;
@@ -323,6 +338,8 @@ export interface ShippingZone {
   name: string;
   /** City names (as in PAKISTAN_CITIES); ignored when `rest` is true */
   cities: string[];
+  /** Any country: cities, areas or postcode starts typed by the store (matched without case; "SW1*" = postcodes starting SW1) */
+  places?: string[];
   /** Catch-all zone for every city not in another zone */
   rest?: boolean;
   charge: number;
@@ -376,8 +393,14 @@ export interface StoreSettings {
   tax?: TaxSettings;
   /** the store's online payment account is connected and can take cards */
   cardReady?: boolean;
+  /** the provider that takes the store's card payments (lib/payments/catalog.ts), e.g. "stripe" */
+  cardGateway?: string | null;
+  /** the store's own payment methods (any country's wallets, banks, "card on delivery" …) */
+  manualMethods?: ManualMethodSettings[];
   /** ISO currency of the store's prices */
   currency?: string;
+  /** ISO country of the store (address form, phone numbers, which payment methods exist) */
+  country?: string;
 }
 
 export interface Redirect {
@@ -460,6 +483,8 @@ export interface SavedAddress {
   city: string;
   address: string;
   landmark?: string;
+  region?: string;
+  postalCode?: string;
   isDefault?: boolean;
 }
 

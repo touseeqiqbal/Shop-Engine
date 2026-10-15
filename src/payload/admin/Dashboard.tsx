@@ -5,6 +5,9 @@ import { useAuth } from "@payloadcms/ui";
 import { ConfigBackup } from "./ConfigBackup";
 import { Icon } from "./ui/icons";
 import { ORDER_STATUS } from "./orders/status";
+import { useAdminLocale, useAdminMoney } from "./ui/store-context";
+import { addDays, dayIn, formatDate, zoneOffsetMinutes } from "../../lib/time";
+import type { StoreLocale } from "../../lib/locale";
 
 /**
  * Home (replaces Payload's default dashboard): greeting, To do, Today vs yesterday, simple charts,
@@ -38,9 +41,16 @@ type Report = {
   greetingName: string;
 };
 
-const rs = (n: number) => `Rs ${Math.round(n).toLocaleString("en-PK")}`;
-const shortDay = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" });
-const pkt = () => new Date(Date.now() + 5 * 3600e3);
+const shortDay = (d: string, locale: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString(locale, { weekday: "short", timeZone: "UTC" });
+/** Now on the store's clock: today ("YYYY-MM-DD"), the hour (0–23) and today's date written out. */
+const storeNow = (loc: StoreLocale) => {
+  const now = Date.now();
+  return {
+    today: dayIn(now, loc.timezone),
+    hour: new Date(now + zoneOffsetMinutes(loc.timezone, now) * 60000).getUTCHours(),
+    label: formatDate(now, loc, { weekday: "long", day: "numeric", month: "long", year: "numeric" }),
+  };
+};
 const ORDERS = "/cms/collections/orders";
 const where = (field: string, op: string, value: string) => `?where%5B${field}%5D%5B${op}%5D=${encodeURIComponent(value)}`;
 
@@ -58,11 +68,14 @@ export function Dashboard() {
   const [days, setDays] = useState<7 | 30>(7);
   const [data, setData] = useState<Report | null>(null);
   const [error, setError] = useState("");
+  // days, the greeting and money in the store's own time zone and currency
+  const loc = useAdminLocale();
+  const money = useAdminMoney();
+  const { today: to, hour, label: dateLabel } = storeNow(loc);
 
   useEffect(() => {
     let alive = true;
-    const to = pkt().toISOString().slice(0, 10);
-    const from = new Date(Date.parse(`${to}T00:00:00Z`) - (days - 1) * 864e5).toISOString().slice(0, 10);
+    const from = addDays(to, -(days - 1));
     fetch(`/cms-api/reports?from=${from}&to=${to}`, { credentials: "include" })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((d: Report) => alive && setData(d))
@@ -70,12 +83,10 @@ export function Dashboard() {
     return () => {
       alive = false;
     };
-  }, [days]);
+  }, [days, to]);
 
-  const hour = pkt().getUTCHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const name = data?.greetingName || user?.name?.split(" ")[0] || "";
-  const dateLabel = pkt().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
   const max = useMemo(() => Math.max(1, ...(data?.series.map((s) => s.revenue) ?? [1])), [data]);
   const setupLeft = data?.setup.filter((s) => !s.done) ?? [];
 
@@ -162,7 +173,7 @@ export function Dashboard() {
             <div className="urko-muted" title="Confirmed, shipped and delivered orders plus shop-counter sales. New orders count once you confirm them.">
               Sales <span className="urko-small">(confirmed)</span>
             </div>
-            <div className="urko-big">{data ? rs(data.kpis.today.revenue) : "…"}</div>
+            <div className="urko-big">{data ? money(data.kpis.today.revenue) : "…"}</div>
             {data && <Change now={data.kpis.today.revenue} before={data.kpis.yesterday.revenue} money />}
           </div>
           <div className="urko-card">
@@ -172,7 +183,7 @@ export function Dashboard() {
           </div>
           <div className="urko-card">
             <div className="urko-muted">Average order</div>
-            <div className="urko-big">{data ? rs(data.kpis.today.aov) : "…"}</div>
+            <div className="urko-big">{data ? money(data.kpis.today.aov) : "…"}</div>
             {data && <Change now={data.kpis.today.aov} before={data.kpis.yesterday.aov} money />}
           </div>
           <div className="urko-card">
@@ -202,15 +213,15 @@ export function Dashboard() {
           </div>
           {data ? (
             <>
-              <div className="urko-bars" role="img" aria-label={`Sales per day for the last ${days} days. Total ${rs(data.kpis.range.revenue)}.`}>
+              <div className="urko-bars" role="img" aria-label={`Sales per day for the last ${days} days. Total ${money(data.kpis.range.revenue)}.`}>
                 {data.series.map((s) => (
-                  <span key={s.day} title={`${s.day}: ${rs(s.revenue)} · ${s.orders} orders`} style={{ height: `${Math.max(s.revenue ? 3 : 1, (s.revenue / max) * 100)}%` }} />
+                  <span key={s.day} title={`${s.day}: ${money(s.revenue)} · ${s.orders} orders`} style={{ height: `${Math.max(s.revenue ? 3 : 1, (s.revenue / max) * 100)}%` }} />
                 ))}
               </div>
               <div className="urko-bars__legend urko-muted urko-small">
-                <span>{days === 7 ? shortDay(data.series[0]?.day ?? "") : data.range.from.slice(5)}</span>
+                <span>{days === 7 ? shortDay(data.series[0]?.day ?? "", loc.locale) : data.range.from.slice(5)}</span>
                 <span>
-                  Total <strong className="urko-text">{rs(data.kpis.range.revenue)}</strong> · {data.kpis.range.orders} order{data.kpis.range.orders === 1 ? "" : "s"}
+                  Total <strong className="urko-text">{money(data.kpis.range.revenue)}</strong> · {data.kpis.range.orders} order{data.kpis.range.orders === 1 ? "" : "s"}
                 </span>
                 <span>Today</span>
               </div>
@@ -230,7 +241,7 @@ export function Dashboard() {
                 <li key={p.key}>
                   <span className="urko-list__main">{p.title}</span>
                   <span className="urko-muted urko-small">{p.qty} sold</span>
-                  <strong>{rs(p.revenue)}</strong>
+                  <strong>{money(p.revenue)}</strong>
                 </li>
               ))}
             </ol>
@@ -363,7 +374,7 @@ export function Dashboard() {
                       <span className="urko-badge__dot" />
                       {st.label}
                     </span>
-                    <strong>{rs(o.total)}</strong>
+                    <strong>{money(o.total)}</strong>
                   </Link>
                 </li>
               );

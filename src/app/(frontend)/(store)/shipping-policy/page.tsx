@@ -5,7 +5,8 @@ import { Markdown } from "@/components/ui/markdown";
 import { InlineText } from "@/components/content/inline-text";
 import { getPageMeta } from "@/lib/page-seo";
 import { getResolvedPageContent } from "@/lib/repo/site-content";
-import { formatPKR } from "@/lib/utils";
+import { moneyFormatter } from "@/lib/money";
+import { getStoreLocale } from "@/lib/store-locale";
 import { deliveryCharge, deliveryEstimate } from "@/lib/cities";
 
 export const revalidate = 300;
@@ -15,24 +16,30 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function ShippingPolicyPage() {
-  const c = await getResolvedPageContent("/shipping-policy");
+  const [c, loc] = await Promise.all([getResolvedPageContent("/shipping-policy"), getStoreLocale()]);
   const { settings: s, info: site } = c;
-  const charge = (city: string) => formatPKR(deliveryCharge(city, 0, s));
-  const free = formatPKR(s.freeDeliveryThreshold);
+  // amounts in the store's currency; the Karachi / Pakistani cities wording only for a store in Pakistan
+  const money = moneyFormatter(loc);
+  const pk = loc.country === "PK";
+  const charge = (city: string) => money(deliveryCharge(city, 0, s));
+  const free = money(s.freeDeliveryThreshold);
+  const restAreas = `All other cities, towns and areas served by our courier partners${pk ? ", including AJK and Gilgit-Baltistan" : ""}`;
 
   // Zones from /cms → Delivery & payments → Delivery charges (the same ones checkout uses); old defaults otherwise
   const rows = s.zones?.length
     ? s.zones.map((z) => ({
         zone: z.name,
-        areas: z.rest ? "All other cities, towns and areas served by our courier partners, including AJK and Gilgit-Baltistan" : z.cities.join(", "),
+        areas: z.rest ? restAreas : z.cities.join(", "),
         time: z.estimate?.trim() || (z.rest ? "3–5 working days" : deliveryEstimate(z.cities[0] ?? "", s).label),
-        fee: `${formatPKR(z.charge)}${z.freeAbove != null && z.freeAbove !== s.freeDeliveryThreshold ? (z.freeAbove > 0 ? ` (free over ${formatPKR(z.freeAbove)})` : " (never free)") : ""}`,
+        fee: `${money(z.charge)}${z.freeAbove != null && z.freeAbove !== s.freeDeliveryThreshold ? (z.freeAbove > 0 ? ` (free over ${money(z.freeAbove)})` : " (never free)") : ""}`,
       }))
-    : [
-        { zone: "Karachi", areas: "All areas of Karachi incl. DHA, Clifton, Gulshan, North Nazimabad, Korangi, Malir", time: "Same day / next day", fee: charge("Karachi") },
-        { zone: "Major cities", areas: "Lahore, Islamabad, Rawalpindi, Faisalabad, Multan, Peshawar, Quetta, Hyderabad, Sialkot, Gujranwala, Sukkur", time: "1–3 working days", fee: `${charge("Lahore")} – ${formatPKR(s.defaultDeliveryCharge)}` },
-        { zone: "Other cities & towns", areas: "All other cities, towns and areas served by our courier partners, including AJK and Gilgit-Baltistan", time: "3–5 working days", fee: formatPKR(s.defaultDeliveryCharge) },
-      ];
+    : pk
+      ? [
+          { zone: "Karachi", areas: "All areas of Karachi incl. DHA, Clifton, Gulshan, North Nazimabad, Korangi, Malir", time: "Same day / next day", fee: charge("Karachi") },
+          { zone: "Major cities", areas: "Lahore, Islamabad, Rawalpindi, Faisalabad, Multan, Peshawar, Quetta, Hyderabad, Sialkot, Gujranwala, Sukkur", time: "1–3 working days", fee: `${charge("Lahore")} – ${money(s.defaultDeliveryCharge)}` },
+          { zone: "Other cities & towns", areas: restAreas, time: "3–5 working days", fee: money(s.defaultDeliveryCharge) },
+        ]
+      : [{ zone: "All areas", areas: "All cities, towns and areas served by our courier partners", time: deliveryEstimate("", s).label, fee: money(s.defaultDeliveryCharge) }];
 
   // Policy text: /cms → Online store → Page texts (defaults in src/lib/content/page-defaults.ts).
 
@@ -40,9 +47,9 @@ export default async function ShippingPolicyPage() {
     <PolicyLayout path="/shipping-policy" name="Shipping Policy" eyebrow={c.eyebrow || undefined} title={<InlineText text={c.title} />} description={c.description} updated={c.updated}>
       <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          { icon: Truck, t: "Karachi same / next day", d: "Major cities 1–3 days" },
+          pk ? { icon: Truck, t: "Karachi same / next day", d: "Major cities 1–3 days" } : { icon: Truck, t: "Fast, tracked delivery", d: deliveryEstimate("", s).label },
           { icon: Gift, t: `Free delivery over ${free}`, d: "On every order" },
-          { icon: Wallet, t: "Cash on Delivery", d: "All over Pakistan" },
+          { icon: Wallet, t: "Cash on Delivery", d: pk ? "All over Pakistan" : "Nationwide" },
           { icon: PackageCheck, t: "Tracked & safely packed", d: "Bubble wrap + box" },
         ].map((b) => (
           <li key={b.t} className="card flex items-center gap-3 p-4">

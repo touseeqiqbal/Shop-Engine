@@ -3,22 +3,9 @@ import { useId, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, MapPin } from "lucide-react";
 import { PAKISTAN_CITIES, MAJOR_CITIES } from "@/lib/cities";
 import { cn } from "@/lib/utils";
+import { useStoreLocale } from "@/components/providers/locale";
 
-/**
- * Accessible searchable city picker (WAI-ARIA 1.2 combobox + listbox).
- * Keyboard: ↑/↓ move, Enter select, Esc close, Home/End jump, Tab commits the highlighted city.
- */
-export function CityCombobox({
-  value,
-  onChange,
-  name = "city",
-  label = "City",
-  error,
-  required,
-  id: idProp,
-  className,
-  placeholder = "Search your city…",
-}: {
+type CityProps = {
   value: string;
   onChange: (city: string) => void;
   name?: string;
@@ -28,7 +15,64 @@ export function CityCombobox({
   id?: string;
   className?: string;
   placeholder?: string;
-}) {
+};
+
+/** The city field: Pakistani stores pick from the city list; stores elsewhere let the shopper type their city. */
+export function CityCombobox(props: CityProps) {
+  return useStoreLocale().country === "PK" ? <PakistanCityCombobox {...props} /> : <CityInput {...props} />;
+}
+
+/** A plain city / town field (stores outside Pakistan). */
+function CityInput({ value, onChange, name = "city", label = "City", error, required, id: idProp, className, placeholder = "Your city or town" }: CityProps) {
+  const autoId = useId();
+  const id = idProp ?? `city-${autoId}`;
+  const errId = `${id}-error`;
+  return (
+    <div className={className}>
+      <label htmlFor={id} className="label">
+        {label} {required && <span className="text-rose-400" aria-hidden="true">*</span>}
+      </label>
+      <div className="relative">
+        <MapPin className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-subtle" aria-hidden="true" />
+        <input
+          id={id}
+          name={name}
+          type="text"
+          autoComplete="address-level2"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errId : undefined}
+          aria-required={required}
+          className={cn("input pl-10", error && "border-rose-500/70")}
+          placeholder={placeholder}
+          maxLength={80}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </div>
+      {error && (
+        <p id={errId} className="mt-1.5 text-xs font-medium text-rose-400">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Accessible searchable picker of Pakistani cities (WAI-ARIA 1.2 combobox + listbox).
+ * Keyboard: ↑/↓ move, Enter select, Esc close, Home/End jump, Tab commits the highlighted city.
+ */
+function PakistanCityCombobox({
+  value,
+  onChange,
+  name = "city",
+  label = "City",
+  error,
+  required,
+  id: idProp,
+  className,
+  placeholder = "Search your city…",
+}: CityProps) {
   const autoId = useId();
   const id = idProp ?? `city-${autoId}`;
   const listId = `${id}-list`;

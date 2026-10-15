@@ -3,9 +3,13 @@ import { useActionState, useRef, useState, useTransition } from "react";
 import { CheckCircle2, ImagePlus, X } from "lucide-react";
 import { lookupForReturn, submitReturn, submitWarranty, type LookupState, type SubmitState } from "@/app/(frontend)/(store)/returns/actions";
 import { compressImage } from "@/lib/compress-image";
-import { formatPKR } from "@/lib/utils";
+import { phonePlaceholder } from "@/lib/phone";
+import { useMoney, useStoreLocale } from "@/components/providers/locale";
 import { Turnstile } from "@/components/ui/turnstile";
 import { honeypotProps } from "@/lib/honeypot";
+
+/** Example in the phone fields: the original shop's familiar "0300-1234567", else the store country's format. */
+const phoneExample = (country: string) => (country === "PK" ? "0300-1234567" : phonePlaceholder(country));
 
 /** Return request (find order → pick items → reason + photos) and warranty claim (serial / order + problem + photos). */
 export function AfterSalesForms({ initial, reasons, requirePhotos, returnDays }: { initial: "return" | "warranty"; reasons: string[]; requirePhotos: boolean; returnDays: number }) {
@@ -93,6 +97,8 @@ function ReturnForm({ reasons, requirePhotos, returnDays }: { reasons: string[];
   const [qty, setQty] = useState<Record<number, number>>({});
   const [files, setFiles] = useState<File[]>([]);
   const [state, action, pending] = useActionState<SubmitState, FormData>(submitReturn, null);
+  const money = useMoney();
+  const { country } = useStoreLocale();
   if (state?.ok) return <Done state={state} />;
 
   const order = found?.ok ? found.order : null;
@@ -112,7 +118,7 @@ function ReturnForm({ reasons, requirePhotos, returnDays }: { reasons: string[];
         </label>
         <label className="block text-sm font-medium">
           Phone used for the order
-          <input className="input mt-1" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0300-1234567" required />
+          <input className="input mt-1" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder={phoneExample(country)} required />
         </label>
         <button className="btn btn-secondary" disabled={looking}>
           {looking ? "Finding…" : "Find my order"}
@@ -158,7 +164,7 @@ function ReturnForm({ reasons, requirePhotos, returnDays }: { reasons: string[];
                 <span className="flex-1 text-sm">
                   {i.title}
                   <span className="block text-xs text-muted">
-                    {formatPKR(i.unitPrice)} {i.serials.length ? `· S/N ${i.serials.join(", ")}` : ""}
+                    {money(i.unitPrice)} {i.serials.length ? `· S/N ${i.serials.join(", ")}` : ""}
                   </span>
                 </span>
                 {i.qty > 1 && (qty[i.index] ?? 0) > 0 && (
@@ -204,6 +210,7 @@ function ReturnForm({ reasons, requirePhotos, returnDays }: { reasons: string[];
 function WarrantyForm() {
   const [files, setFiles] = useState<File[]>([]);
   const [state, action, pending] = useActionState<SubmitState, FormData>(submitWarranty, null);
+  const { country } = useStoreLocale();
   if (state?.ok) return <Done state={state} />;
   return (
     <form
@@ -223,7 +230,7 @@ function WarrantyForm() {
         </label>
         <label className="block text-sm font-medium">
           Phone
-          <input name="phone" className="input mt-1" inputMode="tel" placeholder="0300-1234567" required />
+          <input name="phone" className="input mt-1" inputMode="tel" placeholder={phoneExample(country)} required />
         </label>
         <label className="block text-sm font-medium">
           Serial number <span className="text-subtle">(sticker under the laptop)</span>

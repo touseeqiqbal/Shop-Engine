@@ -1,7 +1,7 @@
 import { BadgeCheck, MapPin, MessageSquareText } from "lucide-react";
 import type { CatalogProduct, Review } from "@/lib/types";
-import { formatDate } from "@/lib/utils";
 import { getSiteInfo } from "@/lib/repo/site-content";
+import { getDateFormatter } from "@/lib/store-locale";
 import { Stars } from "@/components/ui/stars";
 import { ReviewForm } from "./review-form";
 
@@ -13,6 +13,7 @@ export function reviewStats(product: CatalogProduct, reviews: Review[]) {
 
 export async function ReviewsSection({ product, reviews }: { product: CatalogProduct; reviews: Review[] }) {
   const site = await getSiteInfo(); // the current store's own name
+  const date = await getDateFormatter(); // the store's language and time zone
   const { average, count } = reviewStats(product, reviews);
   const dist = [5, 4, 3, 2, 1].map((star) => ({ star, n: reviews.filter((r) => Math.round(r.rating) === star).length }));
   const max = Math.max(1, reviews.length);
@@ -79,7 +80,7 @@ export async function ReviewsSection({ product, reviews }: { product: CatalogPro
                               <MapPin className="size-3" aria-hidden="true" /> {r.city} ·{" "}
                             </>
                           )}
-                          <time dateTime={r.createdAt}>{formatDate(r.createdAt)}</time>
+                          <time dateTime={r.createdAt}>{date(r.createdAt)}</time>
                         </p>
                       </div>
                     </div>

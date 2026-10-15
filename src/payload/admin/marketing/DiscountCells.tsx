@@ -1,19 +1,21 @@
 "use client";
 import type { DefaultCellComponentProps } from "payload";
+import { useAdminDates, useAdminMoney } from "../ui/store-context";
 
-/** Discount list cells: "5% off" / "Rs 1,000 off", amounts in rupees, "3 of 500", and one status badge. */
+/** Discount list cells: "5% off" / "Rs 1,000 off", amounts in the store's currency, "3 of 500", and one status badge. */
 
-const rs = (n: number) => `Rs ${Math.round(n).toLocaleString("en-PK")}`;
 const isPast = (t: number) => t < Date.now();
 
 export function DiscountValueCell({ cellData, rowData }: DefaultCellComponentProps) {
+  const money = useAdminMoney(rowData.store);
   const v = Number(cellData) || 0;
-  return <strong>{rowData.kind === "fixed" ? `${rs(v)} off` : `${v}% off`}</strong>;
+  return <strong>{rowData.kind === "fixed" ? `${money(v)} off` : `${v}% off`}</strong>;
 }
 
-export function MinOrderCell({ cellData }: DefaultCellComponentProps) {
+export function MinOrderCell({ cellData, rowData }: DefaultCellComponentProps) {
+  const money = useAdminMoney(rowData.store);
   const v = Number(cellData) || 0;
-  return <span>{v > 0 ? `From ${rs(v)}` : "Any order"}</span>;
+  return <span>{v > 0 ? `From ${money(v)}` : "Any order"}</span>;
 }
 
 export function UsageCell({ cellData, rowData }: DefaultCellComponentProps) {
@@ -23,6 +25,7 @@ export function UsageCell({ cellData, rowData }: DefaultCellComponentProps) {
 }
 
 export function DiscountStatusCell({ cellData, rowData }: DefaultCellComponentProps) {
+  const date = useAdminDates(rowData.store);
   const expires = rowData.expiresAt ? Date.parse(String(rowData.expiresAt)) : NaN;
   const limit = Number(rowData.usageLimit) || 0;
   const [label, tone] =
@@ -37,7 +40,7 @@ export function DiscountStatusCell({ cellData, rowData }: DefaultCellComponentPr
     <span className="urko-ocell">
       <span className={`urko-badge urko-badge--${tone}`}>{label}</span>
       {Number.isFinite(expires) && !isPast(expires) && (
-        <small>until {new Date(expires).toLocaleDateString("en-PK", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Karachi" })}</small>
+        <small>until {date(expires, { day: "numeric", month: "short", year: "numeric" })}</small>
       )}
     </span>
   );

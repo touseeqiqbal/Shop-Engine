@@ -1,7 +1,9 @@
 import { commitTransaction, initTransaction, killTransaction, type Endpoint, type PayloadRequest, type Where } from "payload";
 import { sameStoreAs, storeGate, type StoreGate } from "./guard";
 import { hasStoreRole } from "../tenancy";
+import { storeLocaleOf } from "../store-locale";
 import { log } from "../../lib/log";
+import { formatDate } from "../../lib/time";
 
 /**
  * Stock counts (the store's team; correcting stock needs a manager). Always the store being worked in.
@@ -91,7 +93,7 @@ const start: Endpoint = {
     const gate = await storeGate(req, "store_staff", { write: true });
     if (gate instanceof Response) return gate;
     const b = await body(req);
-    const name = String(b.name ?? "").trim() || `Stock count ${new Date().toLocaleDateString("en-PK", { dateStyle: "medium" })}`;
+    const name = String(b.name ?? "").trim() || `Stock count ${formatDate(Date.now(), await storeLocaleOf(req.payload, gate.store, req), { dateStyle: "medium" })}`;
     const cat = b.categoryId ? Number(b.categoryId) : null;
     const where: Where = { and: [{ status: { not_equals: "archived" } }, ...gate.inStore, ...(cat ? [{ or: [{ category: { equals: cat } }, { "category.parent": { equals: cat } }] }] : [])] };
     const all = (await req.payload.find({ collection: "products", where, limit: 0, pagination: false, depth: 0, overrideAccess: true, sort: "title" })).docs as unknown as Doc[];

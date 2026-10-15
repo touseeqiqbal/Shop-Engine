@@ -1,5 +1,8 @@
 import type { CollectionAfterChangeHook, CollectionBeforeChangeHook, CollectionBeforeDeleteHook, CollectionConfig } from "payload";
-import { PROCEED_STATUSES, paymentBlocksShipping } from "../../lib/order-money";
+import { PROCEED_STATUSES, paidUpfront, paymentBlocksShipping } from "../../lib/order-money";
+import { roundMoney } from "../../lib/money";
+import { BUILT_IN_METHODS, paymentLabel } from "../../lib/payments/methods";
+import { storeLocaleOf } from "../store-locale";
 import { assignStore, createFor, getTenant, hasStoreRole, publicOrStore, readFor, sameStore, storeAccess, storeField, storeIdOf, storeRoleField, writeFor } from "../tenancy";
 import { dbName, legacyIdField, perStoreUnique, slugField } from "../fields";
 import { revalidate } from "../revalidate";
@@ -94,7 +97,6 @@ const FULFILLMENT_BY_STATUS: Record<string, string> = {
   refused: "returned",
   returned: "returned",
 };
-const ONLINE_METHODS = new Set(["jazzcash", "easypaisa", "bank", "card"]);
 
 type OrderLine = { product?: number | { id: number } | null; qty?: number; title?: string };
 const orderLines = (items: unknown) =>
@@ -152,16 +154,16 @@ const orderGuards: CollectionBeforeChangeHook = async ({ data, originalDoc, oper
           : `Staff can't move an order from “${prevStatus}” to “${status}” – ask a manager.`,
       403,
     );
-  const money = { paymentMethod: data.paymentMethod ?? originalDoc?.paymentMethod, paymentStatus: data.paymentStatus ?? originalDoc?.paymentStatus };
+  const money = { paymentMethod: data.paymentMethod ?? originalDoc?.paymentMethod, paymentDue: data.paymentDue ?? originalDoc?.paymentDue, paymentStatus: data.paymentStatus ?? originalDoc?.paymentStatus };
   if ((operation === "create" || status !== prevStatus) && PROCEED_STATUSES.has(status) && paymentBlocksShipping(money))
     throw userError("Check the online payment first: approve it (payment “Paid”) – or change the payment method to cash on delivery – before confirming or shipping this order.", 400);
   if (operation === "update" && !manager) {
     // money decisions are a manager's: approving an online payment, or changing payment after the order shipped
-    const approvesOnline = data.paymentStatus === "paid" && originalDoc?.paymentStatus !== "paid" && ONLINE_METHODS.has(String(money.paymentMethod));
+    const approvesOnline = data.paymentStatus === "paid" && originalDoc?.paymentStatus !== "paid" && paidUpfront(money);
     const shipped = !["awaiting-confirmation", "pending", "confirmed"].includes(String(prevStatus));
     const paymentEdited = (data.paymentStatus !== undefined && data.paymentStatus !== originalDoc?.paymentStatus) || (data.paymentMethod !== undefined && data.paymentMethod !== originalDoc?.paymentMethod);
     if (approvesOnline) throw userError("Only an owner or manager can approve an online payment.", 403);
-    if (shipped && paymentEdited && !(data.paymentStatus === "paid" && money.paymentMethod === "cod")) throw userError("This order has shipped – only an owner or manager can change its payment.", 403);
+    if (shipped && paymentEdited && !(data.paymentStatus === "paid" && !paidUpfront(money))) throw userError("This order has shipped – only an owner or manager can change its payment.", 403);
   }
   data.fulfillmentStatus = FULFILLMENT_BY_STATUS[status] ?? "unfulfilled";
   // some items shipped (Ship part of the order), others not yet
@@ -218,6 +220,40 @@ const orderItemDetails: CollectionBeforeChangeHook = async ({ data, context, req
   return data;
 };
 
+/**
+ * An order keeps the currency it was placed in (the store's at that moment), and the name of its payment method –
+ * a store's own method may be renamed or removed later. Orders made in /cms get both here.
+ */
+const orderCurrencyAndMethod: CollectionBeforeChangeHook = async ({ data, originalDoc, operation, context, req }) => {
+  if (context?.migrating) return data;
+  const storeId = storeIdOf(data.store ?? originalDoc?.store);
+  if (operation === "create" && !data.currency) data.currency = (await storeLocaleOf(req.payload, storeId, req)).currency;
+  const method = data.paymentMethod;
+  const changed = method !== undefined && method !== originalDoc?.paymentMethod;
+  if (method && (operation === "create" ? !data.paymentMethodLabel || !data.paymentDue : changed)) {
+    const info = await paymentMethodInfo(req, storeId, String(method));
+    if (operation === "create") {
+      data.paymentMethodLabel ||= info.label;
+      data.paymentDue ||= info.due;
+    } else {
+      // a changed method (e.g. staff switching an order to cash on delivery) gets its own name and due time
+      if (data.paymentMethodLabel === undefined || data.paymentMethodLabel === originalDoc?.paymentMethodLabel) data.paymentMethodLabel = info.label;
+      if (data.paymentDue === undefined || data.paymentDue === originalDoc?.paymentDue) data.paymentDue = info.due;
+    }
+  }
+  return data;
+};
+
+/** A method's name and when it is paid: a built-in one, else the store's own (Settings → Payments). */
+async function paymentMethodInfo(req: Parameters<CollectionBeforeChangeHook>[0]["req"], storeId: number | null, method: string): Promise<{ label: string; due: "upfront" | "on-delivery" }> {
+  const builtIn = BUILT_IN_METHODS[method];
+  if (builtIn) return { label: builtIn.label, due: builtIn.due };
+  type Own = { methodId?: string; name?: string; due?: string };
+  const pay = await getStoreSettings<{ manualMethods?: Own[] }>(req.payload, "payments", storeId, { req }).catch((): { manualMethods?: Own[] } => ({}));
+  const own = (pay.manualMethods ?? []).find((m) => m.methodId === method);
+  return { label: own?.name || paymentLabel(method), due: own?.due === "on-delivery" ? "on-delivery" : "upfront" };
+}
+
 /** Totals always match the lines: recalculated whenever items, discount or delivery change (and for orders made in /cms). */
 const orderTotals: CollectionBeforeChangeHook = ({ data, originalDoc, operation, context }) => {
   if (context?.migrating || context?.fromStorefront) return data;
@@ -234,8 +270,10 @@ const orderTotals: CollectionBeforeChangeHook = ({ data, originalDoc, operation,
     return data;
   }
   const subtotal = ((Array.isArray(items) ? items : []) as { unitPrice?: number; qty?: number }[]).reduce((s, i) => s + Math.max(0, Number(i.unitPrice) || 0) * Math.max(0, Number(i.qty) || 0), 0);
-  data.subtotal = Math.round(subtotal);
-  data.total = Math.max(0, Math.round(subtotal - Math.max(0, Number(discount) || 0) + Math.max(0, Number(delivery) || 0)));
+  // whole rupees, cents … – the order's own currency
+  const currency = String(data.currency ?? originalDoc?.currency ?? "PKR");
+  data.subtotal = roundMoney(subtotal, currency);
+  data.total = Math.max(0, roundMoney(subtotal - Math.max(0, Number(discount) || 0) + Math.max(0, Number(delivery) || 0), currency));
   return data;
 };
 
@@ -519,7 +557,7 @@ export const Orders: CollectionConfig = {
   indexes: perStoreUnique("paymentReference"),
   hooks: {
     beforeValidate: [assignStore()],
-    beforeChange: [orderGuards, orderItemDetails, orderTotals, orderStatusHistory, orderStock],
+    beforeChange: [orderCurrencyAndMethod, orderGuards, orderItemDetails, orderTotals, orderStatusHistory, orderStock],
     afterChange: [orderUnits, orderCosts, orderAudit, orderStatusNotify, orderWebhooks],
     beforeDelete: [orderDeleteStock],
   },
@@ -545,6 +583,12 @@ export const Orders: CollectionConfig = {
           { name: "city", type: "text", required: true, index: true, admin: { width: "34%" } },
           { name: "address", type: "text", required: true, admin: { width: "33%" } },
           { name: "landmark", type: "text", admin: { width: "33%" } },
+        ] },
+        // outside Pakistan: state / province, postcode and country (ISO code)
+        { type: "row", fields: [
+          { name: "region", type: "text", label: "State / province", admin: { width: "34%" } },
+          { name: "postalCode", type: "text", label: "Postcode", admin: { width: "33%" } },
+          { name: "country", type: "text", admin: { width: "33%", description: "ISO code, e.g. PK, US." } },
         ] },
       ],
     },
@@ -575,27 +619,22 @@ export const Orders: CollectionConfig = {
       ],
     },
     { type: "row", fields: [
-      { name: "subtotal", type: "number", required: true, label: "Items (Rs)", hooks: { beforeValidate: [calculatedLater] }, admin: { width: "20%", readOnly: true, description: "Calculated" } },
-      { name: "discount", type: "number", defaultValue: 0, min: 0, label: "Discount (Rs)", admin: { width: "20%" } },
-      { name: "deliveryCharge", type: "number", defaultValue: 0, min: 0, label: "Delivery (Rs)", admin: { width: "20%" } },
-      { name: "total", type: "number", required: true, label: "Total (Rs)", hooks: { beforeValidate: [calculatedLater] }, admin: { width: "20%", readOnly: true, description: "Calculated", components: { Cell: "/payload/admin/orders/Cells#OrderTotalCell" } } },
-      { name: "advancePaid", type: "number", min: 0, label: "Advance paid (Rs)", admin: { width: "20%" } },
+      { name: "subtotal", type: "number", required: true, label: "Items", hooks: { beforeValidate: [calculatedLater] }, admin: { width: "20%", readOnly: true, description: "Calculated" } },
+      { name: "discount", type: "number", defaultValue: 0, min: 0, label: "Discount", admin: { width: "20%" } },
+      { name: "deliveryCharge", type: "number", defaultValue: 0, min: 0, label: "Delivery", admin: { width: "20%" } },
+      { name: "total", type: "number", required: true, label: "Total", hooks: { beforeValidate: [calculatedLater] }, admin: { width: "20%", readOnly: true, description: "Calculated", components: { Cell: "/payload/admin/orders/Cells#OrderTotalCell" } } },
+      { name: "advancePaid", type: "number", min: 0, label: "Advance paid", admin: { width: "20%" } },
     ] },
     { type: "row", fields: [
       { name: "couponCode", type: "text", label: "Coupon code", admin: { width: "50%" } },
-      { name: "taxTotal", type: "number", defaultValue: 0, min: 0, label: "Tax included (Rs)", admin: { width: "50%", readOnly: true, description: "Tax inside the total, from the store's tax rate when the order was placed." } },
+      { name: "taxTotal", type: "number", defaultValue: 0, min: 0, label: "Tax included", admin: { width: "50%", readOnly: true, description: "Tax inside the total, from the store's tax rate when the order was placed." } },
     ] },
     // true once the order took one use of the coupon (checkout, re-open) – only then does cancelling give it back
     { name: "couponConsumed", type: "checkbox", defaultValue: false, access: { read: storeRoleField("store_staff"), create: () => false, update: () => false }, admin: { hidden: true } },
     { name: "couponReturned", type: "checkbox", defaultValue: false, access: { read: storeRoleField("store_staff"), create: () => false, update: () => false }, admin: { hidden: true } },
     { type: "row", fields: [
-      { name: "paymentMethod", type: "select", required: true, label: "Payment method", options: [
-        { label: "Cash on delivery", value: "cod" },
-        { label: "JazzCash", value: "jazzcash" },
-        { label: "EasyPaisa", value: "easypaisa" },
-        { label: "Bank transfer", value: "bank" },
-        { label: "Card", value: "card" },
-      ], admin: { width: "50%" } },
+      // a built-in method ("cod", "bank", "card" …) or the store's own ("upi", "m-pesa") – lib/payments/methods.ts
+      { name: "paymentMethod", type: "text", required: true, index: true, label: "Payment method", admin: { width: "50%", components: { Field: "/payload/admin/orders/PaymentMethodField#PaymentMethodField", Cell: "/payload/admin/orders/PaymentMethodField#PaymentMethodCell" } } },
       { name: "paymentStatus", type: "select", required: true, label: "Payment", options: [
         { label: "Not paid", value: "unpaid" },
         { label: "Payment to check", value: "awaiting-verification" },
@@ -604,6 +643,11 @@ export const Orders: CollectionConfig = {
         { label: "Advance paid", value: "partial" },
         { label: "Partly refunded", value: "partially-refunded" },
       ], admin: { width: "50%", components: { Cell: "/payload/admin/orders/Cells#OrderPaymentCell" } } },
+    ] },
+    { type: "row", fields: [
+      { name: "paymentMethodLabel", type: "text", label: "Payment method name", admin: { width: "34%", readOnly: true, description: "As the customer saw it." } },
+      { name: "paymentDue", type: "select", label: "Paid", options: [{ label: "Before shipping", value: "upfront" }, { label: "On delivery", value: "on-delivery" }], admin: { width: "33%", readOnly: true } },
+      { name: "currency", type: "text", label: "Currency", admin: { width: "33%", readOnly: true, description: "Every amount on this order is in this currency." } },
     ] },
     // shown with "See screenshot" at the top of the order
     { name: "paymentScreenshotKey", type: "text", access: { read: storeRoleField("store_staff") }, admin: { hidden: true } },

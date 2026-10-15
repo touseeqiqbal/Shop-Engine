@@ -1,15 +1,18 @@
 "use client";
 import Link from "next/link";
 import type { DefaultCellComponentProps } from "payload";
-import { ORDER_STATUS, PAYMENT_METHOD, PAYMENT_STATUS, rs, timeAgo } from "./status";
+import { useAdminLocale, useAdminMoney } from "../ui/store-context";
+import { ORDER_STATUS, PAYMENT_STATUS, timeAgo } from "./status";
+import { paymentLabel } from "../../../lib/order-display";
 
-/** Order list cells: number + when, customer, coloured status, payment, amount. */
+/** Order list cells: number + when, customer, coloured status, payment, amount (in the order's own currency). */
 
 export function OrderNumberCell({ rowData, cellData }: DefaultCellComponentProps) {
+  const loc = useAdminLocale(rowData.store);
   return (
     <Link className="urko-ocell" href={`/cms/collections/orders/${rowData.id}`}>
       <strong>{String(cellData ?? "")}</strong>
-      <small>{timeAgo(String(rowData.placedAt ?? rowData.createdAt ?? ""))}</small>
+      <small>{timeAgo(String(rowData.placedAt ?? rowData.createdAt ?? ""), loc)}</small>
     </Link>
   );
 }
@@ -34,16 +37,17 @@ export function OrderPaymentCell({ cellData, rowData }: DefaultCellComponentProp
   return (
     <span className="urko-ocell">
       <span className={`urko-badge urko-badge--${s.tone}`}>{s.label}</span>
-      <small>{PAYMENT_METHOD[String(rowData.paymentMethod)] ?? ""}</small>
+      <small>{paymentLabel(typeof rowData.paymentMethod === "string" ? rowData.paymentMethod : "", typeof rowData.paymentMethodLabel === "string" ? rowData.paymentMethodLabel : null)}</small>
     </span>
   );
 }
 
 export function OrderTotalCell({ cellData, rowData }: DefaultCellComponentProps) {
+  const money = useAdminMoney(rowData.store, (rowData as { currency?: string }).currency);
   const items = Array.isArray(rowData.items) ? (rowData.items as { qty?: number }[]).reduce((n, i) => n + (Number(i.qty) || 0), 0) : 0;
   return (
     <span className="urko-ocell urko-ocell--num">
-      <strong>{rs(Number(cellData) || 0)}</strong>
+      <strong>{money(Number(cellData) || 0)}</strong>
       {items > 0 && (
         <small>
           {items} item{items === 1 ? "" : "s"}

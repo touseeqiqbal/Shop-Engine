@@ -335,6 +335,9 @@ export interface Store {
    * Set when the TXT record was found. The store answers on its custom domain only after this.
    */
   domainVerifiedAt?: string | null;
+  /**
+   * ISO code, e.g. PK, US, AE.
+   */
   country?: string | null;
   /**
    * ISO code, e.g. PKR, USD.
@@ -408,7 +411,7 @@ export interface User {
    */
   hasAccount?: boolean | null;
   /**
-   * Pakistani mobile, e.g. 0300-1234567
+   * Mobile number, e.g. 0300-1234567 or +44 7700 900123
    */
   phone?: string | null;
   /**
@@ -523,6 +526,12 @@ export interface Order {
     city: string;
     address: string;
     landmark?: string | null;
+    region?: string | null;
+    postalCode?: string | null;
+    /**
+     * ISO code, e.g. PK, US.
+     */
+    country?: string | null;
   };
   items?:
     | {
@@ -578,8 +587,17 @@ export interface Order {
   taxTotal?: number | null;
   couponConsumed?: boolean | null;
   couponReturned?: boolean | null;
-  paymentMethod: 'cod' | 'jazzcash' | 'easypaisa' | 'bank' | 'card';
+  paymentMethod: string;
   paymentStatus: 'unpaid' | 'awaiting-verification' | 'paid' | 'refunded' | 'partial' | 'partially-refunded';
+  /**
+   * As the customer saw it.
+   */
+  paymentMethodLabel?: string | null;
+  paymentDue?: ('upfront' | 'on-delivery') | null;
+  /**
+   * Every amount on this order is in this currency.
+   */
+  currency?: string | null;
   paymentScreenshotKey?: string | null;
   /**
    * Transaction id from the transfer / wallet receipt, or the online payment id.
@@ -709,7 +727,7 @@ export interface Product {
    */
   video?: string | null;
   /**
-   * What the customer pays, in whole rupees (Rs). Only owners and managers can change it.
+   * What the customer pays, in your store's currency. Only owners and managers can change it.
    */
   price: number;
   /**
@@ -717,7 +735,7 @@ export interface Product {
    */
   compareAtPrice?: number | null;
   /**
-   * What you paid (Rs). Only owners see this. Never shown to customers.
+   * What you paid. Only owners see this. Never shown to customers.
    */
   costPrice?: number | null;
   priceOnRequest?: boolean | null;
@@ -788,7 +806,7 @@ export interface Product {
     | null;
   compatibility?: (number | LaptopModel)[] | null;
   /**
-   * Choices shoppers can add at checkout, grouped (e.g. RAM: 16GB +Rs 6,000; SSD: 512GB +Rs 5,500).
+   * Choices shoppers can add at checkout, grouped (e.g. RAM: 16GB +6,000; SSD: 512GB +5,500).
    */
   upgrades?:
     | {
@@ -1230,7 +1248,7 @@ export interface StoreInvoice {
   createdAt: string;
 }
 /**
- * Groups of products, e.g. “Laptops under Rs 60,000” or “Back to school”. Shown at /collections/<handle>.
+ * Groups of products, e.g. “Laptops under 60,000” or “Back to school”. Shown at /collections/<handle>.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "product-collections".
@@ -1270,7 +1288,7 @@ export interface ProductCollection {
         category?: (number | null) | Category;
         brand?: (number | null) | Brand;
         /**
-         * Tag text, price in Rs, or condition: new, used-a-plus, used-a, refurbished, open-box
+         * Tag text, price (in your store's currency), or condition: new, used-a-plus, used-a, refurbished, open-box
          */
         value?: string | null;
         id?: string | null;
@@ -1607,7 +1625,7 @@ export interface PosSale {
   total: number;
   payments?:
     | {
-        method: 'cash' | 'card' | 'bank' | 'jazzcash' | 'easypaisa';
+        method: 'cash' | 'card' | 'bank' | 'jazzcash' | 'easypaisa' | 'other';
         amount: number;
         id?: string | null;
       }[]
@@ -2459,7 +2477,7 @@ export interface StoreAnnouncementBar {
   store?: (number | null) | Store;
   enabled?: boolean | null;
   /**
-   * Leave empty to show the store tagline.
+   * e.g. “Free delivery on orders above …”. Leave empty to show the store tagline.
    */
   text?: string | null;
   /**
@@ -2601,12 +2619,12 @@ export interface StoreShipping {
    */
   store?: (number | null) | Store;
   /**
-   * Store-wide. 0 = no free delivery. A zone can override it.
+   * Store-wide, in your store's currency. 0 = no free delivery. A zone can override it.
    */
   freeDeliveryThreshold?: number | null;
   defaultCharge?: number | null;
   /**
-   * A city uses the first zone that lists it; every other city uses the “rest of Pakistan” zone.
+   * An address uses the first zone that lists its city (or postcode); every other address uses the “rest of the country” zone.
    */
   zones?:
     | {
@@ -2768,6 +2786,10 @@ export interface StoreShipping {
               | 'Ziarat'
             )[]
           | null;
+        /**
+         * Type one and press Enter. A postcode start ends with * (e.g. SW1* or 100*).
+         */
+        places?: string[] | null;
         charge: number;
         /**
          * Empty = store-wide. 0 = never free.
@@ -2784,7 +2806,7 @@ export interface StoreShipping {
   createdAt: string;
 }
 /**
- * Which payment methods shoppers can choose, account details and rules for large Cash-on-Delivery orders.
+ * Which payment methods shoppers can choose, account details and rules for large Cash-on-Delivery orders. Amounts are in your store's currency.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "store-payments".
@@ -2811,7 +2833,7 @@ export interface StorePayment {
     maxOrder?: number | null;
     advanceThreshold?: number | null;
     /**
-     * Paid by JazzCash / EasyPaisa / bank to confirm high-value COD orders. 0 = never ask.
+     * Paid by bank transfer or one of your wallets to confirm high-value COD orders. 0 = never ask.
      */
     advanceAmount?: number | null;
   };
@@ -2857,6 +2879,33 @@ export interface StorePayment {
      */
     note?: string | null;
   };
+  /**
+   * Any way your customers pay you directly – a local wallet or bank app (UPI, M-Pesa, PIX, bKash …), or “Card on delivery”. Paid before shipping: the shopper sends the money, uploads the receipt and its transaction id, and you approve it on the order.
+   */
+  manualMethods?:
+    | {
+        name: string;
+        enabled?: boolean | null;
+        due: 'upfront' | 'on-delivery';
+        note?: string | null;
+        /**
+         * e.g. UPI ID → shop@okbank, Paybill → 123456.
+         */
+        details?:
+          | {
+              label: string;
+              value: string;
+              id?: string | null;
+            }[]
+          | null;
+        /**
+         * Optional steps, e.g. “Use your order number as the reference”.
+         */
+        instructions?: string | null;
+        methodId?: string | null;
+        id?: string | null;
+      }[]
+    | null;
   /**
    * Sales tax / VAT on orders. Shown on the order, invoice and reports.
    */
@@ -3174,7 +3223,7 @@ export interface StoreOrderProtection {
    */
   autoCancelHours?: number | null;
   /**
-   * Type zone names exactly as in Delivery charges (e.g. “Rest of Pakistan”). Leave empty for all zones.
+   * Type zone names exactly as in Delivery charges (e.g. “Rest of the country”). Leave empty for all zones.
    */
   confirmZones?: string[] | null;
   /**
@@ -3366,7 +3415,7 @@ export interface PaymentTransaction {
   order?: (number | null) | Order;
   kind: 'charge' | 'refund';
   status: 'pending' | 'succeeded' | 'failed' | 'cancelled' | 'refunded' | 'partially_refunded';
-  provider: 'stripe' | 'manual';
+  provider: string;
   /**
    * e.g. the checkout session / payment / refund id.
    */
@@ -4573,6 +4622,9 @@ export interface OrdersSelect<T extends boolean = true> {
         city?: T;
         address?: T;
         landmark?: T;
+        region?: T;
+        postalCode?: T;
+        country?: T;
       };
   items?:
     | T
@@ -4602,6 +4654,9 @@ export interface OrdersSelect<T extends boolean = true> {
   couponReturned?: T;
   paymentMethod?: T;
   paymentStatus?: T;
+  paymentMethodLabel?: T;
+  paymentDue?: T;
+  currency?: T;
   paymentScreenshotKey?: T;
   paymentReference?: T;
   fulfillmentStatus?: T;
@@ -5436,6 +5491,7 @@ export interface StoreShippingSelect<T extends boolean = true> {
         name?: T;
         rest?: T;
         cities?: T;
+        places?: T;
         charge?: T;
         freeAbove?: T;
         estimate?: T;
@@ -5491,6 +5547,24 @@ export interface StorePaymentsSelect<T extends boolean = true> {
     | {
         enabled?: T;
         note?: T;
+      };
+  manualMethods?:
+    | T
+    | {
+        name?: T;
+        enabled?: T;
+        due?: T;
+        note?: T;
+        details?:
+          | T
+          | {
+              label?: T;
+              value?: T;
+              id?: T;
+            };
+        instructions?: T;
+        methodId?: T;
+        id?: T;
       };
   tax?:
     | T
@@ -6121,7 +6195,7 @@ export interface AnnouncementBar {
   id: number;
   enabled?: boolean | null;
   /**
-   * Leave empty to show the store tagline.
+   * e.g. “Free delivery on orders above …”. Leave empty to show the store tagline.
    */
   text?: string | null;
   /**
@@ -6247,12 +6321,12 @@ export interface WhatsappButton {
 export interface Shipping {
   id: number;
   /**
-   * Store-wide. 0 = no free delivery. A zone can override it.
+   * Store-wide, in your store's currency. 0 = no free delivery. A zone can override it.
    */
   freeDeliveryThreshold?: number | null;
   defaultCharge?: number | null;
   /**
-   * A city uses the first zone that lists it; every other city uses the “rest of Pakistan” zone.
+   * An address uses the first zone that lists its city (or postcode); every other address uses the “rest of the country” zone.
    */
   zones?:
     | {
@@ -6414,6 +6488,10 @@ export interface Shipping {
               | 'Ziarat'
             )[]
           | null;
+        /**
+         * Type one and press Enter. A postcode start ends with * (e.g. SW1* or 100*).
+         */
+        places?: string[] | null;
         charge: number;
         /**
          * Empty = store-wide. 0 = never free.
@@ -6430,7 +6508,7 @@ export interface Shipping {
   createdAt?: string | null;
 }
 /**
- * Which payment methods shoppers can choose, account details and rules for large Cash-on-Delivery orders.
+ * Which payment methods shoppers can choose, account details and rules for large Cash-on-Delivery orders. Amounts are in your store's currency.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payments".
@@ -6453,7 +6531,7 @@ export interface Payment {
     maxOrder?: number | null;
     advanceThreshold?: number | null;
     /**
-     * Paid by JazzCash / EasyPaisa / bank to confirm high-value COD orders. 0 = never ask.
+     * Paid by bank transfer or one of your wallets to confirm high-value COD orders. 0 = never ask.
      */
     advanceAmount?: number | null;
   };
@@ -6499,6 +6577,33 @@ export interface Payment {
      */
     note?: string | null;
   };
+  /**
+   * Any way your customers pay you directly – a local wallet or bank app (UPI, M-Pesa, PIX, bKash …), or “Card on delivery”. Paid before shipping: the shopper sends the money, uploads the receipt and its transaction id, and you approve it on the order.
+   */
+  manualMethods?:
+    | {
+        name: string;
+        enabled?: boolean | null;
+        due: 'upfront' | 'on-delivery';
+        note?: string | null;
+        /**
+         * e.g. UPI ID → shop@okbank, Paybill → 123456.
+         */
+        details?:
+          | {
+              label: string;
+              value: string;
+              id?: string | null;
+            }[]
+          | null;
+        /**
+         * Optional steps, e.g. “Use your order number as the reference”.
+         */
+        instructions?: string | null;
+        methodId?: string | null;
+        id?: string | null;
+      }[]
+    | null;
   /**
    * Sales tax / VAT on orders. Shown on the order, invoice and reports.
    */
@@ -6788,7 +6893,7 @@ export interface OrderProtection {
    */
   autoCancelHours?: number | null;
   /**
-   * Type zone names exactly as in Delivery charges (e.g. “Rest of Pakistan”). Leave empty for all zones.
+   * Type zone names exactly as in Delivery charges (e.g. “Rest of the country”). Leave empty for all zones.
    */
   confirmZones?: string[] | null;
   /**
@@ -7047,6 +7152,7 @@ export interface ShippingSelect<T extends boolean = true> {
         name?: T;
         rest?: T;
         cities?: T;
+        places?: T;
         charge?: T;
         freeAbove?: T;
         estimate?: T;
@@ -7102,6 +7208,24 @@ export interface PaymentsSelect<T extends boolean = true> {
     | {
         enabled?: T;
         note?: T;
+      };
+  manualMethods?:
+    | T
+    | {
+        name?: T;
+        enabled?: T;
+        due?: T;
+        note?: T;
+        details?:
+          | T
+          | {
+              label?: T;
+              value?: T;
+              id?: T;
+            };
+        instructions?: T;
+        methodId?: T;
+        id?: T;
       };
   tax?:
     | T

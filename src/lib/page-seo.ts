@@ -4,6 +4,7 @@ import { pageMetadata } from "@/lib/seo";
 import { PAGE_DEF_BY_KEY, fillPlaceholders } from "@/lib/content/registry";
 import { getPageSeoMap, getSeoSettings, getSiteInfo } from "@/lib/repo/site-content";
 import { getCurrentStore } from "@/lib/tenant";
+import { getStoreLocale } from "@/lib/store-locale";
 
 interface PageMetaOptions {
   /** Computed defaults (fall back to the registry entry for `key`) */
@@ -26,7 +27,7 @@ interface PageMetaOptions {
  * Empty saved fields fall back to the page's built-in defaults, so output is unchanged until edited.
  */
 export async function getPageMeta(key: string, o: PageMetaOptions = {}): Promise<Metadata> {
-  const [map, seo, store] = await Promise.all([getPageSeoMap(), getSeoSettings(), getCurrentStore()]);
+  const [map, seo, store, locale] = await Promise.all([getPageSeoMap(), getSeoSettings(), getCurrentStore(), getStoreLocale()]);
   // the built-in texts describe the original shop; any other store gets plain ones with its own name
   const def = store && !store.isDefault ? await neutralDef(key) : PAGE_DEF_BY_KEY[key];
   const saved = map[key] ?? {};
@@ -38,7 +39,7 @@ export async function getPageMeta(key: string, o: PageMetaOptions = {}): Promise
   const description = o.cms?.description?.trim() || pick(saved.description) || o.description || fillPlaceholders(def?.description ?? "", vars);
   const image = o.cms?.image || saved.ogImage?.trim() || o.image || seo.defaultOgImage || undefined;
   const noindex = Boolean(o.noindex) || Boolean(o.cms?.noindex) || (saved.noindex ?? def?.noindex ?? false);
-  return pageMetadata({ title, description, path: o.path ?? key, image, noindex, canonical: o.cms?.canonical, type: o.type });
+  return pageMetadata({ title, description, path: o.path ?? key, image, noindex, canonical: o.cms?.canonical, type: o.type, locale });
 }
 
 /** Built-in page texts for a store other than the original shop: the page's name and the store's own name only. */

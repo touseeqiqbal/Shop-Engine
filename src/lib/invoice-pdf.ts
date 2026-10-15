@@ -2,8 +2,10 @@ import "server-only";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import type { Order } from "@/lib/types";
 import type { SiteInfo } from "@/lib/site-info";
-import { ORDER_STATUS_LABEL, PAYMENT_LABEL, PAYMENT_STATUS_LABEL } from "@/lib/order-display";
+import { cityLine, ORDER_STATUS_LABEL, PAYMENT_STATUS_LABEL, paymentLabel } from "@/lib/order-display";
 import { amountToCollect, creditedAdvance } from "@/lib/order-money";
+import { DEFAULT_LOCALE, type StoreLocale } from "@/lib/locale";
+import { currencyDigits, formatMoney, roundMoney } from "@/lib/money";
 
 /**
  * Customer invoice as a real PDF (A4), built with pdf-lib (pure JavaScript, no browser needed).
@@ -31,10 +33,22 @@ export function pdfText(s: unknown): string {
     .replace(/[^\x20-\x7E]/g, "?");
 }
 
-const money = (n: number) => `Rs ${Math.round(n).toLocaleString("en-PK")}`;
-const date = (iso: string) => {
+/**
+ * Amounts in the order's currency: "Rs 1,200", "$1,200.00". A sign or digits the standard fonts can't draw ("€", "£",
+ * Arabic digits) are written plainly instead: "EUR 1,200.00".
+ */
+function moneyIn(loc: Pick<StoreLocale, "currency" | "locale">) {
+  const digits = currencyDigits(loc.currency);
+  const plain = new Intl.NumberFormat("en", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return (n: number) => {
+    const s = formatMoney(n, loc);
+    return /^[\x20-\x7E\u00A0\u2009\u202F]*$/.test(s) ? s : `${loc.currency} ${plain.format(roundMoney(n, loc.currency))}`;
+  };
+}
+/** "10 Oct 2026" in the store's time zone. */
+const dateIn = (timezone: string) => (iso: string) => {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Karachi" });
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: timezone });
 };
 
 /** Splits text into lines that fit `width`. */
@@ -62,7 +76,10 @@ function wrap(text: string, font: PDFFont, size: number, width: number): string[
   return lines.length ? lines : [""];
 }
 
-export async function buildInvoicePdf(order: Order, site: SiteInfo): Promise<Uint8Array> {
+/** `locale`: the order's store (currency, time zone); amounts use the currency the order was placed in when it has one. */
+export async function buildInvoicePdf(order: Order, site: SiteInfo, locale: StoreLocale = DEFAULT_LOCALE): Promise<Uint8Array> {
+  const money = moneyIn({ currency: order.currency || locale.currency, locale: locale.locale });
+  const date = dateIn(locale.timezone);
   const doc = await PDFDocument.create();
   doc.setTitle(`Invoice ${order.orderNumber}`);
   doc.setAuthor(pdfText(site.name));
@@ -97,7 +114,7 @@ export async function buildInvoicePdf(order: Order, site: SiteInfo): Promise<Uin
     ["Order", order.orderNumber],
     ["Date", date(order.createdAt)],
     ["Status", ORDER_STATUS_LABEL[order.status] ?? order.status],
-    ["Payment", `${PAYMENT_LABEL[order.paymentMethod] ?? order.paymentMethod} - ${PAYMENT_STATUS_LABEL[order.paymentStatus] ?? order.paymentStatus}`],
+    ["Payment", `${paymentLabel(order.paymentMethod, order.paymentMethodLabel)} - ${PAYMENT_STATUS_LABEL[order.paymentStatus] ?? order.paymentStatus}`],
   ] as const) {
     page.drawText(pdfText(k), { x: A4.w - M - 200, y: my, size: 9, font, color: MUTED });
     const v2 = pdfText(v);
@@ -112,7 +129,7 @@ export async function buildInvoicePdf(order: Order, site: SiteInfo): Promise<Uin
   text("BILL TO / DELIVER TO", M, 8, bold, MUTED);
   y -= 14;
   const c = order.customer;
-  for (const l of [c.name, c.phone, c.email ?? "", ...wrap([c.address, c.landmark ? `(near ${c.landmark})` : "", c.city].filter(Boolean).join(", "), font, 10, 300)].filter(Boolean)) {
+  for (const l of [c.name, c.phone, c.email ?? "", ...wrap([c.address, c.landmark ? `(near ${c.landmark})` : "", cityLine(c)].filter(Boolean).join(", "), font, 10, 300)].filter(Boolean)) {
     text(l, M, 10);
     y -= 13;
   }

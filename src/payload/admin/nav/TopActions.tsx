@@ -4,6 +4,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNav } from "@payloadcms/ui";
 import { Icon } from "../ui/icons";
+import { useAdminMoney } from "../ui/store-context";
+import { formatMoney, type Money } from "../../../lib/money";
 
 /**
  * Header tools for every admin screen: global search (Ctrl/Cmd+K or "/"), "+ Add" menu, notifications bell,
@@ -16,8 +18,7 @@ const API = "/cms-api";
 type Result = { group: "Orders" | "Products" | "Customers"; title: string; sub: string; href: string; thumb?: string };
 type Todo = { pendingOrders: number; paymentsToVerify: number; lowStockTotal: number; outOfStockTotal: number; newWholesale: number; openMessages: number };
 
-const rs = (n: number) => `Rs ${Math.round(n).toLocaleString("en-PK")}`;
-const q = (params: Record<string, string>) => Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
+const q =(params: Record<string, string>) => Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
 
 async function getJson<T>(url: string): Promise<T | null> {
   try {
@@ -30,7 +31,8 @@ async function getJson<T>(url: string): Promise<T | null> {
 
 type Docs = { docs: Record<string, unknown>[] };
 
-async function search(term: string): Promise<Result[]> {
+/** `money` = the store's; an order shows in the currency it was placed in. */
+async function search(term: string, money: Money): Promise<Result[]> {
   const digits = term.replace(/\D/g, "");
   // phone numbers are stored like 0300-1234567: match on the last 7 digits
   const phone = digits.length >= 7 ? digits.slice(-7) : "";
@@ -46,11 +48,13 @@ async function search(term: string): Promise<Result[]> {
   const out: Result[] = [];
   for (const o of orders?.docs ?? []) {
     const c = (o.customer ?? {}) as Record<string, string>;
-    out.push({ group: "Orders", title: `#${String(o.orderNumber).slice(-4)} · ${c.name ?? ""}`, sub: `${String(o.orderNumber)} · ${c.phone ?? ""} · ${rs(Number(o.total) || 0)}`, href: `${ADMIN}/collections/orders/${o.id}` });
+    const total = Number(o.total) || 0;
+    const amount = typeof o.currency === "string" && o.currency && o.currency !== money.currency ? formatMoney(total, { currency: o.currency, locale: money.locale }) : money(total);
+    out.push({ group: "Orders", title: `#${String(o.orderNumber).slice(-4)} · ${c.name ?? ""}`, sub: `${String(o.orderNumber)} · ${c.phone ?? ""} · ${amount}`, href: `${ADMIN}/collections/orders/${o.id}` });
   }
   for (const p of products?.docs ?? []) {
     const img = Array.isArray(p.images) ? (p.images[0] as { thumbnailURL?: string; url?: string } | undefined) : undefined;
-    out.push({ group: "Products", title: String(p.title), sub: `${String(p.sku ?? "")} · ${rs(Number(p.price) || 0)} · ${Number(p.stock) || 0} in stock`, href: `${ADMIN}/collections/products/${p.id}`, thumb: img?.thumbnailURL ?? img?.url });
+    out.push({ group: "Products", title: String(p.title), sub: `${String(p.sku ?? "")} · ${money(Number(p.price) || 0)} · ${Number(p.stock) || 0} in stock`, href: `${ADMIN}/collections/products/${p.id}`, thumb: img?.thumbnailURL ?? img?.url });
   }
   for (const u of users?.docs ?? []) {
     out.push({ group: "Customers", title: String(u.name || u.email), sub: [u.email, u.phone].filter(Boolean).join(" · "), href: `${ADMIN}/collections/users/${u.id}` });
@@ -65,6 +69,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const money = useAdminMoney();
 
   useEffect(() => inputRef.current?.focus(), []);
   useEffect(() => {
@@ -75,14 +80,14 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
     }
     setBusy(true);
     const timer = setTimeout(() => {
-      search(t).then((r) => {
+      search(t, money).then((r) => {
         setResults(r);
         setCursor(0);
         setBusy(false);
       });
     }, 250);
     return () => clearTimeout(timer);
-  }, [term]);
+  }, [term, money]);
 
   const go = (r: Result | undefined) => {
     if (!r) return;

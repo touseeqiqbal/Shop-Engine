@@ -24,10 +24,10 @@ export const OrderProtection: GlobalConfig = {
       fields: [
         { name: "confirmEnabled", type: "checkbox", defaultValue: true, label: "Customers must confirm cash-on-delivery orders before we ship" },
         { type: "row", fields: [
-          { name: "confirmAbove", type: "number", min: 0, defaultValue: 0, label: "Only orders of at least (Rs)", admin: { width: "50%", description: "0 = every COD order." } },
+          { name: "confirmAbove", type: "number", min: 0, defaultValue: 0, label: "Only orders of at least", admin: { width: "50%", description: "0 = every COD order." } },
           { name: "autoCancelHours", type: "number", min: 1, max: 168, defaultValue: 24, label: "Cancel if not confirmed within (hours)", admin: { width: "50%", description: "Stock is put back automatically." } },
         ] },
-        { name: "confirmZones", type: "text", hasMany: true, label: "Only for these delivery zones", admin: { description: "Type zone names exactly as in Delivery charges (e.g. “Rest of Pakistan”). Leave empty for all zones." } },
+        { name: "confirmZones", type: "text", hasMany: true, label: "Only for these delivery zones", admin: { description: "Type zone names exactly as in Delivery charges (e.g. “Rest of the country”). Leave empty for all zones." } },
         { name: "skipWithAdvance", type: "checkbox", defaultValue: true, label: "Approving an advance payment confirms the order", admin: { description: "An uploaded advance screenshot never skips the confirmation by itself – when you approve the payment, the order moves to “To confirm” without waiting for the customer." } },
       ],
     },

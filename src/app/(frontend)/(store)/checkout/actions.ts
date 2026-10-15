@@ -7,7 +7,11 @@ import { z } from "zod";
 import { priceCart } from "@/lib/cart-pricing";
 import { resolveDiscounts } from "@/lib/coupons";
 import { orderTotals } from "@/lib/order-totals";
-import { PAKISTAN_CITIES, paymentEnabled, shippingZoneFor } from "@/lib/cities";
+import { PAKISTAN_CITIES, shippingZoneFor } from "@/lib/cities";
+import { findCheckoutMethod } from "@/lib/payments/methods";
+import { storeLocale, type StoreLocale } from "@/lib/locale";
+import { moneyFormatter } from "@/lib/money";
+import { normalizePhone, phonePlaceholder } from "@/lib/phone";
 import { advanceReason, getProtectionSettings, isBlockedPhone, needsConfirmation, newConfirmation, riskFor } from "@/lib/protection";
 import { emailRequiredAtCheckout, getSessionUser, getUserProfile, mustConfirmEmailToOrder, updateUserProfile } from "@/lib/auth";
 import { canAskForConfirmation, notifyFromStorefront } from "@/lib/notify";
@@ -17,8 +21,7 @@ import { generateOrderNumber, getOrderByNumber, insertOrder } from "@/lib/repo/o
 import { getStoreSettings, TAGS } from "@/lib/repo/catalog";
 import { isCmsConfigured, isDatabaseConfigured } from "@/lib/db/config";
 import { deleteObject, uploadObject } from "@/lib/storage";
-import type { Order, OrderConfirmation, OrderRisk, PaymentMethod } from "@/lib/types";
-import { normalizePkPhone } from "@/lib/utils";
+import type { Order, OrderConfirmation, OrderRisk } from "@/lib/types";
 import { MAX_QTY_PER_ITEM } from "@/lib/cart-limits";
 import { currentAvailability, storeOrigin } from "@/lib/tenant";
 
@@ -31,35 +34,41 @@ import { BOT_MESSAGE, verifyTurnstile } from "@/lib/turnstile";
 import { HONEYPOT } from "@/lib/honeypot";
 const MAX_FILE = 5 * 1024 * 1024;
 const ATTEMPT_ID = /^[A-Za-z0-9-]{8,64}$/;
-/** Paid by the customer before we ship, checked by staff against the uploaded receipt and its transaction id. */
-const ONLINE: PaymentMethod[] = ["jazzcash", "easypaisa", "bank"];
-const REFERENCE = /^[A-Za-z0-9-]{4,40}$/;
+/** A transfer / wallet receipt's transaction id (UPI UTR, M-Pesa code, PIX id …). */
+const REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._/-]{3,59}$/;
 
-export type CheckoutField = "name" | "phone" | "email" | "city" | "address" | "landmark" | "notes" | "paymentMethod" | "screenshot" | "paymentReference" | "items";
+export type CheckoutField = "name" | "phone" | "email" | "city" | "region" | "postalCode" | "address" | "landmark" | "notes" | "paymentMethod" | "screenshot" | "paymentReference" | "items";
 
 export type PlaceOrderState =
   | { ok: false; message?: string; fieldErrors?: Partial<Record<CheckoutField, string>>; ts?: number; requireAdvance?: boolean; couponError?: string; newTotal?: number }
   | { ok: true; orderNumber: string; total: number; items: { id: string; name: string; price: number; quantity: number }[]; ts: number; paymentUrl?: string };
 
-const schema = z.object({
+/** The checkout form's rules for a store's country: Pakistan picks a city from the list; elsewhere city, state and postcode are typed. */
+const checkoutSchema = (loc: StoreLocale) =>
+  z.object({
   name: z.string().trim().min(3, "Please enter your full name").max(80, "Name is too long"),
   phone: z
     .string()
     .trim()
     .transform((v, ctx) => {
-      const n = normalizePkPhone(v);
+      const n = normalizePhone(v, loc.country);
       if (!n) {
-        ctx.addIssue({ code: "custom", message: "Enter a valid mobile number, e.g. 0300-1234567" });
+        ctx.addIssue({ code: "custom", message: loc.country === "PK" ? "Enter a valid mobile number, e.g. 0300-1234567" : `Enter a valid phone number, e.g. ${phonePlaceholder(loc.country)}` });
         return z.NEVER;
       }
       return n;
     }),
   email: z.union([z.literal(""), z.email("Enter a valid email address").max(120)]),
-  city: z.string().refine((c) => PAKISTAN_CITIES.includes(c), "Please choose your city from the list"),
-  address: z.string().trim().min(10, "Please enter your complete address (house, street, area)").max(300, "Address is too long"),
+  city:
+    loc.country === "PK"
+      ? z.string().refine((c) => PAKISTAN_CITIES.includes(c), "Please choose your city from the list")
+      : z.string().trim().min(2, "Please enter your city").max(80, "City name is too long"),
+  region: z.string().trim().max(60, "State / province is too long"),
+  postalCode: z.union([z.literal(""), z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9 -]{1,11}$/, "Enter a valid postcode")]),
+  address: z.string().trim().min(loc.country === "PK" ? 10 : 5, "Please enter your complete address (house, street, area)").max(300, "Address is too long"),
   landmark: z.string().trim().max(120, "Landmark is too long"),
   notes: z.string().trim().max(500, "Notes are too long"),
-  paymentMethod: z.enum(["cod", "jazzcash", "easypaisa", "bank", "card"], "Choose a payment method"),
+  paymentMethod: z.string().trim().min(1, "Choose a payment method").max(40, "Choose a payment method"),
   paymentReference: z.union([z.literal(""), z.string().trim().regex(REFERENCE, "Enter the transaction ID from your payment receipt")]),
   couponCode: z.string().trim().max(40),
   saveAddress: z.boolean(),
@@ -68,7 +77,7 @@ const schema = z.object({
     .array(z.object({ productId: z.string().min(1).max(120), qty: z.number().int().min(1).max(MAX_QTY_PER_ITEM, `You can order up to ${MAX_QTY_PER_ITEM} of one item online – for more, ask us on WhatsApp`), upgradeIds: z.array(z.string().max(120)).max(10) }))
     .min(1, "Your cart is empty")
     .max(30, "Too many items in one order"),
-});
+  });
 
 const str = (fd: FormData, k: string) => {
   const v = fd.get(k);
@@ -131,12 +140,17 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   const { store, availability } = await currentAvailability();
   if (!availability.open) return { ok: false, message: CLOSED_MESSAGE[availability.reason] ?? CLOSED_MESSAGE.closed, ts };
   const storeId = store?.id ?? null;
+  // the store's country, currency and time zone: address form, phone numbers and amounts follow them
+  const loc = storeLocale(store);
+  const money = moneyFormatter(loc);
 
-  const parsed = schema.safeParse({
+  const parsed = checkoutSchema(loc).safeParse({
     name: str(fd, "name"),
     phone: str(fd, "phone"),
     email: str(fd, "email").trim(),
     city: str(fd, "city"),
+    region: str(fd, "region"),
+    postalCode: str(fd, "postalCode"),
     address: str(fd, "address"),
     landmark: str(fd, "landmark"),
     notes: str(fd, "notes"),
@@ -176,8 +190,12 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   const [settings, priced] = await Promise.all([getStoreSettings(storeId), priceCart(data.items, { checkStock: true })]);
   if (priced.problems.length || priced.items.length === 0)
     return { ok: false, message: priced.problems[0] ?? "Your cart is empty.", fieldErrors: { items: priced.problems.join(" ") || "Your cart is empty" }, ts };
-  if (!paymentEnabled(data.paymentMethod, settings))
+  // the method must be one this store offers right now (built-in, the store's own, or its connected card provider)
+  const method = findCheckoutMethod(data.paymentMethod, settings);
+  if (!method)
     return { ok: false, message: "This payment method isn't available right now – please choose another.", fieldErrors: { paymentMethod: "Please choose another payment method" }, ts };
+  const card = method.kind === "gateway";
+  const payOnDelivery = method.due === "on-delivery";
 
   const subtotal = priced.subtotal;
   // the typed code and/or the best automatic discount (never place the order at a higher total than the customer saw)
@@ -188,20 +206,21 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   const couponCode = discounts.code ?? (discounts.applied.length === 1 ? discounts.applied[0].code : null);
 
   // COD handling fee (/cms → Settings → Payments) is recorded as part of the delivery charge
-  const totals = orderTotals({ subtotal, discount, city: data.city, method: data.paymentMethod, settings, freeShipping: discounts.freeShipping });
+  const totals = orderTotals({ subtotal, discount, city: data.city, postalCode: data.postalCode, method: data.paymentMethod, settings, freeShipping: discounts.freeShipping });
   const delivery = (totals.delivery ?? 0) + totals.fee;
   const total = totals.total;
   const expected = Number(str(fd, "expectedTotal"));
-  if (Number.isFinite(expected) && expected > 0 && Math.abs(expected - total) >= 1)
+  // any difference the shopper would notice (a rupee, a cent …)
+  if (Number.isFinite(expected) && expected > 0 && money.round(Math.abs(expected - total)) > 0)
     return {
       ok: false,
       newTotal: total,
-      message: `The total changed to Rs ${total.toLocaleString("en-PK")} (prices, discounts or delivery were updated). Please check your order and place it again.`,
+      message: `The total changed to ${money(total)} (prices, discounts or delivery were updated). Please check your order and place it again.`,
       ts,
     };
   const codMax = settings.payments?.cod.maxOrder ?? null;
   if (data.paymentMethod === "cod" && codMax && total > codMax)
-    return { ok: false, message: `Cash on Delivery is available for orders up to Rs ${codMax.toLocaleString("en-PK")}. Please pay online.`, fieldErrors: { paymentMethod: "Choose an online payment method for this order" }, ts };
+    return { ok: false, message: `Cash on Delivery is available for orders up to ${money(codMax)}. Please pay online.`, fieldErrors: { paymentMethod: "Choose an online payment method for this order" }, ts };
 
   // ── Fake-order protection (this store's blocked numbers and rules): risk score, advance payment for risky COD ──
   let risk: OrderRisk | null = null;
@@ -216,7 +235,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       if ((!store || store.isDefault) && (await isBlockedCustomer(data.phone, data.email)))
         return { ok: false, message: "We can't take online orders for this account. Please call or WhatsApp us to order.", ts };
       risk = { score: r.score, level: r.level, reasons: r.reasons };
-      if (data.paymentMethod === "cod") {
+      if (payOnDelivery) {
         advanceNeeded = advanceReason(r, data.city, prot);
         if (advanceNeeded && settings.advanceAmount <= 0)
           return {
@@ -234,11 +253,11 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     }
   }
 
-  // ── Payment proof (wallet / bank transfer: screenshot + transaction id; cards are checked by the provider) ──
-  const advanceEligible = data.paymentMethod === "cod" && ((total >= settings.advanceThreshold && settings.advanceAmount > 0) || Boolean(advanceNeeded));
+  // ── Payment proof (wallet / bank transfer / the store's own methods: screenshot + transaction id; cards are checked by the provider) ──
+  const advanceEligible = payOnDelivery && ((total >= settings.advanceThreshold && settings.advanceAmount > 0) || Boolean(advanceNeeded));
   const rawFile = fd.get("screenshot");
   const file = rawFile instanceof File && rawFile.size > 0 ? rawFile : null;
-  const needsProof = ONLINE.includes(data.paymentMethod);
+  const needsProof = method.proof;
   if (needsProof && !file)
     return { ok: false, message: "Please upload your payment screenshot.", fieldErrors: { screenshot: "Upload a screenshot of your payment (JPG, PNG or WebP)" }, ts };
   if (needsProof && !data.paymentReference)
@@ -247,7 +266,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     return {
       ok: false,
       requireAdvance: true,
-      message: `For cash on delivery, ${advanceNeeded}: please pay Rs ${Math.min(settings.advanceAmount, total).toLocaleString("en-PK")} in advance and upload the screenshot. The rest is paid on delivery.`,
+      message: `For ${method.id === "cod" ? "cash on delivery" : `${method.label} on delivery`}, ${advanceNeeded}: please pay ${money(Math.min(settings.advanceAmount, total))} in advance and upload the screenshot. The rest is paid on delivery.`,
       fieldErrors: { screenshot: "Upload the screenshot of your advance payment" },
       ts,
     };
@@ -261,8 +280,8 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
 
   const now = new Date();
   const prefix = store?.orderPrefix || undefined;
-  let orderNumber = generateOrderNumber(now, prefix);
-  for (let i = 0; i < 4 && (await getOrderByNumber(orderNumber)); i++) orderNumber = generateOrderNumber(now, prefix);
+  let orderNumber = generateOrderNumber(now, prefix, loc.timezone);
+  for (let i = 0; i < 4 && (await getOrderByNumber(orderNumber)); i++) orderNumber = generateOrderNumber(now, prefix, loc.timezone);
 
   let screenshotUrl: string | null = null;
   if (file && proofType) {
@@ -275,16 +294,15 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   }
 
   const advancePaid = advanceEligible && screenshotUrl ? Math.min(settings.advanceAmount, total) : undefined;
-  const card = data.paymentMethod === "card";
 
   // COD orders the customer must confirm (link / code) before we pack them
   let confirmation: OrderConfirmation | null = null;
   if (isCmsConfigured && !card) {
     const prot = await getProtectionSettings(storeId).catch(() => null);
-    const zoneName = shippingZoneFor(data.city, settings)?.name ?? null;
+    const zoneName = shippingZoneFor(data.city, settings, data.postalCode)?.name ?? null;
     // An uploaded advance isn't checked yet, so it can't replace the confirmation; approving it in /cms confirms the order.
     // …and only when we can actually send the customer the link/code; otherwise staff confirm by phone.
-    if (prot && needsConfirmation({ paymentMethod: data.paymentMethod, total, zoneName, advancePaid: false }, prot)) {
+    if (prot && needsConfirmation({ paymentMethod: method.id, paymentDue: method.due, total, zoneName, advancePaid: false }, prot)) {
       if (canAskForConfirmation(data.email)) confirmation = newConfirmation(prot);
       else log.warn("checkout.confirmation_unreachable", { phone: data.phone.slice(-4) });
     }
@@ -303,6 +321,9 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       city: data.city,
       address: data.address,
       ...(data.landmark ? { landmark: data.landmark } : {}),
+      ...(data.region ? { region: data.region } : {}),
+      ...(data.postalCode ? { postalCode: data.postalCode.toUpperCase() } : {}),
+      country: loc.country,
     },
     items: priced.items,
     subtotal,
@@ -312,8 +333,11 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     taxTotal: totals.tax,
     total,
     ...(advancePaid ? { advancePaid } : {}),
-    paymentMethod: data.paymentMethod,
-    paymentStatus: data.paymentMethod === "cod" ? (advancePaid ? "awaiting-verification" : "unpaid") : card ? "unpaid" : "awaiting-verification",
+    paymentMethod: method.id,
+    paymentMethodLabel: method.label,
+    paymentDue: method.due,
+    currency: loc.currency,
+    paymentStatus: payOnDelivery ? (advancePaid ? "awaiting-verification" : "unpaid") : card ? "unpaid" : "awaiting-verification",
     paymentScreenshotUrl: screenshotUrl,
     paymentReference: needsProof ? data.paymentReference.toUpperCase() : null,
     courier: null,
@@ -346,7 +370,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       } catch (err) {
         // a clashing order number (very rare) – try again with a new one
         if (/unique|duplicate key|invalid/i.test(String((err as Error)?.message)) && /order_number|orderNumber|Order number/i.test(String((err as Error)?.message)) && attempt < 2) {
-          order.orderNumber = generateOrderNumber(now, prefix);
+          order.orderNumber = generateOrderNumber(now, prefix, loc.timezone);
           continue;
         }
         log.error("checkout.save_failed", err, { order: order.orderNumber });
@@ -366,9 +390,9 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       if (screenshotUrl && screenshotUrl !== placed.order.paymentScreenshotUrl) await deleteObject(screenshotUrl).catch(() => undefined);
       await setOrderCookie(placed.order.orderNumber);
       let paymentUrl: string | undefined;
-      if (placed.order.status === "awaiting-payment") {
-        const { openCheckoutUrl } = await import("@/lib/payments");
-        paymentUrl = (await openCheckoutUrl(await payloadClient(), Number(placed.order.id)).catch(() => null)) ?? undefined;
+      if (placed.order.status === "awaiting-payment" && method.gateway) {
+        const { getGateway } = await import("@/lib/payments/gateways");
+        paymentUrl = (await getGateway(method.gateway)?.resumeUrl(await payloadClient(), Number(placed.order.id)).catch(() => null)) ?? undefined;
       }
       return { ok: true, orderNumber: placed.order.orderNumber, total: placed.order.total, items: summary(placed.order), ts, ...(paymentUrl ? { paymentUrl } : {}) };
     }
@@ -384,26 +408,28 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   }
   rateLimitKey(`checkout-phone:${storeId ?? 0}:${data.phone}`, 5, 60 * 60_000);
 
-  // ── Card: on to the payment provider's page. If it can't be opened, the order is cancelled (stock goes back). ──
+  // ── Online: on to the payment provider's page (the store's provider plugin). If it can't be opened, the order is cancelled (stock goes back). ──
   let paymentUrl: string | undefined;
   if (card && orderDocId != null && storeId != null) {
     const payload = await payloadClient();
     try {
-      const { startCardPayment } = await import("@/lib/payments");
+      const { getGateway } = await import("@/lib/payments/gateways");
+      const gateway = getGateway(method.gateway);
+      if (!gateway) throw new Error(`payment provider ${method.gateway} not available`);
       const origin = store ? storeOrigin(store) : (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/+$/, "");
-      paymentUrl = (await startCardPayment(payload, { orderId: orderDocId, orderNumber: order.orderNumber, total, storeId, email: order.customer.email ?? null, origin })).url;
+      paymentUrl = (await gateway.start(payload, { orderId: orderDocId, orderNumber: order.orderNumber, total, currency: loc.currency, storeId, email: order.customer.email ?? null, origin })).url;
     } catch (err) {
       log.error("checkout.card_start_failed", err, { order: order.orderNumber });
       await payload
         .update({
           collection: "orders",
           id: orderDocId,
-          data: { status: "cancelled", history: [{ status: "cancelled", at: new Date().toISOString(), note: "Card payment could not be started" }] } as never,
+          data: { status: "cancelled", history: [{ status: "cancelled", at: new Date().toISOString(), note: `${method.label} payment could not be started` }] } as never,
           overrideAccess: true,
           context: { system: true, skipNotify: true },
         })
         .catch((e) => log.error("checkout.card_cancel_failed", e, { order: order.orderNumber }));
-      return { ok: false, message: "We couldn't open the card payment page. Nothing was charged – please try again or choose another payment method.", fieldErrors: { paymentMethod: "Card payment is not available right now" }, ts };
+      return { ok: false, message: "We couldn't open the payment page. Nothing was charged – please try again or choose another payment method.", fieldErrors: { paymentMethod: `${method.label} is not available right now` }, ts };
     }
   }
 
@@ -445,7 +471,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       if (!dup)
         await updateUserProfile(order.userId, {
           addresses: [
-            { id: randomUUID(), label: existing.length ? `Address ${existing.length + 1}` : "Home", name: data.name, phone: data.phone, city: data.city, address: data.address, landmark: data.landmark || undefined },
+            { id: randomUUID(), label: existing.length ? `Address ${existing.length + 1}` : "Home", name: data.name, phone: data.phone, city: data.city, address: data.address, landmark: data.landmark || undefined, region: data.region || undefined, postalCode: data.postalCode || undefined },
             ...existing,
           ],
           ...(profile?.phone ? {} : { phone: data.phone }),

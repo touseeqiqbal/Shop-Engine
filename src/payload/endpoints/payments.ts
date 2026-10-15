@@ -3,8 +3,8 @@ import { sameStoreAs, storeGate } from "./guard";
 import { logActivity } from "../collections/history";
 
 /**
- * Card payments from /cms (the store being worked in).
- *   GET  /cms-api/payments/order/:id          the order's card payments and refunds
+ * Online payments from /cms (the store being worked in) – any provider plugin (lib/payments/gateways.ts).
+ *   GET  /cms-api/payments/order/:id          the order's online payments and refunds
  *   POST /cms-api/payments/refund             { orderId, amount, reason }   refund through the provider (managers)
  */
 
@@ -39,11 +39,15 @@ const refund: Endpoint = {
     if (!Number.isFinite(orderId) || !(amount > 0)) return Response.json({ error: "Enter the amount to refund." }, { status: 400 });
     const order = (await req.payload.findByID({ collection: "orders", id: orderId, depth: 0, overrideAccess: true }).catch(() => null)) as unknown as Doc | null;
     if (!order || !sameStoreAs(gate, order)) return Response.json({ error: "Order not found" }, { status: 404 });
-    if (order.paymentMethod !== "card") return Response.json({ error: "Only card payments are refunded here – record other refunds in Orders → Returns." }, { status: 400 });
+    // the provider that took the payment refunds it
+    const charge = (await req.payload.find({ collection: "payment-transactions", where: { and: [{ order: { equals: orderId } }, { kind: { equals: "charge" } }, { status: { in: ["succeeded", "partially_refunded"] } }] }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
+    if (!charge) return Response.json({ error: "Only online payments are refunded here – record other refunds in Orders → Returns." }, { status: 400 });
     try {
-      const { refundCardOrder } = await import("../../lib/payments");
-      const r = await refundCardOrder(req.payload, req, { orderId, amount, reason: String(body?.reason ?? "").slice(0, 200) });
-      await logActivity(req, { action: "update", entity: "orders", entityLabel: "Order", docId: String(orderId), title: String(order.orderNumber ?? orderId), changes: [{ field: "card refund", from: "", to: `${amount}${body?.reason ? ` – ${body.reason}` : ""}` }], storeId: gate.store });
+      const { getGateway } = await import("../../lib/payments/gateways");
+      const gateway = getGateway(String(charge.provider));
+      if (!gateway) return Response.json({ error: `Refunds through “${String(charge.provider)}” aren't available.` }, { status: 400 });
+      const r = await gateway.refund(req.payload, req, { orderId, amount, reason: String(body?.reason ?? "").slice(0, 200) });
+      await logActivity(req, { action: "update", entity: "orders", entityLabel: "Order", docId: String(orderId), title: String(order.orderNumber ?? orderId), changes: [{ field: `${gateway.label} refund`, from: "", to: `${amount} ${String(charge.currency ?? "")}${body?.reason ? ` – ${body.reason}` : ""}` }], storeId: gate.store });
       return Response.json({ ok: true, ...r });
     } catch (e) {
       return Response.json({ error: (e as Error)?.message || "The refund failed." }, { status: 400 });

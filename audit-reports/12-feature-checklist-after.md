@@ -1,6 +1,6 @@
 # 12 · Feature checklist after remediation (Shopify-like comparison)
 
-State: **working tree after remediation (14 Oct 2026)**. Same 295 features, same scoring rules and evidence standard as report 01 (which stays as the audit baseline of commit
+State: **working tree after remediation (14 Oct 2026, international work 15 Oct 2026)**. Same 295 features, same scoring rules and evidence standard as report 01 (which stays as the audit baseline of commit
 `aab6879`). Rows that changed carry their new evidence; tests named in "Evidence" / "Notes" were actually run (see report 11 §4).
 Status legend: **Complete** = works end to end in code · **Partial** = some requirements unmet · **Missing** = not built ·
 **Broken** = implemented with an evident defect · **Not Verified** = could not be confirmed · **N/A** = out of scope.
@@ -16,9 +16,9 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Metric | Value |
 |---|---|
 | Features assessed | 295 |
-| Complete / Partial / Missing / Broken / Not Verified | 230 / 49 / 12 / 0 / 4 |
-| **Confirmed feature coverage** (points ÷ all applicable) | **86.3%** (254.5 / 295) |
-| **Verified-only coverage** (points ÷ verified) | **87.5%** (254.5 / 291) |
+| Complete / Partial / Missing / Broken / Not Verified | 234 / 45 / 12 / 0 / 4 |
+| **Confirmed feature coverage** (points ÷ all applicable) | **86.9%** (256.5 / 295) |
+| **Verified-only coverage** (points ÷ verified) | **88.1%** (256.5 / 291) |
 | Unverified features | 4 |
 | Broken features that are P0 | 0 |
 
@@ -30,8 +30,8 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Module | Features | C | P | M | B | NV | Confirmed | Verified-only |
 |---|---|---|---|---|---|---|---|---|
 | Access control | 30 | 24 | 3 | 3 | 0 | 0 | 85.0% | 85.0% |
-| Onboarding | 13 | 11 | 2 | 0 | 0 | 0 | 92.3% | 92.3% |
-| Store management | 19 | 14 | 5 | 0 | 0 | 0 | 86.8% | 86.8% |
+| Onboarding | 13 | 12 | 1 | 0 | 0 | 0 | 96.2% | 96.2% |
+| Store management | 19 | 16 | 3 | 0 | 0 | 0 | 92.1% | 92.1% |
 | Products | 15 | 15 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
 | Variants | 10 | 10 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
 | Collections | 7 | 6 | 1 | 0 | 0 | 0 | 92.9% | 92.9% |
@@ -42,7 +42,7 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Payments | 18 | 15 | 3 | 0 | 0 | 0 | 91.7% | 91.7% |
 | Orders | 23 | 21 | 2 | 0 | 0 | 0 | 95.7% | 95.7% |
 | Shipping & fulfillment | 14 | 8 | 3 | 3 | 0 | 0 | 67.9% | 67.9% |
-| Customers | 11 | 10 | 1 | 0 | 0 | 0 | 95.5% | 95.5% |
+| Customers | 11 | 11 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
 | Discounts & marketing | 16 | 13 | 2 | 1 | 0 | 0 | 87.5% | 87.5% |
 | Analytics | 12 | 7 | 2 | 1 | 0 | 2 | 66.7% | 80.0% |
 | SaaS billing | 12 | 12 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
@@ -59,7 +59,7 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Access control | Super admin: create / suspend / reactivate stores | Complete | `src/payload/endpoints/platform.ts (POST /platform/stores/:id/status); src/lib/tenant-shared.ts storeAvailability` | P1 | Status enforced: shop offline + /cms read-only. |
 | Access control | Super admin: platform metrics | Complete | `src/payload/endpoints/platform.ts overviewFor` | P2 | Stores by status, new stores, merchants, subscriptions by status, MRR, 30-day GMV, top stores, failing payments, dead deliveries. |
 | Access control | Super admin: manage SaaS plans | Complete | `src/payload/collections/billing.ts SubscriptionPlans` | P1 | Platform-only CRUD; limits and features enforced (src/payload/entitlements.ts). |
-| Access control | Super admin: monitor subscriptions & invoices | Complete | `src/lib/billing.ts handleBillingEvent / runBillingLifecycle` | P1 | Invoices written from provider events; status transitions (scripts/tests/billing-lifecycle.ts (7/7 ✓); scripts/tests/payment-webhooks.mjs (15/15 ✓, running server)). |
+| Access control | Super admin: monitor subscriptions & invoices | Complete | `src/lib/billing.ts handleBillingEvent / runBillingLifecycle` | P1 | Invoices written from provider events; status transitions (scripts/tests/billing-lifecycle.ts (7/7 ✓); scripts/tests/payment-webhooks.mjs (17/17 ✓, running server)). |
 | Access control | Super admin: platform configuration | Complete | `src/payload/store-settings.ts; src/payload/globals/* (update: platformAdmins)` | P2 | Globals = platform defaults; every store edits its own copy. |
 | Access control | Super admin: audit log review | Partial | `src/payload/collections/history.ts:81,185-188,244-248` | P1 | Activity log exists; platform collections and non-staff actors not logged. |
 | Access control | Super admin: platform integrations | Missing | `—` | P3 |  |
@@ -89,7 +89,7 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Onboarding | 3. Email verification before store creation | Complete | `src/lib/store-tenant.ts createStoreForUser` | P1 | Confirmed email required; Turnstile; 3/day; MAX_STORES_PER_USER. |
 | Onboarding | 4. Create store | Complete | `src/lib/store-tenant.ts; migration 20261013_233003_multi_tenancy` | P0 | Draft store + owner membership + settings docs (not run in a browser). |
 | Onboarding | 5. Unique slug / subdomain | Complete | `src/payload/collections/Stores.ts (unique slug/subdomain, reserved names)` | P1 |  |
-| Onboarding | 6. Country & currency | Partial | `Stores.ts country/currency` | P1 | Stored and used for card payments; storefront prices still formatted in PKR. |
+| Onboarding | 6. Country & currency | Complete | `src/lib/locale.ts; payload/admin/RegionFields.tsx; components/account/store-onboarding.tsx` | P1 | Country picker fills currency + time zone (editable); ISO codes validated; used by storefront, admin, messages, invoices, card charges (scripts/tests/international.ts (26/26 ✓, in CI)). |
 | Onboarding | 7. Default settings initialized | Complete | `src/payload/store-settings.ts ensureStoreSettings` | P1 | Store info + SEO seeded with the store's own name. |
 | Onboarding | 8. Plan / trial selection | Complete | `src/lib/billing.ts choosePlan` | P1 | Active plans only; one trial per store; paid plans via provider checkout. |
 | Onboarding | 9. Configure payment providers | Complete | `src/lib/payments/index.ts paymentsOnboardingLink; per-store Settings → Payments` | P0 | Connect onboarding needs STRIPE_SECRET_KEY (not exercised against Stripe). |
@@ -104,10 +104,10 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Store management | Suspension enforcement | Complete | `src/app/(frontend)/(store)/layout.tsx; tenancy.ts readOnly` | P0 | Suspended/closed/lapsed: storefront offline, /cms read-only. |
 | Store management | Logo & branding per store | Complete | `store-theme-settings per store` | P1 |  |
 | Store management | Contact information per store | Complete | `store-store-info per store; src/lib/repo/site-content.ts getSiteInfo(storeId)` | P1 |  |
-| Store management | Currency configuration | Partial | `Stores.ts currency` | P1 | Card checkout uses it; storefront formatting is PKR-only. |
-| Store management | Timezone configuration | Partial | `Stores.ts timezone` | P2 | Stored; dates and order numbers still use Pakistan time. |
+| Store management | Currency configuration | Complete | `src/lib/money.ts; components/providers/locale.tsx; payload/admin/ui/store-context.tsx useAdminMoney` | P1 | Formatting and rounding in the store's currency everywhere; orders keep the currency they were placed in (scripts/tests/international.ts (26/26 ✓, in CI); tests/unit/international.test.ts). |
+| Store management | Timezone configuration | Complete | `src/lib/time.ts (dayIn/dayStart/compactDay/formatDate)` | P2 | Order/receipt/return numbers, reports, dashboard, POS day, message deadlines in the store's zone; DST-safe (tests/unit/international.test.ts). |
 | Store management | Business address | Complete | `store-info per store` | P2 |  |
-| Store management | Store language | Partial | `Stores.ts defaultLanguage` | P3 | Stored only. |
+| Store management | Store language | Partial | `src/lib/locale.ts storeLocale (locale); app/(frontend)/layout.tsx html lang` | P3 | Sets page language and number/date formats; storefront texts are not translated (English + Urdu toggle). |
 | Store management | Store preferences | Complete | `/cms/settings/:page per store (src/payload/admin/settings/StoreSettingsView.tsx)` | P2 |  |
 | Store management | Custom domain connection | Complete | `src/lib/store-tenant.ts setCustomDomainForUser; Stores.ts` | P1 | Plan feature custom_domain. |
 | Store management | Subdomain routing | Complete | `src/lib/tenant-shared.ts matchStore; src/lib/tenant.ts` | P0 | Checked on a running server (sub-domain, unknown → 404, draft → coming soon). |
@@ -205,21 +205,21 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Cart & checkout | Failed checkout recovery | Complete | `order-confirmation/[orderNumber]/pay-action.ts; failCheckout` | P2 | Pay-now link; unpaid card orders cancelled with stock back. |
 | Cart & checkout | Abandoned checkout tracking | Complete | `src/lib/cms/engagement.ts; cart/restore/[token]/page.tsx` | P2 | Upgrades kept, owner cookie, POST-only stop. |
 | Cart & checkout | Order attributed to a store | Complete | `src/app/(frontend)/(store)/checkout/actions.ts` | P0 | Verified in a browser checkout (store_id set). |
-| Payments | Online payment provider | Complete | `src/lib/payments/*` | P0 | Stripe over REST; scripts/tests/payment-webhooks.mjs (15/15 ✓, running server). |
-| Payments | Manual methods (COD, bank, wallets with proof) | Complete | `src/app/(frontend)/(store)/checkout/actions.ts:219-256` | P1 |  |
+| Payments | Online payment provider | Complete | `src/lib/payments/gateways.ts (provider plugins), stripe-gateway.ts, webhook.ts; docs/PAYMENT-PLUGINS.md` | P0 | Provider plugin interface + registry, Stripe first; one webhook route per provider; scripts/tests/payment-webhooks.mjs (17/17 ✓, running server). |
+| Payments | Manual methods (COD, bank, wallets with proof) | Complete | `src/lib/payments/methods.ts checkoutMethods; payload/globals/commerce.ts manualMethods` | P1 | Built-ins by country (JazzCash/EasyPaisa in PK only) + each store's own methods (paid before shipping with receipt, or on delivery) (scripts/tests/international.ts (26/26 ✓, in CI)). |
 | Payments | Merchant payment account onboarding | Complete | `src/lib/payments/index.ts paymentsOnboardingLink / refreshPaymentsAccount` | P0 | Not exercised against Stripe. |
 | Payments | Hosted secure collection | Complete | `Stripe Checkout (hosted)` | P0 | Card data never touches ShopEngine. |
 | Payments | Authorization / capture | Partial | `Checkout Sessions capture immediately` | P1 | No separate authorize/capture. |
-| Payments | Failure / cancellation handling | Complete | `src/lib/payments/index.ts failCheckout` | P1 | scripts/tests/payment-webhooks.mjs (15/15 ✓, running server) |
+| Payments | Failure / cancellation handling | Complete | `src/lib/payments/index.ts failCheckout` | P1 | scripts/tests/payment-webhooks.mjs (17/17 ✓, running server) |
 | Payments | Provider refunds | Complete | `src/lib/payments/index.ts refundCardOrder; POST /cms-api/payments/refund` | P1 | Capped by charged − refunded; not exercised against Stripe. |
 | Payments | Partial refunds | Complete | `refundCardOrder; partially-refunded status` | P1 |  |
 | Payments | Payment event history | Complete | `collections/payments.ts (payment-transactions, payment-events)` | P0 |  |
-| Payments | Webhook signature verification | Complete | `src/lib/payments/stripe.ts verifyStripeWebhook` | P0 | Unit + scripts/tests/payment-webhooks.mjs (15/15 ✓, running server). |
-| Payments | Replay protection & dedup | Complete | `payment-events unique (provider, eventId); 300 s tolerance` | P0 | scripts/tests/payment-webhooks.mjs (15/15 ✓, running server) |
+| Payments | Webhook signature verification | Complete | `src/lib/payments/stripe.ts verifyStripeWebhook` | P0 | Unit + scripts/tests/payment-webhooks.mjs (17/17 ✓, running server). |
+| Payments | Replay protection & dedup | Complete | `payment-events unique (provider, eventId); 300 s tolerance` | P0 | scripts/tests/payment-webhooks.mjs (17/17 ✓, running server) |
 | Payments | Idempotency keys | Complete | `stripe() idempotencyKey on every write` | P0 |  |
 | Payments | Reconciliation | Partial | `src/lib/payments/index.ts reconcileCardPayments` | P1 | Card checkouts reconciled; COD remittance still manual. |
 | Payments | Provider reference IDs | Complete | `payment-transactions providerRef unique; orders paymentReference per-store unique` | P1 |  |
-| Payments | Multi-currency | Partial | `store currency → Stripe` | P3 | Storefront shows PKR only. |
+| Payments | Multi-currency | Partial | `src/lib/money.ts; orders.currency; startCardPayment(currency)` | P3 | Each store sells in its own currency (any ISO currency); no conversion or several currencies inside one store. |
 | Payments | Customer payments separate from SaaS billing | Complete | `collections/payments.ts vs collections/billing.ts` | P1 |  |
 | Payments | Merchant payouts via provider | Complete | `Stripe Connect (direct charges to the merchant's account)` | P1 | Payouts by Stripe. |
 | Payments | Per-store payment account details | Complete | `store-payments per store; globals platform-only` | P0 | scripts/tests/tenant-isolation.ts (18/18 ✓, real DB) |
@@ -263,7 +263,7 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Customers | Store-scoped customer records | Complete | `users.customerOf + usersRead (store's own customers only)` | P0 | scripts/tests/tenant-isolation.ts (18/18 ✓, real DB) |
 | Customers | Guest customers | Complete | `src/payload/collections/Users.ts:169-178` | P1 |  |
 | Customers | Registered customers & profiles | Complete | `src/payload/collections/Users.ts` | P1 |  |
-| Customers | Addresses | Partial | `src/payload/collections/Users.ts:231-237` | P2 | Pakistan-only validation. |
+| Customers | Addresses | Complete | `src/lib/phone.ts; app/(frontend)/(store)/account/actions.ts; components/checkout/city-combobox.tsx` | P2 | Phones and cities for the store's country; state / postcode outside Pakistan (scripts/tests/international.ts (26/26 ✓, in CI)). |
 | Customers | Order history | Complete | `src/app/(frontend)/(store)/account/orders/load.ts` | P1 |  |
 | Customers | Customer search | Complete | `src/payload/collections/Users.ts:23` | P2 |  |
 | Customers | Tags & notes | Complete | `src/payload/collections/Users.ts:244-246` | P2 |  |
@@ -302,12 +302,12 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | SaaS billing | Subscription plans & pricing | Complete | `billing.ts SubscriptionPlans; store-tenant.ts listSubscriptionPlans` | P1 | No seeding on page view; starter plans seeded by the migration. |
 | SaaS billing | Free trials | Complete | `billing.ts choosePlan (Stores.trialUsed)` | P1 | scripts/tests/billing-lifecycle.ts (7/7 ✓) |
 | SaaS billing | Recurring billing | Complete | `src/lib/billing.ts (Stripe Billing subscriptions)` | P1 | Needs provider price ids per plan. |
-| SaaS billing | Subscription status lifecycle | Complete | `handleBillingEvent / runBillingLifecycle` | P1 | scripts/tests/billing-lifecycle.ts (7/7 ✓); scripts/tests/payment-webhooks.mjs (15/15 ✓, running server) |
+| SaaS billing | Subscription status lifecycle | Complete | `handleBillingEvent / runBillingLifecycle` | P1 | scripts/tests/billing-lifecycle.ts (7/7 ✓); scripts/tests/payment-webhooks.mjs (17/17 ✓, running server) |
 | SaaS billing | Upgrades / downgrades | Complete | `choosePlan (prorated plan change)` | P2 | Not exercised against Stripe. |
-| SaaS billing | Cancellations | Complete | `cancelPlan (at period end)` | P2 | scripts/tests/payment-webhooks.mjs (15/15 ✓, running server) |
+| SaaS billing | Cancellations | Complete | `cancelPlan (at period end)` | P2 | scripts/tests/payment-webhooks.mjs (17/17 ✓, running server) |
 | SaaS billing | Payment failure / dunning | Complete | `src/lib/billing.ts planAlert` | P1 | Past due + grace date; the store's team is emailed on a failed payment, an ended trial and expiry (queued). |
-| SaaS billing | Invoice history | Complete | `store-invoices written from provider events` | P2 | scripts/tests/payment-webhooks.mjs (15/15 ✓, running server) |
-| SaaS billing | Billing webhooks | Complete | `src/app/api/webhooks/stripe/route.ts` | P1 | scripts/tests/payment-webhooks.mjs (15/15 ✓, running server) |
+| SaaS billing | Invoice history | Complete | `store-invoices written from provider events` | P2 | scripts/tests/payment-webhooks.mjs (17/17 ✓, running server) |
+| SaaS billing | Billing webhooks | Complete | `src/app/api/webhooks/stripe/route.ts` | P1 | scripts/tests/payment-webhooks.mjs (17/17 ✓, running server) |
 | SaaS billing | Feature entitlements | Complete | `src/payload/entitlements.ts` | P2 | pos, reports, discounts, abandoned carts, card payments, custom domain. |
 | SaaS billing | Staff / product / storage limits | Complete | `entitlements.ts productLimit/storageLimit; StoreMemberships team limit` | P1 |  |
 | SaaS billing | Expiry, grace period, access restriction | Complete | `runBillingLifecycle; storeAvailability; tenancy readOnly` | P1 | scripts/tests/billing-lifecycle.ts (7/7 ✓) |
@@ -326,7 +326,7 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Jobs & integrations | Transactional outbox | Complete | `src/lib/outbox.ts enqueue in the same transaction` | P1 | scripts/tests/order-lifecycle.ts (13/13 ✓, in CI) |
 | Jobs & integrations | Event deduplication | Complete | `outbox dedupe_key unique; payment-events unique` | P1 |  |
 | Jobs & integrations | Webhook sending | Complete | `src/lib/webhooks.ts; collections/webhooks.ts` | P3 | Signed, retried via the outbox, private addresses refused. |
-| Jobs & integrations | Webhook receiving | Complete | `src/app/api/webhooks/stripe/route.ts` | P0 | scripts/tests/payment-webhooks.mjs (15/15 ✓, running server) |
+| Jobs & integrations | Webhook receiving | Complete | `src/app/api/webhooks/stripe/route.ts` | P0 | scripts/tests/payment-webhooks.mjs (17/17 ✓, running server) |
 | Jobs & integrations | Email / SMS / WhatsApp notifications | Complete | `src/lib/mailer.ts; src/lib/notify.ts` | P1 | Inline, no retry. |
 | Jobs & integrations | Cache invalidation | Partial | `src/payload/revalidate.ts:41-59` | P1 | Global tags; redirect cache per instance. |
 | Jobs & integrations | Search indexing | Partial | `src/lib/search.ts` | P2 | Full scan of the in-memory snapshot. |
@@ -334,12 +334,12 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Jobs & integrations | Reservation cleanup | Complete | `COD auto-cancel + expired card checkouts` | P1 |  |
 | Production readiness | Application boots (Payload config valid) | Complete | `inventory.ts duplicate field removed` | P0 | Dev server boots; storefront and API answer (checked). |
 | Production readiness | Database migrations match config | Complete | `src/migrations/20261013_233003_multi_tenancy.ts` | P0 | Generated from the config; up → down → up verified with legacy rows; additive per CI rule. |
-| Production readiness | Unit tests | Complete | `tests/unit/*` | P1 | 77/77 pass; assert the secure behaviour. |
-| Production readiness | Integration / API tests | Complete | `.github/workflows/ci.yml; scripts/tests/*` | P1 | Tenant isolation, plan lifecycle, partial shipments and order lifecycle run against CI's Postgres; payment webhooks and store webhooks need a running server / an existing order (run locally). |
+| Production readiness | Unit tests | Complete | `tests/unit/*` | P1 | 97/97 pass; assert the secure behaviour and the international rules. |
+| Production readiness | Integration / API tests | Complete | `.github/workflows/ci.yml; scripts/tests/*` | P1 | Tenant isolation, plan lifecycle, partial shipments, stores in other countries and order lifecycle run against CI's Postgres; payment webhooks and store webhooks need a running server / an existing order (run locally). |
 | Production readiness | End-to-end tests | Missing | `—` | P1 |  |
 | Production readiness | Tenant-isolation tests | Complete | `scripts/tests/tenant-isolation.ts (in CI)` | P0 | 18 checks against a real database. |
 | Production readiness | Permission tests (collection/field) | Complete | `tests/unit/access.test.ts; scripts/tests/tenant-isolation.ts (18/18 ✓, real DB)` | P0 |  |
-| Production readiness | Checkout / payment webhook / refund tests | Partial | `scripts/tests/payment-webhooks.mjs (15/15 ✓, running server); tests/unit/platform.test.ts` | P0 | Webhooks/signatures/totals covered; no full browser checkout test in CI. |
+| Production readiness | Checkout / payment webhook / refund tests | Partial | `scripts/tests/payment-webhooks.mjs (17/17 ✓, running server); tests/unit/platform.test.ts` | P0 | Webhooks/signatures/totals covered; no full browser checkout test in CI. |
 | Production readiness | Inventory concurrency tests | Partial | `scripts/tests/stock-race.ts` | P1 | Not in CI; single-line only. |
 | Production readiness | Environment validation | Partial | `src/lib/startup-checks.ts:9-18` | P1 | Ad hoc. |
 | Production readiness | Health checks | Complete | `src/app/api/health/route.ts` | P1 | Discloses config warnings publicly. |

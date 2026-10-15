@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { useAdminLocale, useAdminMoney } from "../ui/store-context";
+import { addDays, dayIn } from "../../../lib/time";
 
 /**
  * Sales & profit report. Sales = website orders that went ahead + shop-counter sales; "Delivered" = money collected.
@@ -37,17 +39,16 @@ type Data = {
   byChannel: Group[];
 };
 
-const rs = (n: number) => `Rs ${Math.round(n).toLocaleString("en-PK")}`;
-const pktToday = () => new Date(Date.now() + 5 * 3600e3).toISOString().slice(0, 10);
-const daysAgo = (n: number) => new Date(Date.now() + 5 * 3600e3 - n * 864e5).toISOString().slice(0, 10);
-const PRESETS = [
-  { key: "today", label: "Today", range: () => [pktToday(), pktToday()] },
-  { key: "7", label: "7 days", range: () => [daysAgo(6), pktToday()] },
-  { key: "30", label: "30 days", range: () => [daysAgo(29), pktToday()] },
-  { key: "month", label: "This month", range: () => [`${pktToday().slice(0, 8)}01`, pktToday()] },
-  { key: "90", label: "90 days", range: () => [daysAgo(89), pktToday()] },
-  { key: "365", label: "1 year", range: () => [daysAgo(364), pktToday()] },
-] as const;
+const todayIn = (timezone: string) => dayIn(Date.now(), timezone);
+/** Periods ending today (`today` = the store's day, "YYYY-MM-DD"). */
+const PRESETS: readonly { key: string; label: string; range: (today: string) => readonly [string, string] }[] = [
+  { key: "today", label: "Today", range: (today) => [today, today] },
+  { key: "7", label: "7 days", range: (today) => [addDays(today, -6), today] },
+  { key: "30", label: "30 days", range: (today) => [addDays(today, -29), today] },
+  { key: "month", label: "This month", range: (today) => [`${today.slice(0, 8)}01`, today] },
+  { key: "90", label: "90 days", range: (today) => [addDays(today, -89), today] },
+  { key: "365", label: "1 year", range: (today) => [addDays(today, -364), today] },
+];
 const TABS = [
   ["byProduct", "Products"],
   ["byCategory", "Categories"],
@@ -59,9 +60,16 @@ const TABS = [
 type Tab = (typeof TABS)[number][0];
 
 export function SalesReport() {
-  const [from, setFrom] = useState(daysAgo(29));
-  const [to, setTo] = useState(pktToday());
+  // days in the store's time zone (known once the store list has loaded), amounts in its currency
+  const money = useAdminMoney();
+  const { timezone } = useAdminLocale();
+  const today = todayIn(timezone);
   const [preset, setPreset] = useState<string>("30");
+  // dates picked by hand (no preset chosen)
+  const [picked, setPicked] = useState<readonly [string, string]>(["", ""]);
+  const [from, to] = PRESETS.find((pr) => pr.key === preset)?.range(today) ?? picked;
+  const setFrom = (f: string) => setPicked([f, to]);
+  const setTo = (t: string) => setPicked([from, t]);
   const [basis, setBasis] = useState<"booked" | "delivered">("booked");
   const [tab, setTab] = useState<Tab>("byProduct");
   const [data, setData] = useState<Data | null>(null);
@@ -83,10 +91,11 @@ export function SalesReport() {
 
   function downloadCsv() {
     if (!data) return;
-    const head = ["Name", product ? "Qty" : "", "Orders", "Sales (Rs)", ...(showProfit ? ["Cost (Rs)", "Profit (Rs)"] : [])].filter(Boolean);
+    const c = money.symbol;
+    const head = ["Name", product ? "Qty" : "", "Orders", `Sales (${c})`, ...(showProfit ? [`Cost (${c})`, `Profit (${c})`] : [])].filter(Boolean);
     const cell = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const lines = rows.map((r) =>
-      [r.label, ...(product ? [r.qty ?? 0] : []), r.orders, Math.round(r.sales), ...(showProfit ? [r.costKnown ? Math.round(r.cost ?? 0) : "", r.costKnown ? Math.round(r.profit ?? 0) : ""] : [])].map(cell).join(","),
+      [r.label, ...(product ? [r.qty ?? 0] : []), r.orders, money.round(r.sales), ...(showProfit ? [r.costKnown ? money.round(r.cost ?? 0) : "", r.costKnown ? money.round(r.profit ?? 0) : ""] : [])].map(cell).join(","),
     );
     const blob = new Blob([[head.map(cell).join(","), ...lines].join("\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
@@ -113,12 +122,7 @@ export function SalesReport() {
               key={pr.key}
               type="button"
               aria-pressed={preset === pr.key}
-              onClick={() => {
-                const [f, tt] = pr.range();
-                setPreset(pr.key);
-                setFrom(f);
-                setTo(tt);
-              }}
+              onClick={() => setPreset(pr.key)}
             >
               {pr.label}
             </button>
@@ -133,7 +137,7 @@ export function SalesReport() {
         </label>
         <label className="urko-pos__amount" style={{ maxWidth: 170 }}>
           To
-          <input type="date" value={to} min={from} max={pktToday()} onChange={(e) => (setPreset(""), setTo(e.target.value))} />
+          <input type="date" value={to} min={from} max={today} onChange={(e) => (setPreset(""), setTo(e.target.value))} />
         </label>
         <div className="urko-seg" role="group" aria-label="Count as sales">
           <button type="button" aria-pressed={basis === "booked"} onClick={() => setBasis("booked")} title="Confirmed, shipped and delivered orders + counter sales">
@@ -148,16 +152,16 @@ export function SalesReport() {
       {error && <p className="urko-tip">{error}</p>}
 
       <div className="urko-grid urko-grid--stats" style={{ marginBottom: 16 }}>
-        <Stat label="Booked sales" value={t ? rs(t.bookedSales) : "…"} hint="Went ahead + counter" />
-        <Stat label="Delivered sales" value={t ? rs(t.deliveredSales) : "…"} hint="Money collected" />
-        <Stat label={`${basis === "booked" ? "Booked" : "Delivered"} orders & sales`} value={t ? String(t.orders) : "…"} hint={t ? `Average ${rs(t.aov)}` : undefined} />
-        <Stat label="Shop counter" value={t ? rs(t.counter.value) : "…"} hint={t ? `${t.counter.count} sale${t.counter.count === 1 ? "" : "s"}` : undefined} />
+        <Stat label="Booked sales" value={t ? money(t.bookedSales) : "…"} hint="Went ahead + counter" />
+        <Stat label="Delivered sales" value={t ? money(t.deliveredSales) : "…"} hint="Money collected" />
+        <Stat label={`${basis === "booked" ? "Booked" : "Delivered"} orders & sales`} value={t ? String(t.orders) : "…"} hint={t ? `Average ${money(t.aov)}` : undefined} />
+        <Stat label="Shop counter" value={t ? money(t.counter.value) : "…"} hint={t ? `${t.counter.count} sale${t.counter.count === 1 ? "" : "s"}` : undefined} />
       </div>
       <div className="urko-grid urko-grid--stats" style={{ marginBottom: 16 }}>
-        <Stat label="Open (not sales yet)" value={t ? String(t.open.count) : "…"} hint={t ? `${rs(t.open.value)} pending / to confirm` : undefined} />
-        <Stat label="Refused (RTO)" value={t ? String(t.refused.count) : "…"} hint={t ? `${t.refusalRate}% of deliveries · ${rs(t.refused.value)}` : undefined} />
-        <Stat label="Cancelled" value={t ? String(t.cancelled.count) : "…"} hint={t ? rs(t.cancelled.value) : undefined} />
-        <Stat label="Refunds (returns)" value={t ? rs(t.refunds) : "…"} hint={t ? `${t.returned.count} order${t.returned.count === 1 ? "" : "s"} fully returned` : undefined} />
+        <Stat label="Open (not sales yet)" value={t ? String(t.open.count) : "…"} hint={t ? `${money(t.open.value)} pending / to confirm` : undefined} />
+        <Stat label="Refused (RTO)" value={t ? String(t.refused.count) : "…"} hint={t ? `${t.refusalRate}% of deliveries · ${money(t.refused.value)}` : undefined} />
+        <Stat label="Cancelled" value={t ? String(t.cancelled.count) : "…"} hint={t ? money(t.cancelled.value) : undefined} />
+        <Stat label="Refunds (returns)" value={t ? money(t.refunds) : "…"} hint={t ? `${t.returned.count} order${t.returned.count === 1 ? "" : "s"} fully returned` : undefined} />
       </div>
 
       {p && (
@@ -166,20 +170,20 @@ export function SalesReport() {
             Profit on delivered sales <span className="urko-badge urko-badge--n">owners only</span>
           </h2>
           <div className="urko-grid urko-grid--stats">
-            <Stat label="Items sold" value={rs(p.itemsRevenue)} />
-            <Stat label="Discounts" value={`− ${rs(p.discounts)}`} />
-            <Stat label="Cost of goods" value={`− ${rs(p.cost)}`} />
-            <Stat label="Gross profit" value={rs(p.grossProfit)} hint={`${p.margin}% margin`} />
+            <Stat label="Items sold" value={money(p.itemsRevenue)} />
+            <Stat label="Discounts" value={`− ${money(p.discounts)}`} />
+            <Stat label="Cost of goods" value={`− ${money(p.cost)}`} />
+            <Stat label="Gross profit" value={money(p.grossProfit)} hint={`${p.margin}% margin`} />
           </div>
           {(p.refunds > 0 || p.restockedCost > 0) && (
             <div className="urko-grid urko-grid--stats" style={{ marginTop: 12 }}>
-              <Stat label="Refunds paid" value={`− ${rs(p.refunds)}`} />
-              <Stat label="Returned to stock (cost)" value={`+ ${rs(p.restockedCost)}`} />
-              <Stat label="Profit after refunds" value={rs(p.netProfit)} />
+              <Stat label="Refunds paid" value={`− ${money(p.refunds)}`} />
+              <Stat label="Returned to stock (cost)" value={`+ ${money(p.restockedCost)}`} />
+              <Stat label="Profit after refunds" value={money(p.netProfit)} />
             </div>
           )}
           <p className="urko-tip" style={{ marginBottom: 0 }}>
-            Delivery fees collected: {rs(p.deliveryFees)} (not in profit – they pay the courier).{" "}
+            Delivery fees collected: {money(p.deliveryFees)} (not in profit – they pay the courier).{" "}
             {p.estimatedLines > 0 && `${p.estimatedLines} of ${p.lines} lines were sold before costs were saved per sale and use today's cost (estimated). `}
             {p.missingCostLines > 0 && `${p.missingCostLines} lines have no cost price at all – add “Your cost” on those products for a complete profit.`}
           </p>
@@ -189,15 +193,15 @@ export function SalesReport() {
       <section className="urko-card" style={{ marginBottom: 16 }} aria-label="Sales per day">
         {data ? (
           <>
-            <div className="urko-bars" role="img" aria-label={`Sales per day from ${data.range.from} to ${data.range.to}. Total ${rs(data.totals.sales)}.`}>
+            <div className="urko-bars" role="img" aria-label={`Sales per day from ${data.range.from} to ${data.range.to}. Total ${money(data.totals.sales)}.`}>
               {data.series.map((s) => (
-                <span key={s.day} title={`${s.day}: ${rs(s.sales)} · ${s.orders} sale${s.orders === 1 ? "" : "s"}${s.counter ? ` (counter ${rs(s.counter)})` : ""}`} style={{ height: `${Math.max(s.sales ? 3 : 1, (s.sales / max) * 100)}%` }} />
+                <span key={s.day} title={`${s.day}: ${money(s.sales)} · ${s.orders} sale${s.orders === 1 ? "" : "s"}${s.counter ? ` (counter ${money(s.counter)})` : ""}`} style={{ height: `${Math.max(s.sales ? 3 : 1, (s.sales / max) * 100)}%` }} />
               ))}
             </div>
             <div className="urko-bars__legend urko-muted urko-small">
               <span>{data.range.from}</span>
               <span>
-                Total <strong className="urko-text">{rs(data.totals.sales)}</strong>
+                Total <strong className="urko-text">{money(data.totals.sales)}</strong>
               </span>
               <span>{data.range.to}</span>
             </div>
@@ -245,12 +249,12 @@ export function SalesReport() {
                     <td>{r.label}</td>
                     {product && <td className="n">{r.qty ?? 0}</td>}
                     <td className="n">{r.orders}</td>
-                    <td className="n">{rs(r.sales)}</td>
+                    <td className="n">{money(r.sales)}</td>
                     <td className="n">{Math.round((r.sales / total) * 100)}%</td>
-                    {showProfit && <td className="n">{r.costKnown ? rs(r.cost ?? 0) : "—"}</td>}
+                    {showProfit && <td className="n">{r.costKnown ? money(r.cost ?? 0) : "—"}</td>}
                     {showProfit && (
                       <td className="n">
-                        {r.costKnown ? <span className={`urko-badge urko-badge--${(r.profit ?? 0) < 0 ? "r" : "g"}`}>{rs(r.profit ?? 0)}</span> : "—"}
+                        {r.costKnown ? <span className={`urko-badge urko-badge--${(r.profit ?? 0) < 0 ? "r" : "g"}`}>{money(r.profit ?? 0)}</span> : "—"}
                       </td>
                     )}
                   </tr>

@@ -1,8 +1,9 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { useDocumentInfo, useField, useFormModified } from "@payloadcms/ui";
+import { useDocumentInfo, useField, useFormFields, useFormModified } from "@payloadcms/ui";
 import { toast } from "../ui/toast";
+import { useAdminMoney } from "../ui/store-context";
 
 /** A variant's option, e.g. "Colour: Black · Size: L" (set when the variant was created – read only). */
 export function OptionValuesField({ path }: { path: string }) {
@@ -19,7 +20,6 @@ export function OptionValuesField({ path }: { path: string }) {
 
 type Variant = { id: number; title: string; sku: string; price: number; stock: number; status: string; optionValues?: Record<string, string> };
 
-const rs = (n: number) => `Rs ${Math.round(Number(n) || 0).toLocaleString("en-PK")}`;
 const STATUS: Record<string, string> = { active: "On store", draft: "Draft", archived: "Hidden" };
 
 /**
@@ -31,6 +31,9 @@ export function VariantsPanel() {
   const modified = useFormModified();
   const [variants, setVariants] = useState<Variant[] | null>(null);
   const [busy, setBusy] = useState(false);
+  // prices in the product's store's currency
+  const store = useFormFields(([f]) => f.store?.value);
+  const money = useAdminMoney(store);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -95,7 +98,7 @@ export function VariantsPanel() {
                     </Link>
                   </td>
                   <td style={{ padding: "8px", fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 12 }}>{v.sku}</td>
-                  <td style={{ padding: "8px" }}>{rs(v.price)}</td>
+                  <td style={{ padding: "8px" }}>{money(Number(v.price) || 0)}</td>
                   <td style={{ padding: "8px", fontWeight: 600, color: Number(v.stock) > 0 ? undefined : "var(--urko-red)" }}>{Number(v.stock) || 0}</td>
                   <td style={{ padding: "8px" }}>{STATUS[v.status] ?? v.status}</td>
                 </tr>

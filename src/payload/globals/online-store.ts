@@ -110,7 +110,8 @@ export const AnnouncementBar: GlobalConfig = {
   access: { read: anyone, update: platformAdmins },
   fields: [
     { name: "enabled", type: "checkbox", defaultValue: true, label: "Show the announcement bar" },
-    { name: "text", type: "text", defaultValue: "Free delivery on orders above Rs 15,000 · Cash on Delivery all over Pakistan", admin: { description: "Leave empty to show the store tagline." } },
+    // no built-in text: a new store (any country, any currency) starts with its own tagline
+    { name: "text", type: "text", admin: { description: "e.g. “Free delivery on orders above …”. Leave empty to show the store tagline." } },
     { type: "row", fields: [
       { name: "linkUrl", type: "text", admin: { width: "50%", description: "Optional, e.g. /deals" } },
       { name: "linkLabel", type: "text", admin: { width: "50%", description: "e.g. Shop now" } },

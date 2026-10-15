@@ -5,13 +5,14 @@ import { waLink } from "@/lib/site";
 import { primaryPhone } from "@/lib/site-info";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { storeUrl } from "@/lib/tenant";
+import { getStoreLocale } from "@/lib/store-locale";
 import { quoteHref, wholesaleMinQty } from "@/lib/wholesale";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
 
 /** Replaces the buy box on quote-only (price on request) wholesale lots: no price, no cart – quote + WhatsApp only. */
 export async function QuoteOnlyBox({ product: p }: { product: CatalogProduct }) {
   // the current store's own name, phone and address (Settings → Store details)
-  const [site, url] = await Promise.all([getSiteInfo(), storeUrl(p.url)]);
+  const [site, url, { country }] = await Promise.all([getSiteInfo(), storeUrl(p.url), getStoreLocale()]);
   const phone = primaryPhone(site);
   const w = p.wholesale ?? undefined;
   const waText = [
@@ -84,7 +85,7 @@ export async function QuoteOnlyBox({ product: p }: { product: CatalogProduct }) 
           <ShieldCheck className="size-4 text-emerald-400" aria-hidden="true" /> Every unit checked &amp; tested
         </li>
         <li className="flex items-center gap-2">
-          <Truck className="size-4 text-sky-400" aria-hidden="true" /> Courier / cargo all over Pakistan
+          <Truck className="size-4 text-sky-400" aria-hidden="true" /> Courier / cargo {country === "PK" ? "all over Pakistan" : "nationwide"}
         </li>
         <li className="flex items-center gap-2">
           <FileText className="size-4 text-violet-400" aria-hidden="true" /> Invoice with every bulk order

@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useState } from "react";
 import { Check, Plus, ShoppingBag } from "lucide-react";
 import type { CatalogProduct } from "@/lib/types";
-import { cn, effectivePrice, formatPKR } from "@/lib/utils";
+import { cn, effectivePrice } from "@/lib/utils";
 import { useCart } from "@/store/cart";
 import { useUi } from "@/store/ui";
 import { trackEvent } from "@/components/analytics";
+import { useMoney } from "@/components/providers/locale";
 import { AnimatedPrice } from "./animated-price";
 
 /**
@@ -29,17 +30,18 @@ export function BoughtTogether({
   );
   const add = useCart((s) => s.add);
   const toast = useUi((s) => s.toast);
+  const money = useMoney();
 
   const selected = items.filter((p) => picked[p.id] && p.stock > 0);
   const subtotal = selected.reduce((s, p) => s + effectivePrice(p), 0);
   const qualifies = discountPercent > 0 && selected.length >= 2 && selected.some((p) => p.id === product.id);
-  const total = qualifies ? Math.round(subtotal * (1 - discountPercent / 100)) : subtotal;
+  const total = qualifies ? money.round(subtotal * (1 - discountPercent / 100)) : subtotal;
 
   const addSelected = () => {
     if (!selected.length) return;
     selected.forEach((p, i) => add(p, { qty: 1, openDrawer: i === selected.length - 1 }));
     trackEvent("add_to_cart", {
-      currency: "PKR",
+      currency: money.currency,
       value: total,
       bundle: true,
       items: selected.map((p) => ({ item_id: p.sku, item_name: p.name, price: effectivePrice(p), quantity: 1 })),
@@ -76,7 +78,7 @@ export function BoughtTogether({
                     checked={on}
                     disabled={p.stock <= 0}
                     onChange={(e) => setPicked((s) => ({ ...s, [p.id]: e.target.checked }))}
-                    aria-label={`${isMain ? "This item: " : ""}${p.name} – ${formatPKR(effectivePrice(p))}`}
+                    aria-label={`${isMain ? "This item: " : ""}${p.name} – ${money(effectivePrice(p))}`}
                   />
                   <span
                     className={cn(
@@ -95,7 +97,7 @@ export function BoughtTogether({
                       {isMain ? <span className="text-violet-300 light:text-violet-700">This item: </span> : null}
                       {p.name}
                     </span>
-                    <span className="mt-0.5 block text-sm font-semibold tabular-nums text-fg">{formatPKR(effectivePrice(p))}</span>
+                    <span className="mt-0.5 block text-sm font-semibold tabular-nums text-fg">{money(effectivePrice(p))}</span>
                     {!isMain && (
                       <Link href={p.url} className="relative z-[2] text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
                         View details
@@ -115,7 +117,7 @@ export function BoughtTogether({
           </p>
           <div className="mt-1 flex flex-wrap items-baseline gap-2" aria-live="polite">
             <AnimatedPrice value={total} className="font-display text-3xl font-bold text-fg" />
-            {qualifies && <s className="text-sm tabular-nums text-subtle">{formatPKR(subtotal)}</s>}
+            {qualifies && <s className="text-sm tabular-nums text-subtle">{money(subtotal)}</s>}
           </div>
           {discountPercent > 0 && (
             <p className={cn("chip mt-3", qualifies ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" : "text-muted")}>

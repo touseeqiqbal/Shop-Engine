@@ -142,9 +142,10 @@ export function advanceReason(risk: OrderRisk & { blocked: { action: string } | 
   return null;
 }
 
-/** Should this COD order wait for the customer to confirm it? */
-export function needsConfirmation(args: { paymentMethod: string; total: number; zoneName: string | null; advancePaid: boolean }, s: ProtectionSettings) {
-  if (!s.confirmEnabled || args.paymentMethod !== "cod") return false;
+/** Paid on delivery (cash, or a store's own "on delivery" method) orders over the limits are confirmed by the customer first. */
+export function needsConfirmation(args: { paymentMethod: string; paymentDue?: string | null; total: number; zoneName: string | null; advancePaid: boolean }, s: ProtectionSettings) {
+  const onDelivery = args.paymentDue ? args.paymentDue === "on-delivery" : args.paymentMethod === "cod";
+  if (!s.confirmEnabled || !onDelivery) return false;
   if (args.advancePaid && s.skipWithAdvance) return false;
   if (args.total < s.confirmAbove) return false;
   if (s.confirmZones.length && !(args.zoneName && s.confirmZones.some((z) => lower(z) === lower(args.zoneName!)))) return false;

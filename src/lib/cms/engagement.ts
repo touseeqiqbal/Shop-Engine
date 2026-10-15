@@ -84,8 +84,17 @@ const conversionCached = unstable_cache(
   { tags: ["settings"], revalidate: 300 }
 );
 
-/** The store's Settings → Conversion (installments, abandoned-cart reminders, alerts). */
-export const getConversionSettings = async (storeId?: StoreArg) => conversionCached(await storeOf(storeId));
+/**
+ * The store's Settings → Conversion (installments, abandoned-cart reminders, alerts). The built-in reminder promises
+ * cash on delivery all over Pakistan – stores in other countries get the same text without that line.
+ */
+export const getConversionSettings = async (storeId?: StoreArg): Promise<ConversionSettings> => {
+  const id = await storeOf(storeId);
+  const s = await conversionCached(id);
+  if (s.cartMessage !== DEFAULT_CONVERSION.cartMessage) return s;
+  const { localeOfStore } = await import("@/lib/store-locale");
+  return (await localeOfStore(id)).country === "PK" ? s : { ...s, cartMessage: s.cartMessage.replace(/\s*Cash on delivery all over Pakistan\.$/, "") };
+};
 
 /* ───────────── questions ───────────── */
 

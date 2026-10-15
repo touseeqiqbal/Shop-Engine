@@ -6,7 +6,9 @@ import { notifyFromStorefront } from "@/lib/notify";
 import { ORDER_NUMBER_EXAMPLE, ORDER_NUMBER_RE } from "@/lib/order-number";
 import { rateLimit } from "@/lib/rate-limit";
 import { storePhotos } from "@/lib/uploads";
-import { normalizePkPhone } from "@/lib/utils";
+import { normalizePhone } from "@/lib/phone";
+import { getStoreLocale } from "@/lib/store-locale";
+import { formatDate } from "@/lib/time";
 import { log } from "@/lib/log";
 import { BOT_MESSAGE, verifyTurnstile } from "@/lib/turnstile";
 import { HONEYPOT } from "@/lib/honeypot";
@@ -18,18 +20,20 @@ const numberSchema = z
   .trim()
   .toUpperCase()
   .refine((v) => ORDER_NUMBER_RE.test(v) || /^POS-\d{6}-(?:\d{4}|\d{6})$/.test(v), `Order number looks like ${ORDER_NUMBER_EXAMPLE} (or a shop receipt POS-…)`);
-const phoneSchema = z.string().refine((v) => !!normalizePkPhone(v), "Enter the mobile number used for the order");
+/** `country` = the store's country (ISO code): phone numbers are checked for it. */
+const phoneSchema = (country: string) => z.string().refine((v) => !!normalizePhone(v, country), "Enter the mobile number used for the order");
 
 export type LookupState = { ok: true; order: Omit<ReturnableOrder, "id">; returnDays: number } | { ok: false; message: string } | null;
 
 export async function lookupForReturn(number: string, phone: string): Promise<LookupState> {
+  const { country } = await getStoreLocale();
   const n = numberSchema.safeParse(number);
-  const p = phoneSchema.safeParse(phone);
+  const p = phoneSchema(country).safeParse(phone);
   if (!n.success) return { ok: false, message: n.error.issues[0].message };
   if (!p.success) return { ok: false, message: p.error.issues[0].message };
   if (!(await rateLimit("returns-lookup", 15, 10 * 60_000))) return { ok: false, message: "Too many tries – please wait a few minutes." };
   const policy = await getReturnsPolicy();
-  const order = await findOrderForAftersales(n.data, normalizePkPhone(p.data)!, policy.returnDays).catch(() => null);
+  const order = await findOrderForAftersales(n.data, normalizePhone(p.data, country)!, policy.returnDays).catch(() => null);
   if (!order) return { ok: false, message: "We couldn't find an order with that number and phone. Check both and try again." };
   const { id: _id, ...rest } = order;
   return { ok: true, order: rest, returnDays: policy.returnDays };
@@ -40,12 +44,13 @@ export type SubmitState = { ok: true; reference: string; message: string } | { o
 export async function submitReturn(_prev: SubmitState, fd: FormData): Promise<SubmitState> {
   if (String(fd.get(HONEYPOT) ?? "")) return { ok: false, message: "Something went wrong." };
   if (!(await verifyTurnstile(fd, "aftersales"))) return { ok: false, message: BOT_MESSAGE };
+  const { country } = await getStoreLocale();
   const n = numberSchema.safeParse(String(fd.get("orderNumber") ?? ""));
-  const p = phoneSchema.safeParse(String(fd.get("phone") ?? ""));
+  const p = phoneSchema(country).safeParse(String(fd.get("phone") ?? ""));
   if (!n.success || !p.success) return { ok: false, message: "Find your order first." };
   if (!(await rateLimit("returns-submit", 5, 60 * 60_000))) return { ok: false, message: "Too many requests – please WhatsApp us instead." };
   const policy = await getReturnsPolicy();
-  const order = await findOrderForAftersales(n.data, normalizePkPhone(p.data)!, policy.returnDays).catch(() => null);
+  const order = await findOrderForAftersales(n.data, normalizePhone(p.data, country)!, policy.returnDays).catch(() => null);
   if (!order) return { ok: false, message: "We couldn't find that order." };
   if (order.status !== "delivered" || order.daysLeft == null) return { ok: false, message: "Returns can be requested once the order is delivered." };
   if (order.daysLeft < 0) return { ok: false, message: `Returns are accepted within ${policy.returnDays} days of delivery. For faults after that, please make a warranty claim.` };
@@ -93,9 +98,10 @@ export async function submitReturn(_prev: SubmitState, fd: FormData): Promise<Su
 export async function submitWarranty(_prev: SubmitState, fd: FormData): Promise<SubmitState> {
   if (String(fd.get(HONEYPOT) ?? "")) return { ok: false, message: "Something went wrong." };
   if (!(await verifyTurnstile(fd, "aftersales"))) return { ok: false, message: BOT_MESSAGE };
+  const loc = await getStoreLocale();
   const schema = z.object({
     name: z.string().trim().min(3, "Enter your name").max(100),
-    phone: phoneSchema,
+    phone: phoneSchema(loc.country),
     serial: z.string().trim().max(60).optional(),
     orderNumber: z.string().trim().toUpperCase().max(20).optional(),
     issue: z.string().trim().min(10, "Tell us what's wrong (at least a few words)").max(2000),
@@ -105,7 +111,7 @@ export async function submitWarranty(_prev: SubmitState, fd: FormData): Promise<
   const d = parsed.data;
   if (!d.serial && !d.orderNumber) return { ok: false, message: "Enter the serial number or your order / receipt number." };
   if (!(await rateLimit("warranty-submit", 5, 60 * 60_000))) return { ok: false, message: "Too many requests – please WhatsApp us instead." };
-  const phone = normalizePkPhone(d.phone)!;
+  const phone = normalizePhone(d.phone, loc.country)!;
   if (d.orderNumber) {
     const policy = await getReturnsPolicy();
     const order = await findOrderForAftersales(d.orderNumber, phone, policy.returnDays).catch(() => null);
@@ -116,7 +122,7 @@ export async function submitWarranty(_prev: SubmitState, fd: FormData): Promise<
   const claim = await createWarrantyClaim({ status: "open", customerName: d.name, customerPhone: phone, serial: d.serial ?? null, orderNumber: d.orderNumber ?? null, issue: d.issue, photoKeys: stored.keys });
   await notifyFromStorefront("staff", { subject: `New warranty claim ${claim.claimNumber}`, lines: [`${d.name} · ${phone}`, `Serial ${d.serial ?? "–"} · order ${d.orderNumber ?? "–"}`, d.issue, `Warranty check: ${claim.inWarranty}`], link: { href: "/cms/collections/warranty-claims?where[status][equals]=open", label: "Open warranty claims" } });
   log.info("warranty.claimed", { reference: claim.claimNumber, inWarranty: claim.inWarranty });
-  const until = claim.warrantyEndsAt ? new Date(claim.warrantyEndsAt).toLocaleDateString("en-PK", { dateStyle: "medium" }) : "";
+  const until = claim.warrantyEndsAt ? formatDate(claim.warrantyEndsAt, loc) : "";
   const note =
     claim.inWarranty === "yes"
       ? ` Good news: it's in warranty until ${until}.`

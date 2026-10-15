@@ -7,14 +7,19 @@ import { DEFAULT_SITE_INFO, type SiteInfo } from "@/lib/site-info";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { currentStoreId, runInStore, storeDirectory, storeOrigin } from "@/lib/tenant";
 import { isCmsConfigured } from "@/lib/db/config";
-import { formatPKR } from "@/lib/utils";
+import { DEFAULT_LOCALE, type StoreLocale } from "@/lib/locale";
+import { formatMoney } from "@/lib/money";
+import { formatDate } from "@/lib/time";
+import { intlDigits } from "@/lib/phone";
+import { storeLocaleOf } from "@/payload/store-locale";
 import { courierInfo, courierTrackingUrl } from "@/lib/couriers";
-import { ORDER_STATUS_LABEL, PAYMENT_LABEL, PAYMENT_STATUS_LABEL, paymentAccountLines, toIntlPkPhone } from "@/lib/order-display";
+import { cityLine, ORDER_STATUS_LABEL, PAYMENT_STATUS_LABEL, paymentAccountLines, paymentLabel } from "@/lib/order-display";
+import { findCheckoutMethod } from "@/lib/payments/methods";
 import { deliveryEstimate } from "@/lib/cities";
 import { getStoreSettings } from "@/lib/repo/catalog";
 import { getNotifySettings } from "@/lib/cms/notify-settings";
 import { deliverEmail, isEmailConfigured } from "@/lib/mailer";
-import { amountToCollect } from "@/lib/order-money";
+import { amountToCollect, paidOnDelivery } from "@/lib/order-money";
 import { log } from "@/lib/log";
 
 /**
@@ -29,27 +34,35 @@ import { log } from "@/lib/log";
  *   WHATSAPP_TEMPLATE_LANG      – template language code (default "en")
  *   SMS_WEBHOOK_URL             – generic SMS gateway; receives POST JSON { to, message }
  *
- * Multi-store: every message is written for ONE store – its name, address, phone numbers, links (its own web address)
- * and its notification settings. Messages are queued in the outbox (src/lib/outbox.ts) and delivered by the worker:
+ * Multi-store: every message is written for ONE store – its name, address, phone numbers, links (its own web address),
+ * currency, time zone, phone country and notification settings. Messages are queued in the outbox (src/lib/outbox.ts)
+ * and delivered by the worker:
  * `queueNotification()` → one "notify.<kind>" event → one "message.send" event per channel and recipient, each retried
  * on its own. `notifyNow()` sends straight away (scripts only).
  */
 
-type Ctx = { site: SiteInfo; origin: string; storeId: number | null; isDefault: boolean };
+type Ctx = { site: SiteInfo; origin: string; storeId: number | null; isDefault: boolean; locale: StoreLocale };
 const ctxStore = new AsyncLocalStorage<Ctx>();
 /** The store this message is for (set by withStore); the original shop when nothing is set. */
-const ctx = (): Ctx => ctxStore.getStore() ?? { site: DEFAULT_SITE_INFO, origin: mainSiteUrl("").replace(/\/$/, ""), storeId: null, isDefault: true };
+const ctx = (): Ctx => ctxStore.getStore() ?? { site: DEFAULT_SITE_INFO, origin: mainSiteUrl("").replace(/\/$/, ""), storeId: null, isDefault: true, locale: DEFAULT_LOCALE };
 /** A link on the store's own website. */
 const absoluteUrl = (path = "/") => `${ctx().origin}${path.startsWith("/") ? path : `/${path}`}`;
+/** An amount in the store's currency ("Rs 1,200", "$1,200.00"). */
+const money = (n: number) => formatMoney(n, ctx().locale);
+/** An order's amounts – in the currency it was placed in (older orders: the store's). */
+const moneyOf = (o: Order) => {
+  const currency = o.currency || ctx().locale.currency;
+  return (n: number) => formatMoney(n, { currency, locale: ctx().locale.locale });
+};
 
-/** Runs `fn` for one store: its profile, web address and settings (all lookups inside use that store). */
-export async function withStore<T>(storeId: number | null | undefined, fn: () => Promise<T>): Promise<T> {
+/** Runs `fn` for one store: its profile, web address, region and settings (all lookups inside use that store). */
+export async function withStore<T>(storeId: number | null | undefined, fn: () => Promise<T>, payload?: Payload | null): Promise<T> {
   const id = storeId ?? null;
   return runInStore(id, async () => {
     const store = id == null ? null : ((await storeDirectory()).find((x) => x.id === id) ?? null);
-    const info = await getSiteInfo(id).catch(() => DEFAULT_SITE_INFO);
+    const [info, locale] = await Promise.all([getSiteInfo(id).catch(() => DEFAULT_SITE_INFO), payload ? storeLocaleOf(payload, id) : DEFAULT_LOCALE]);
     const origin = (store ? storeOrigin(store) : mainSiteUrl("")).replace(/\/$/, "");
-    return ctxStore.run({ site: { ...info, url: origin }, origin, storeId: id, isDefault: !store || store.isDefault }, fn);
+    return ctxStore.run({ site: { ...info, url: origin }, origin, storeId: id, isDefault: !store || store.isDefault, locale }, fn);
   });
 }
 
@@ -71,11 +84,14 @@ const esc = (s: string | number | null | undefined) =>
 
 // ───────────────────────────── channels ─────────────────────────────
 
-/** One message to one recipient on one channel – what the outbox stores and retries. */
+/**
+ * One message to one recipient on one channel – what the outbox stores and retries.
+ * `country`: the store's country, for a phone number typed without its country code (older messages: Pakistan).
+ */
 export type Message =
   | { channel: "email"; to: string; subject: string; html: string; text: string; replyTo?: string }
-  | { channel: "whatsapp"; to: string; text: string; template?: { name?: string; params: string[] } }
-  | { channel: "sms"; to: string; text: string };
+  | { channel: "whatsapp"; to: string; text: string; template?: { name?: string; params: string[] }; country?: string }
+  | { channel: "sms"; to: string; text: string; country?: string };
 
 /** Messages being built for the current notification (collected instead of sent). */
 const outbox = new AsyncLocalStorage<Message[]>();
@@ -91,11 +107,11 @@ async function sendEmail(to: string, subject: string, html: string, text: string
 }
 
 async function sendWhatsApp(phone: string, text: string, template?: { name?: string; params: string[] }) {
-  if (phone) push({ channel: "whatsapp", to: phone, text, template });
+  if (phone) push({ channel: "whatsapp", to: phone, text, template, country: ctx().locale.country });
 }
 
 async function sendSms(phone: string, message: string) {
-  if (phone) push({ channel: "sms", to: phone, text: message });
+  if (phone) push({ channel: "sms", to: phone, text: message, country: ctx().locale.country });
 }
 
 /** Actually sends one message (the outbox worker calls this; throws so the delivery is retried). */
@@ -104,16 +120,16 @@ export async function sendMessage(m: Message): Promise<void> {
     await deliverEmail({ to: m.to, subject: m.subject, html: m.html, text: m.text, replyTo: m.replyTo });
     return;
   }
-  if (m.channel === "whatsapp") return deliverWhatsApp(m.to, m.text, m.template);
-  return deliverSms(m.to, m.text);
+  if (m.channel === "whatsapp") return deliverWhatsApp(m.to, m.text, m.template, m.country);
+  return deliverSms(m.to, m.text, m.country);
 }
 
-async function deliverWhatsApp(phone: string, text: string, template?: { name?: string; params: string[] }) {
+async function deliverWhatsApp(phone: string, text: string, template?: { name?: string; params: string[] }, country?: string) {
   if (process.env.STAGING === "true") return skip("whatsapp", "STAGING – notifications disabled");
   const token = process.env.WHATSAPP_TOKEN;
   const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!token || !phoneId) return skip("whatsapp", "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set");
-  const to = toIntlPkPhone(phone);
+  const to = intlDigits(phone, country);
   const body = template?.name
     ? {
         messaging_product: "whatsapp",
@@ -135,14 +151,14 @@ async function deliverWhatsApp(phone: string, text: string, template?: { name?: 
   if (!res.ok) throw new Error(`WhatsApp ${res.status}: ${(await res.text()).slice(0, 300)}`);
 }
 
-async function deliverSms(phone: string, message: string) {
+async function deliverSms(phone: string, message: string, country?: string) {
   if (process.env.STAGING === "true") return skip("sms", "STAGING – notifications disabled");
   const url = process.env.SMS_WEBHOOK_URL;
   if (!url) return skip("sms", "SMS_WEBHOOK_URL not set");
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ to: toIntlPkPhone(phone), message }),
+    body: JSON.stringify({ to: intlDigits(phone, country), message }),
     signal: AbortSignal.timeout(TIMEOUT),
   });
   if (!res.ok) throw new Error(`SMS webhook ${res.status}`);
@@ -168,23 +184,24 @@ async function settle(label: string, tasks: Promise<unknown>[]) {
 const trackUrl = (o: Order) => absoluteUrl(`/track-order?order=${encodeURIComponent(o.orderNumber)}`);
 const confirmUrl = (o: Order) => (o.confirmation ? absoluteUrl(`/confirm-order/${o.confirmation.token}`) : trackUrl(o));
 const awaiting = (o: Order) => o.status === "awaiting-confirmation" && Boolean(o.confirmation);
-const deadline = (o: Order) =>
-  o.confirmation ? new Date(o.confirmation.expiresAt).toLocaleString("en-PK", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Karachi" }) : "";
+/** The confirmation deadline in the store's time zone ("Tue 3:45 pm"). */
+const deadline = (o: Order) => (o.confirmation ? formatDate(o.confirmation.expiresAt, ctx().locale, { weekday: "short", hour: "numeric", minute: "2-digit" }) : "");
 
 /** One short message: confirm link + code + deadline (fake-order protection). */
 function confirmText(o: Order) {
-  return `${ctx().site.shortName}: please confirm your order ${o.orderNumber} (${formatPKR(o.total)}, cash on delivery). Tap ${confirmUrl(o)} or enter code ${o.confirmation?.code} on our website. If it isn't confirmed by ${deadline(o)} it will be cancelled.`;
+  return `${ctx().site.shortName}: please confirm your order ${o.orderNumber} (${moneyOf(o)(o.total)}, cash on delivery). Tap ${confirmUrl(o)} or enter code ${o.confirmation?.code} on our website. If it isn't confirmed by ${deadline(o)} it will be cancelled.`;
 }
 
 function itemsTable(o: Order) {
+  const price = moneyOf(o);
   const rows = o.items
     .map(
       (i) => `<tr>
         <td style="padding:10px 0;border-bottom:1px solid #e5e7eb;font-size:14px;color:#111827">
           ${esc(i.name)}${i.upgrades.length ? `<br><span style="color:#7c3aed;font-size:12px">+ ${esc(i.upgrades.map((u) => u.label).join(", "))}</span>` : ""}
-          <br><span style="color:#6b7280;font-size:12px">Qty ${i.qty} × ${esc(formatPKR(i.unitPrice))}</span>
+          <br><span style="color:#6b7280;font-size:12px">Qty ${i.qty} × ${esc(price(i.unitPrice))}</span>
         </td>
-        <td style="padding:10px 0;border-bottom:1px solid #e5e7eb;font-size:14px;text-align:right;white-space:nowrap;color:#111827">${esc(formatPKR(i.unitPrice * i.qty))}</td>
+        <td style="padding:10px 0;border-bottom:1px solid #e5e7eb;font-size:14px;text-align:right;white-space:nowrap;color:#111827">${esc(price(i.unitPrice * i.qty))}</td>
       </tr>`
     )
     .join("");
@@ -192,11 +209,11 @@ function itemsTable(o: Order) {
     `<tr><td style="padding:4px 0;font-size:14px;color:${bold ? "#111827" : "#4b5563"};${bold ? "font-weight:700" : ""}">${esc(label)}</td><td style="padding:4px 0;font-size:14px;text-align:right;color:#111827;${bold ? "font-weight:700" : ""}">${esc(value)}</td></tr>`;
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px">
-    ${line("Subtotal", formatPKR(o.subtotal))}
-    ${o.discount ? line(`Discount${o.couponCode ? ` (${o.couponCode})` : ""}`, `− ${formatPKR(o.discount)}`) : ""}
-    ${line("Delivery", o.deliveryCharge ? formatPKR(o.deliveryCharge) : "FREE")}
-    ${line("Total", formatPKR(o.total), true)}
-    ${o.advancePaid ? (o.paymentStatus === "partial" ? line("Advance paid", formatPKR(o.advancePaid)) : line("Advance (being checked)", formatPKR(o.advancePaid))) + line("Due on delivery", formatPKR(Math.max(0, o.total - o.advancePaid))) : ""}
+    ${line("Subtotal", price(o.subtotal))}
+    ${o.discount ? line(`Discount${o.couponCode ? ` (${o.couponCode})` : ""}`, `− ${price(o.discount)}`) : ""}
+    ${line("Delivery", o.deliveryCharge ? price(o.deliveryCharge) : "FREE")}
+    ${line("Total", price(o.total), true)}
+    ${o.advancePaid ? (o.paymentStatus === "partial" ? line("Advance paid", price(o.advancePaid)) : line("Advance (being checked)", price(o.advancePaid))) + line("Due on delivery", price(Math.max(0, o.total - o.advancePaid))) : ""}
   </table>`;
 }
 
@@ -206,9 +223,13 @@ function paymentBlock(o: Order, s: StoreSettings) {
     ? `<p style="margin:8px 0 0;font-size:13px;color:#4b5563">${o.paymentStatus === "awaiting-verification" ? "We have received your payment screenshot and will verify it shortly." : "Please transfer the amount to:"}</p>
        <p style="margin:6px 0 0;font-size:13px;color:#111827">${lines.map((l) => `${esc(l.label)}: <strong>${esc(l.value)}</strong>`).join("<br>")}</p>`
     : o.paymentMethod === "cod"
-      ? `<p style="margin:8px 0 0;font-size:13px;color:#4b5563">Please keep ${esc(formatPKR(o.total))} ready in cash when the rider arrives.</p>`
-      : "";
-  return `<p style="margin:0;font-size:14px;color:#111827"><strong>${esc(PAYMENT_LABEL[o.paymentMethod])}</strong> · ${esc(PAYMENT_STATUS_LABEL[o.paymentStatus])}</p>${instructions}`;
+      ? `<p style="margin:8px 0 0;font-size:13px;color:#4b5563">Please keep ${esc(moneyOf(o)(o.total))} ready in cash when the rider arrives.</p>`
+      : paidOnDelivery(o)
+        ? `<p style="margin:8px 0 0;font-size:13px;color:#4b5563">Please keep ${esc(moneyOf(o)(o.total))} ready when your order arrives.</p>`
+        : "";
+  // the store's own steps for its own methods ("use your order number as the reference")
+  const steps = lines.length && o.paymentStatus !== "awaiting-verification" ? findCheckoutMethod(o.paymentMethod, s)?.instructions : undefined;
+  return `<p style="margin:0;font-size:14px;color:#111827"><strong>${esc(paymentLabel(o.paymentMethod, o.paymentMethodLabel))}</strong> · ${esc(PAYMENT_STATUS_LABEL[o.paymentStatus])}</p>${instructions}${steps ? `<p style="margin:6px 0 0;font-size:13px;color:#4b5563">${esc(steps)}</p>` : ""}`;
 }
 
 function layout(title: string, preheader: string, inner: string) {
@@ -235,7 +256,7 @@ function button(href: string, label: string) {
 
 function addressBlock(o: Order) {
   const c = o.customer;
-  return `<p style="margin:0;font-size:14px;color:#111827;line-height:1.6"><strong>${esc(c.name)}</strong> · ${esc(c.phone)}<br>${esc(c.address)}${c.landmark ? `<br>Near ${esc(c.landmark)}` : ""}<br>${esc(c.city)}</p>`;
+  return `<p style="margin:0;font-size:14px;color:#111827;line-height:1.6"><strong>${esc(c.name)}</strong> · ${esc(c.phone)}<br>${esc(c.address)}${c.landmark ? `<br>Near ${esc(c.landmark)}` : ""}<br>${esc(cityLine(c))}</p>`;
 }
 
 function section(title: string, body: string) {
@@ -243,7 +264,7 @@ function section(title: string, body: string) {
 }
 
 function customerOrderEmail(o: Order, s: StoreSettings) {
-  const eta = deliveryEstimate(o.customer.city, s).label;
+  const eta = deliveryEstimate(o.customer.city, s, o.customer.postalCode ?? "").label;
   const inner = `
     <h1 style="margin:0;font-size:22px;color:#111827">Thank you, ${esc(o.customer.name.split(" ")[0])}! 🎉</h1>
     <p style="margin:8px 0 0;font-size:14px;color:#4b5563">We've received your order <strong style="color:#111827">${esc(o.orderNumber)}</strong>. ${
@@ -257,30 +278,32 @@ function customerOrderEmail(o: Order, s: StoreSettings) {
     ${section("Payment", paymentBlock(o, s))}
     ${o.notes ? section("Your notes", `<p style="margin:0;font-size:14px;color:#4b5563">${esc(o.notes)}</p>`) : ""}
     ${button(trackUrl(o), "Track your order")}`;
-  return layout(`Order ${o.orderNumber} received`, `Order ${o.orderNumber} – total ${formatPKR(o.total)}`, inner);
+  return layout(`Order ${o.orderNumber} received`, `Order ${o.orderNumber} – total ${moneyOf(o)(o.total)}`, inner);
 }
 
 function adminOrderEmail(o: Order, s: StoreSettings) {
+  const total = moneyOf(o)(o.total);
   const inner = `
-    <h1 style="margin:0;font-size:20px;color:#111827">New order ${esc(o.orderNumber)} – ${esc(formatPKR(o.total))}</h1>
-    <p style="margin:8px 0 0;font-size:14px;color:#4b5563">${esc(o.items.reduce((n, i) => n + i.qty, 0))} item(s) · ${esc(o.customer.city)} · ${esc(PAYMENT_LABEL[o.paymentMethod])}${o.paymentScreenshotUrl ? " · payment screenshot attached in admin" : ""}</p>
+    <h1 style="margin:0;font-size:20px;color:#111827">New order ${esc(o.orderNumber)} – ${esc(total)}</h1>
+    <p style="margin:8px 0 0;font-size:14px;color:#4b5563">${esc(o.items.reduce((n, i) => n + i.qty, 0))} item(s) · ${esc(o.customer.city)} · ${esc(paymentLabel(o.paymentMethod, o.paymentMethodLabel))}${o.paymentScreenshotUrl ? " · payment screenshot attached in admin" : ""}</p>
     ${section("Customer", addressBlock(o) + (o.customer.email ? `<p style="margin:4px 0 0;font-size:13px;color:#4b5563">${esc(o.customer.email)}</p>` : ""))}
     ${section("Items", itemsTable(o))}
     ${section("Payment", paymentBlock(o, s))}
     ${o.notes ? section("Customer notes", `<p style="margin:0;font-size:14px;color:#4b5563">${esc(o.notes)}</p>`) : ""}
     ${button(mainSiteUrl(`/cms/collections/orders?search=${encodeURIComponent(o.orderNumber)}`), "Open in /cms")}
-    <a href="${esc(waLink(toIntlPkPhone(o.customer.phone), `Hi ${o.customer.name}, this is ${ctx().site.name}. We received your order ${o.orderNumber} (${formatPKR(o.total)}).`))}" style="display:inline-block;margin:20px 0 0 8px;padding:12px 22px;border-radius:999px;background:#16a34a;color:#ffffff;font-weight:700;font-size:14px;text-decoration:none">WhatsApp customer</a>`;
-  return layout(`New order ${o.orderNumber}`, `${o.customer.name} · ${o.customer.city} · ${formatPKR(o.total)}`, inner);
+    <a href="${esc(waLink(intlDigits(o.customer.phone, ctx().locale.country), `Hi ${o.customer.name}, this is ${ctx().site.name}. We received your order ${o.orderNumber} (${total}).`))}" style="display:inline-block;margin:20px 0 0 8px;padding:12px 22px;border-radius:999px;background:#16a34a;color:#ffffff;font-weight:700;font-size:14px;text-decoration:none">WhatsApp customer</a>`;
+  return layout(`New order ${o.orderNumber}`, `${o.customer.name} · ${o.customer.city} · ${total}`, inner);
 }
 
 function plainOrderText(o: Order) {
+  const price = moneyOf(o);
   return [
     `Thank you for your order, ${o.customer.name}!`,
     `Order: ${o.orderNumber}`,
-    ...o.items.map((i) => `• ${i.name}${i.upgrades.length ? ` (+ ${i.upgrades.map((u) => u.label).join(", ")})` : ""} × ${i.qty} – ${formatPKR(i.unitPrice * i.qty)}`),
-    `Delivery: ${o.deliveryCharge ? formatPKR(o.deliveryCharge) : "FREE"}`,
-    o.discount ? `Discount: −${formatPKR(o.discount)}` : "",
-    `Total: ${formatPKR(o.total)} (${PAYMENT_LABEL[o.paymentMethod]})`,
+    ...o.items.map((i) => `• ${i.name}${i.upgrades.length ? ` (+ ${i.upgrades.map((u) => u.label).join(", ")})` : ""} × ${i.qty} – ${price(i.unitPrice * i.qty)}`),
+    `Delivery: ${o.deliveryCharge ? price(o.deliveryCharge) : "FREE"}`,
+    o.discount ? `Discount: −${price(o.discount)}` : "",
+    `Total: ${price(o.total)} (${paymentLabel(o.paymentMethod, o.paymentMethodLabel)})`,
     `Track: ${trackUrl(o)}`,
   ]
     .filter(Boolean)
@@ -294,7 +317,7 @@ const STATUS_COPY: Partial<Record<OrderStatus, (o: Order) => string>> = {
     return `Your order ${o.orderNumber} has been dispatched${c ? ` via ${c}` : ""}${o.trackingNumber ? ` (tracking no. ${o.trackingNumber})` : ""}.`;
   },
   "out-for-delivery": (o) =>
-    `Your order ${o.orderNumber} is out for delivery today. ${amountToCollect(o) > 0 ? `Please keep ${formatPKR(amountToCollect(o))} ready.` : ""}`.trim(),
+    `Your order ${o.orderNumber} is out for delivery today. ${amountToCollect(o) > 0 ? `Please keep ${moneyOf(o)(amountToCollect(o))} ready.` : ""}`.trim(),
   delivered: (o) => `Your order ${o.orderNumber} has been delivered. Thank you for shopping with ${ctx().site.name}! We'd love your review.`,
   cancelled: (o) => `Your order ${o.orderNumber} has been cancelled. If you didn't expect this or have already paid, please contact us on WhatsApp ${ctx().site.phones[0]?.display ?? ""}.`.trim(),
 };
@@ -321,7 +344,7 @@ export async function notifyNewOrder(order: Order): Promise<void> {
     const tasks: Promise<unknown>[] = [];
     if (ns.alertNewOrder)
       for (const to of staffRecipients(ns.staffEmails))
-        tasks.push(sendEmail(to, `🛒 New order ${order.orderNumber} – ${formatPKR(order.total)} (${order.customer.city})`, adminOrderEmail(order, settings), text));
+        tasks.push(sendEmail(to, `🛒 New order ${order.orderNumber} – ${moneyOf(order)(order.total)} (${order.customer.city})`, adminOrderEmail(order, settings), text));
 
     // The order email doubles as the confirmation request (it has the button and the code).
     if (order.customer.email && ns.customerEmail && (ns.orderConfirmation || waiting))
@@ -335,8 +358,8 @@ export async function notifyNewOrder(order: Order): Promise<void> {
       tasks.push(sendSms(order.customer.phone, confirmText(order)));
     } else if (ns.orderConfirmation) {
       if (ns.customerWhatsApp)
-        tasks.push(sendWhatsApp(order.customer.phone, text, { name: process.env.WHATSAPP_TEMPLATE_ORDER, params: [order.customer.name, order.orderNumber, formatPKR(order.total)] }));
-      if (ns.customerSms) tasks.push(sendSms(order.customer.phone, `${ctx().site.shortName}: order ${order.orderNumber} received, total ${formatPKR(order.total)}. Track: ${trackUrl(order)}`));
+        tasks.push(sendWhatsApp(order.customer.phone, text, { name: process.env.WHATSAPP_TEMPLATE_ORDER, params: [order.customer.name, order.orderNumber, moneyOf(order)(order.total)] }));
+      if (ns.customerSms) tasks.push(sendSms(order.customer.phone, `${ctx().site.shortName}: order ${order.orderNumber} received, total ${moneyOf(order)(order.total)}. Track: ${trackUrl(order)}`));
     }
     await settle(`new order ${order.orderNumber}`, tasks);
   } catch (err) {
@@ -586,15 +609,15 @@ export async function notifyStockOrPrice(a: { contact: string; kind: "stock" | "
   const subject = a.kind === "stock" ? `Back in stock: ${a.title}` : `Price drop: ${a.title}`;
   const message =
     a.kind === "stock"
-      ? `Good news – ${a.title} is back in stock at ${formatPKR(a.price)}. Stock is limited.`
-      : `${a.title} is now ${formatPKR(a.price)}${a.was ? ` (was ${formatPKR(a.was)})` : ""}.`;
-  await reach(a.contact, subject, message, { href: absoluteUrl(a.url), label: "View product" }, { env: a.kind === "stock" ? "WHATSAPP_TEMPLATE_BACK_IN_STOCK" : "WHATSAPP_TEMPLATE_PRICE_DROP", params: [a.title, formatPKR(a.price), absoluteUrl(a.url)] });
+      ? `Good news – ${a.title} is back in stock at ${money(a.price)}. Stock is limited.`
+      : `${a.title} is now ${money(a.price)}${a.was ? ` (was ${money(a.was)})` : ""}.`;
+  await reach(a.contact, subject, message, { href: absoluteUrl(a.url), label: "View product" }, { env: a.kind === "stock" ? "WHATSAPP_TEMPLATE_BACK_IN_STOCK" : "WHATSAPP_TEMPLATE_PRICE_DROP", params: [a.title, money(a.price), absoluteUrl(a.url)] });
 }
 
 export async function notifyAbandonedCart(c: { contact: string; name: string; items: { name: string; qty: number }[]; total: number; restoreUrl: string; subject: string; message: string; coupon?: string }) {
   const list = c.items.map((i) => `${i.name}${i.qty > 1 ? ` × ${i.qty}` : ""}`).join(", ");
-  const message = `${c.name ? `Hi ${c.name.split(" ")[0]}! ` : ""}${c.message} Your cart: ${list} (${formatPKR(c.total)}).${c.coupon ? ` Use code ${c.coupon} at checkout.` : ""} No more reminders: ${c.restoreUrl}?stop=1`;
-  await reach(c.contact, c.subject, message, { href: c.restoreUrl, label: "Complete my order" }, { env: "WHATSAPP_TEMPLATE_CART", params: [c.name || "there", formatPKR(c.total), c.restoreUrl] });
+  const message = `${c.name ? `Hi ${c.name.split(" ")[0]}! ` : ""}${c.message} Your cart: ${list} (${money(c.total)}).${c.coupon ? ` Use code ${c.coupon} at checkout.` : ""} No more reminders: ${c.restoreUrl}?stop=1`;
+  await reach(c.contact, c.subject, message, { href: c.restoreUrl, label: "Complete my order" }, { env: "WHATSAPP_TEMPLATE_CART", params: [c.name || "there", money(c.total), c.restoreUrl] });
 }
 
 /* ───────────────────────────── queueing (outbox) ───────────────────────────── */
@@ -665,6 +688,7 @@ export async function buildMessages(payload: Payload | null, kind: NotifyKind, s
         }
       }
     }),
+    payload,
   );
   return list;
 }

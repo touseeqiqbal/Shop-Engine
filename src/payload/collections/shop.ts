@@ -26,6 +26,8 @@ export const PAY_METHODS = [
   { label: "Bank transfer", value: "bank" },
   { label: "JazzCash", value: "jazzcash" },
   { label: "EasyPaisa", value: "easypaisa" },
+  // any other wallet or bank app (stores outside Pakistan: UPI, M-Pesa, PIX …)
+  { label: "Wallet / other", value: "other" },
 ];
 
 const relId = (v: unknown) => (v && typeof v === "object" ? (v as { id: number }).id : (v as number | null | undefined));
@@ -99,7 +101,7 @@ export const Units: CollectionConfig = {
     ] },
     { name: "conditionNotes", type: "textarea", label: "Condition of this unit", admin: { description: "e.g. Battery 91%, small scratch on lid." } },
     { type: "row", fields: [
-      { name: "costPrice", type: "number", min: 0, label: "Your cost (Rs)", access: { read: storeRoleField("store_owner"), create: storeRoleField("store_owner"), update: storeRoleField("store_owner") }, admin: { width: "50%", description: "Only owners see this." } },
+      { name: "costPrice", type: "number", min: 0, label: "Your cost", access: { read: storeRoleField("store_owner"), create: storeRoleField("store_owner"), update: storeRoleField("store_owner") }, admin: { width: "50%", description: "Only owners see this." } },
       { name: "receivedAt", type: "date", label: "Received", admin: { width: "50%", date: { pickerAppearance: "dayOnly" } } },
     ] },
     { name: "order", type: "relationship", relationTo: "orders", filterOptions: sameStore, label: "Online order", admin: { readOnly: true, position: "sidebar" } },
@@ -158,15 +160,15 @@ export const PosSales: CollectionConfig = {
           { name: "unit", type: "relationship", relationTo: "units", filterOptions: sameStore, admin: { width: "25%" } },
           { name: "serial", type: "text", admin: { width: "25%" } },
           { name: "qty", type: "number", required: true, admin: { width: "25%" } },
-          { name: "unitPrice", type: "number", required: true, label: "Price (Rs)", admin: { width: "25%" } },
+          { name: "unitPrice", type: "number", required: true, label: "Price", admin: { width: "25%" } },
         ] },
-        { name: "unitCost", type: "number", label: "Cost each (Rs)", access: { read: storeRoleField("store_owner"), create: () => false, update: () => false }, admin: { readOnly: true, description: "Your cost when it was sold (owners only) – used by the profit report." } },
+        { name: "unitCost", type: "number", label: "Cost each", access: { read: storeRoleField("store_owner"), create: () => false, update: () => false }, admin: { readOnly: true, description: "Your cost when it was sold (owners only) – used by the profit report." } },
       ],
     },
     { type: "row", fields: [
-      { name: "subtotal", type: "number", required: true, label: "Items (Rs)", admin: { width: "33%", readOnly: true } },
-      { name: "discount", type: "number", defaultValue: 0, label: "Discount (Rs)", admin: { width: "33%", readOnly: true } },
-      { name: "total", type: "number", required: true, label: "Total (Rs)", admin: { width: "34%", readOnly: true } },
+      { name: "subtotal", type: "number", required: true, label: "Items", admin: { width: "33%", readOnly: true } },
+      { name: "discount", type: "number", defaultValue: 0, label: "Discount", admin: { width: "33%", readOnly: true } },
+      { name: "total", type: "number", required: true, label: "Total", admin: { width: "34%", readOnly: true } },
     ] },
     {
       name: "payments",
@@ -174,12 +176,12 @@ export const PosSales: CollectionConfig = {
       admin: { readOnly: true },
       fields: [{ type: "row", fields: [
         { name: "method", type: "select", required: true, options: PAY_METHODS, admin: { width: "50%" } },
-        { name: "amount", type: "number", required: true, label: "Amount (Rs)", admin: { width: "50%" } },
+        { name: "amount", type: "number", required: true, label: "Amount", admin: { width: "50%" } },
       ] }],
     },
     { type: "row", fields: [
-      { name: "cashReceived", type: "number", label: "Cash handed over (Rs)", admin: { width: "50%", readOnly: true } },
-      { name: "change", type: "number", label: "Change given (Rs)", admin: { width: "50%", readOnly: true } },
+      { name: "cashReceived", type: "number", label: "Cash handed over", admin: { width: "50%", readOnly: true } },
+      { name: "change", type: "number", label: "Change given", admin: { width: "50%", readOnly: true } },
     ] },
     { type: "row", fields: [
       { name: "customerName", type: "text", admin: { width: "50%" } },
@@ -207,12 +209,12 @@ export const CashUps: CollectionConfig = {
     storeField(),
     { type: "row", fields: [
       { name: "day", type: "text", required: true, index: true, label: "Day (YYYY-MM-DD)", admin: { width: "50%" } },
-      { name: "openingFloat", type: "number", defaultValue: 0, label: "Cash in drawer at opening (Rs)", admin: { width: "50%" } },
+      { name: "openingFloat", type: "number", defaultValue: 0, label: "Cash in drawer at opening", admin: { width: "50%" } },
     ] },
     { type: "row", fields: [
-      { name: "expectedCash", type: "number", label: "Cash expected (Rs)", admin: { width: "33%", readOnly: true } },
-      { name: "countedCash", type: "number", required: true, label: "Cash counted (Rs)", admin: { width: "33%" } },
-      { name: "difference", type: "number", label: "Over / short (Rs)", admin: { width: "34%", readOnly: true } },
+      { name: "expectedCash", type: "number", label: "Cash expected", admin: { width: "33%", readOnly: true } },
+      { name: "countedCash", type: "number", required: true, label: "Cash counted", admin: { width: "33%" } },
+      { name: "difference", type: "number", label: "Over / short", admin: { width: "34%", readOnly: true } },
     ] },
     { name: "byMethod", type: "json", label: "Sales by payment method", admin: { readOnly: true } },
     { name: "salesCount", type: "number", admin: { readOnly: true } },

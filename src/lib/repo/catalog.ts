@@ -457,7 +457,7 @@ const storeSettingsCached = unstable_cache(
       ? // Shipping & payments from /cms (an error is thrown so the last good settings stay cached)
         { ...CMS_DEFAULTS, ...(await loadCommerceSettings(storeId)) }
       : { ...seedSettings, ...(await getSetting<Partial<StoreSettings>>("store", seedSettings)) },
-  ["store-settings-v3"],
+  ["store-settings-v4"],
   { tags: [TAGS.settings], revalidate: REVALIDATE }
 );
 /** Shipping & payment settings of the current store (or of `storeId`, e.g. an order's store). */

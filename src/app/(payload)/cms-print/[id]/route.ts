@@ -1,7 +1,11 @@
 import { amountToCollect, creditedAdvance, paymentBlocksShipping } from "@/lib/order-money";
+import { cityLine, paymentLabel } from "@/lib/order-display";
 import { adminRequest, canSeeStore } from "@/payload/route-access";
 import { getSiteInfo } from "@/lib/repo/site-content";
+import { moneyFormatter } from "@/lib/money";
+import { formatDate } from "@/lib/time";
 import { storeIdOf } from "@/payload/tenancy";
+import { storeLocaleOf } from "@/payload/store-locale";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +14,7 @@ export const dynamic = "force-dynamic";
 type Order = {
   orderNumber: string;
   placedAt?: string;
-  customer?: { name?: string; phone?: string; email?: string; city?: string; address?: string; landmark?: string };
+  customer?: { name?: string; phone?: string; email?: string; city?: string; address?: string; landmark?: string; region?: string; postalCode?: string };
   items?: { title?: string; qty?: number; unitPrice?: number; product?: number | { id: number } | null }[];
   subtotal?: number;
   discount?: number;
@@ -18,14 +22,16 @@ type Order = {
   total?: number;
   advancePaid?: number;
   paymentMethod?: string;
+  paymentMethodLabel?: string | null;
+  paymentDue?: string | null;
   paymentStatus?: string;
   courier?: string;
   trackingNumber?: string;
+  /** the currency it was placed in (older orders: none – the store's) */
+  currency?: string | null;
 };
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-const rs = (n: number | undefined) => `Rs ${Math.round(n ?? 0).toLocaleString("en-PK")}`;
-const METHOD: Record<string, string> = { cod: "Cash on delivery", jazzcash: "JazzCash", easypaisa: "EasyPaisa", bank: "Bank transfer", card: "Card" };
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -43,17 +49,20 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     const pid = product && typeof product === "object" ? (product as { id: number }).id : product;
     return units.filter((u) => (typeof u.product === "object" ? u.product?.id : u.product) === pid).map((u) => u.serial).filter(Boolean).join(", ");
   };
-  const site = await getSiteInfo(storeIdOf(o.store)).catch(() => null);
+  const [site, loc] = await Promise.all([getSiteInfo(storeIdOf(o.store)).catch(() => null), storeLocaleOf(payload, storeIdOf(o.store))]);
+  // amounts in the order's currency, the date in its store's time zone
+  const price = moneyFormatter({ currency: o.currency || loc.currency, locale: loc.locale });
+  const amt = (n: number | undefined) => price(n ?? 0);
   const toCollect = amountToCollect(o);
   const advance = creditedAdvance(o);
   const unverified = paymentBlocksShipping(o);
-  const date = o.placedAt ? new Date(o.placedAt).toLocaleDateString("en-PK", { dateStyle: "medium", timeZone: "Asia/Karachi" }) : "";
+  const date = o.placedAt ? formatDate(o.placedAt, loc, { dateStyle: "medium" }) : "";
   const c = o.customer ?? {};
 
   const rows = (o.items ?? [])
     .map(
       (i) => `<tr><td>${esc(i.title)}${serialsFor(i.product) ? `<div class="muted">Serial: ${esc(serialsFor(i.product))}</div>` : ""}</td><td class="n">${esc(i.qty)}</td>${
-        slip ? '<td class="n">☐</td>' : `<td class="n">${rs(i.unitPrice)}</td><td class="n">${rs((i.unitPrice ?? 0) * (i.qty ?? 0))}</td>`
+        slip ? '<td class="n">☐</td>' : `<td class="n">${amt(i.unitPrice)}</td><td class="n">${amt((i.unitPrice ?? 0) * (i.qty ?? 0))}</td>`
       }</tr>`
     )
     .join("");
@@ -61,11 +70,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const money = slip
     ? ""
     : `<table class="sum">
-        <tr><td>Items</td><td class="n">${rs(o.subtotal)}</td></tr>
-        ${(o.discount ?? 0) > 0 ? `<tr><td>Discount</td><td class="n">− ${rs(o.discount)}</td></tr>` : ""}
-        <tr><td>Delivery</td><td class="n">${(o.deliveryCharge ?? 0) > 0 ? rs(o.deliveryCharge) : "Free"}</td></tr>
-        <tr class="t"><td>Total</td><td class="n">${rs(o.total)}</td></tr>
-        ${advance > 0 ? `<tr><td>Advance paid</td><td class="n">− ${rs(advance)}</td></tr>` : ""}
+        <tr><td>Items</td><td class="n">${amt(o.subtotal)}</td></tr>
+        ${(o.discount ?? 0) > 0 ? `<tr><td>Discount</td><td class="n">− ${amt(o.discount)}</td></tr>` : ""}
+        <tr><td>Delivery</td><td class="n">${(o.deliveryCharge ?? 0) > 0 ? amt(o.deliveryCharge) : "Free"}</td></tr>
+        <tr class="t"><td>Total</td><td class="n">${amt(o.total)}</td></tr>
+        ${advance > 0 ? `<tr><td>Advance paid</td><td class="n">− ${amt(advance)}</td></tr>` : ""}
       </table>`;
 
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -83,12 +92,12 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px 6px;
 <div class="bar"><button onclick="window.print()">Print</button></div>
 <header><div><h1>${esc(site?.name ?? "")}</h1><div class="muted">${esc(site?.address.full ?? "")}</div><div class="muted">${esc(site?.phones?.[0]?.display ?? "")} ${esc(site?.email ?? "")}</div></div>
 <div style="text-align:right"><h1>${slip ? "Packing slip" : "Invoice"}</h1><div><strong>${esc(o.orderNumber)}</strong></div><div class="muted">${esc(date)}</div></div></header>
-<div class="cols"><div><h2>Deliver to</h2><strong>${esc(c.name)}</strong><br>${esc(c.address)}${c.landmark ? ` (near ${esc(c.landmark)})` : ""}<br>${esc(c.city)}<br>${esc(c.phone)}</div>
-<div><h2>Payment</h2>${esc(METHOD[o.paymentMethod ?? ""] ?? o.paymentMethod)}${o.courier ? `<h2 style="margin-top:12px">Courier</h2>${esc(o.courier)} ${esc(o.trackingNumber ?? "")}` : ""}</div></div>
+<div class="cols"><div><h2>Deliver to</h2><strong>${esc(c.name)}</strong><br>${esc(c.address)}${c.landmark ? ` (near ${esc(c.landmark)})` : ""}<br>${esc(cityLine(c))}<br>${esc(c.phone)}</div>
+<div><h2>Payment</h2>${esc(paymentLabel(o.paymentMethod, o.paymentMethodLabel))}${o.courier ? `<h2 style="margin-top:12px">Courier</h2>${esc(o.courier)} ${esc(o.trackingNumber ?? "")}` : ""}</div></div>
 <table><thead><tr><th>Item</th><th class="n">Qty</th>${slip ? '<th class="n">Packed</th>' : '<th class="n">Price</th><th class="n">Amount</th>'}</tr></thead><tbody>${rows}</tbody></table>
 ${money}
 ${unverified ? `<div class="collect">⚠ PAYMENT NOT VERIFIED – DO NOT SHIP</div>` : ""}
-${toCollect > 0 ? `<div class="collect">Collect from customer: ${rs(toCollect)}</div>` : slip ? `<div class="collect">Paid – collect nothing</div>` : ""}
+${toCollect > 0 ? `<div class="collect">Collect from customer: ${amt(toCollect)}</div>` : slip ? `<div class="collect">Paid – collect nothing</div>` : ""}
 <p class="muted" style="margin-top:28px">Thank you for shopping with us.</p>
 </body></html>`;
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-store", "X-Robots-Tag": "noindex" } });

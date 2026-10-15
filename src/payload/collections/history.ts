@@ -130,7 +130,7 @@ const ownerOnly = (entity: string, field: string) => COST.has(field.split(".").p
 
 function show(v: unknown): string {
   if (v === null || v === undefined || v === "") return "—";
-  if (typeof v === "number") return v.toLocaleString("en-PK");
+  if (typeof v === "number") return v.toLocaleString("en");
   if (typeof v === "boolean") return v ? "yes" : "no";
   if (typeof v === "string") {
     const chars = Array.from(v);

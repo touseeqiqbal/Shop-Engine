@@ -491,9 +491,9 @@ export const Products: CollectionConfig = {
           label: "Pricing & stock",
           fields: [
             { type: "row", fields: [
-              { name: "price", type: "number", required: true, min: 0, label: "Price", access: { update: storeRoleField("store_manager") }, admin: { width: "33%", description: "What the customer pays, in whole rupees (Rs). Only owners and managers can change it.", components: { Cell: "/payload/admin/products/Cells#ProductPriceCell" } } },
+              { name: "price", type: "number", required: true, min: 0, label: "Price", access: { update: storeRoleField("store_manager") }, admin: { width: "33%", description: "What the customer pays, in your store's currency. Only owners and managers can change it.", components: { Cell: "/payload/admin/products/Cells#ProductPriceCell" } } },
               { name: "compareAtPrice", type: "number", min: 0, label: "Was price", access: { update: storeRoleField("store_manager") }, admin: { width: "33%", description: "Optional. Shown crossed out to show a sale. Must be higher than the price." } },
-              { name: "costPrice", type: "number", min: 0, access: { read: storeRoleField("store_owner"), update: storeRoleField("store_owner"), create: storeRoleField("store_owner") }, label: "Your cost", admin: { width: "33%", description: "What you paid (Rs). Only owners see this. Never shown to customers." } },
+              { name: "costPrice", type: "number", min: 0, access: { read: storeRoleField("store_owner"), update: storeRoleField("store_owner"), create: storeRoleField("store_owner") }, label: "Your cost", admin: { width: "33%", description: "What you paid. Only owners see this. Never shown to customers." } },
             ] },
             { name: "priceOnRequest", type: "checkbox", label: "Price on request (wholesale lot – can't be bought online)" },
             { type: "row", fields: [
@@ -563,7 +563,7 @@ export const Products: CollectionConfig = {
             ] }] },
             { name: "attributes", type: "json", admin: { components: { Field: "/payload/admin/AttributesField#AttributesField" } } },
             { name: "compatibility", type: "relationship", relationTo: "laptop-models", hasMany: true, filterOptions: sameStore },
-            { name: "upgrades", type: "array", label: "Options & upgrades", labels: { singular: "Option", plural: "Options" }, admin: { description: "Choices shoppers can add at checkout, grouped (e.g. RAM: 16GB +Rs 6,000; SSD: 512GB +Rs 5,500)." }, fields: [{ type: "row", fields: [
+            { name: "upgrades", type: "array", label: "Options & upgrades", labels: { singular: "Option", plural: "Options" }, admin: { description: "Choices shoppers can add at checkout, grouped (e.g. RAM: 16GB +6,000; SSD: 512GB +5,500)." }, fields: [{ type: "row", fields: [
               { name: "optionId", type: "text", admin: { width: "20%" } },
               { name: "group", type: "text", required: true, admin: { width: "20%" } },
               { name: "label", type: "text", required: true, admin: { width: "40%" } },

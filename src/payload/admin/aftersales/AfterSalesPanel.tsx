@@ -2,8 +2,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useDocumentInfo } from "@payloadcms/ui";
 import { toast } from "../ui/toast";
-import { useStoreName } from "../ui/store-context";
-import { intlPhone, rs, timeAgo } from "../orders/status";
+import { useAdminDates, useAdminLocale, useAdminMoney, useStoreName } from "../ui/store-context";
+import { intlPhone, timeAgo } from "../orders/status";
+import { currencyDigits } from "../../../lib/money";
 
 /**
  * Top of a return / warranty claim: where it is, the one next step (plus the alternatives), refund details,
@@ -79,8 +80,11 @@ export function AfterSalesPanel({ kind }: { kind: Kind }) {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [busy, setBusy] = useState(false);
   const [refund, setRefund] = useState<{ method: string; amount: string; restock: boolean } | null>(null);
-  // the request's own store, named in messages to the customer
+  // the request's own store, named in messages to the customer; its currency and time zone
   const storeName = useStoreName(doc?.store);
+  const loc = useAdminLocale(doc?.store);
+  const money = useAdminMoney(doc?.store);
+  const date = useAdminDates(doc?.store);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -120,7 +124,7 @@ export function AfterSalesPanel({ kind }: { kind: Kind }) {
   const steps = (kind === "return" ? RETURN_STEPS : WARRANTY_STEPS)[doc.status] ?? [];
   const phone = doc.customerPhone ?? "";
   const number = doc.requestNumber ?? doc.claimNumber ?? "";
-  const wa = phone ? `https://wa.me/${intlPhone(phone)}?text=${encodeURIComponent(`Hi ${doc.customerName?.split(" ")[0] ?? ""}! ${storeName ? `This is ${storeName} about` : "A message about"} your ${kind === "return" ? "return" : "warranty claim"} ${number}.`)}` : "";
+  const wa = phone ? `https://wa.me/${intlPhone(phone, loc.country)}?text=${encodeURIComponent(`Hi ${doc.customerName?.split(" ")[0] ?? ""}! ${storeName ? `This is ${storeName} about` : "A message about"} your ${kind === "return" ? "return" : "warranty claim"} ${number}.`)}` : "";
 
   return (
     <section className="urko-opanel" aria-label="Summary">
@@ -138,9 +142,9 @@ export function AfterSalesPanel({ kind }: { kind: Kind }) {
           <p className="urko-opanel__help">
             {kind === "warranty"
               ? doc.warrantyEndsAt
-                ? `Bought ${doc.purchasedAt ? new Date(doc.purchasedAt).toLocaleDateString("en-PK", { dateStyle: "medium" }) : "?"} · warranty ${doc.inWarranty === "yes" ? "until" : "ended"} ${new Date(doc.warrantyEndsAt).toLocaleDateString("en-PK", { dateStyle: "medium" })} · ${doc.checkNote ?? ""}`
+                ? `Bought ${doc.purchasedAt ? date(doc.purchasedAt, { dateStyle: "medium" }) : "?"} · warranty ${doc.inWarranty === "yes" ? "until" : "ended"} ${date(doc.warrantyEndsAt, { dateStyle: "medium" })} · ${doc.checkNote ?? ""}`
                 : doc.checkNote
-              : `${doc.reason ?? ""}${doc.orderNumber ? ` · order ${doc.orderNumber}` : ""}${doc.createdAt ? ` · asked ${timeAgo(doc.createdAt)}` : ""}`}
+              : `${doc.reason ?? ""}${doc.orderNumber ? ` · order ${doc.orderNumber}` : ""}${doc.createdAt ? ` · asked ${timeAgo(doc.createdAt, loc)}` : ""}`}
           </p>
         </div>
         {doc.creditNoteNumber && (
@@ -168,8 +172,8 @@ export function AfterSalesPanel({ kind }: { kind: Kind }) {
                   </select>
                 </label>
                 <label>
-                  Amount (Rs)
-                  <input inputMode="numeric" value={refund.amount} onChange={(e) => setRefund({ ...refund, amount: e.target.value })} />
+                  Amount ({money.symbol})
+                  <input inputMode={currencyDigits(money.currency) ? "decimal" : "numeric"} value={refund.amount} onChange={(e) => setRefund({ ...refund, amount: e.target.value })} />
                 </label>
                 <label className="urko-opanel__check">
                   <input type="checkbox" checked={refund.restock} onChange={(e) => setRefund({ ...refund, restock: e.target.checked })} /> Put items back in stock
@@ -180,8 +184,8 @@ export function AfterSalesPanel({ kind }: { kind: Kind }) {
                 className="urko-btn urko-btn--primary"
                 disabled={busy}
                 onClick={() => {
-                  const amount = Math.max(0, Math.round(Number(refund.amount.replace(/[,\s]/g, "")) || 0));
-                  void patch({ status: "refunded", refundMethod: refund.method, refundAmount: amount, restock: refund.restock }, `Refunded ${rs(amount)} – credit note created`);
+                  const amount = Math.max(0, money.round(Number(refund.amount.replace(/[,\s]/g, "")) || 0));
+                  void patch({ status: "refunded", refundMethod: refund.method, refundAmount: amount, restock: refund.restock }, `Refunded ${money(amount)} – credit note created`);
                 }}
               >
                 Save refund
@@ -228,12 +232,12 @@ export function AfterSalesPanel({ kind }: { kind: Kind }) {
             <p key={n}>
               {i.title} × {i.qty ?? 1}
               {i.serial ? ` · ${i.serial}` : ""}
-              {i.unitPrice ? ` · ${rs(i.unitPrice)}` : ""}
+              {i.unitPrice ? ` · ${money(i.unitPrice)}` : ""}
             </p>
           ))}
           {doc.refundAmount != null && doc.status === "refunded" && (
             <p className="urko-opanel__collect">
-              Refunded <strong>{rs(doc.refundAmount)}</strong> by {doc.refundMethod}
+              Refunded <strong>{money(doc.refundAmount)}</strong> by {doc.refundMethod}
               {doc.restocked ? " · back in stock" : ""}
             </p>
           )}

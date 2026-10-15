@@ -6,7 +6,8 @@ import { rateLimit } from "@/lib/rate-limit";
 import { getProductsByIds } from "@/lib/repo/catalog";
 import { saveWholesaleInquiry } from "@/lib/repo/wholesale";
 import type { WholesaleInquiryItem } from "@/lib/types";
-import { normalizePkPhone } from "@/lib/utils";
+import { normalizePhone, phonePlaceholder } from "@/lib/phone";
+import { getStoreLocale } from "@/lib/store-locale";
 import { BUYER_TYPES, inquirySummary } from "@/lib/wholesale";
 import { BOT_MESSAGE, verifyTurnstile } from "@/lib/turnstile";
 import { HONEYPOT } from "@/lib/honeypot";
@@ -18,37 +19,42 @@ export type QuoteState =
   | { ok: false; message?: string; errors?: Partial<Record<QuoteField, string>>; ts?: number }
   | { ok: true; message: string; summary: string; firstName: string; units: number; ts: number };
 
-const schema = z.object({
-  name: z.string().trim().min(2, "Please enter your name").max(80, "Name is too long"),
-  businessName: z.string().trim().max(120, "Business name is too long"),
-  phone: z
-    .string()
-    .trim()
-    .transform((v, ctx) => {
-      const n = normalizePkPhone(v);
-      if (!n) {
-        ctx.addIssue({ code: "custom", message: "Enter a valid mobile number, e.g. 0342-6693115" });
-        return z.NEVER;
-      }
-      return n;
-    }),
-  email: z.union([z.literal(""), z.email("Enter a valid email address").max(120)]),
-  city: z.string().refine((c) => PAKISTAN_CITIES.includes(c), "Please choose your city from the list"),
-  buyerType: z.enum(BUYER_TYPES as [string, ...string[]], "Choose what best describes you"),
-  items: z
-    .array(
-      z.object({
-        productId: z.string().max(140).optional(),
-        productName: z.string().trim().min(2, "Describe each item (model / specs)").max(200, "Item description is too long"),
-        qty: z.coerce.number().int("Whole numbers only").min(1, "Quantity must be at least 1").max(100_000, "Quantity is too large"),
-      })
-    )
-    .min(1, "Add at least one item you need")
-    .max(30, "Too many rows – put the rest in the message"),
-  budget: z.string().trim().max(120, "Budget is too long"),
-  message: z.string().trim().max(3000, "Message is too long"),
-  source: z.string().trim().max(200).regex(/^\/[^\s]*$/).optional().catch(undefined),
-});
+/** `country` = the store's country (ISO code): phone numbers are checked for it; Pakistan picks a city from the list, elsewhere it is typed. */
+const schema = (country: string) =>
+  z.object({
+    name: z.string().trim().min(2, "Please enter your name").max(80, "Name is too long"),
+    businessName: z.string().trim().max(120, "Business name is too long"),
+    phone: z
+      .string()
+      .trim()
+      .transform((v, ctx) => {
+        const n = normalizePhone(v, country);
+        if (!n) {
+          ctx.addIssue({ code: "custom", message: country === "PK" ? "Enter a valid mobile number, e.g. 0342-6693115" : `Enter a valid phone number, e.g. ${phonePlaceholder(country)}` });
+          return z.NEVER;
+        }
+        return n;
+      }),
+    email: z.union([z.literal(""), z.email("Enter a valid email address").max(120)]),
+    city:
+      country === "PK"
+        ? z.string().refine((c) => PAKISTAN_CITIES.includes(c), "Please choose your city from the list")
+        : z.string().trim().min(2, "Please enter your city").max(80, "City name is too long"),
+    buyerType: z.enum(BUYER_TYPES as [string, ...string[]], "Choose what best describes you"),
+    items: z
+      .array(
+        z.object({
+          productId: z.string().max(140).optional(),
+          productName: z.string().trim().min(2, "Describe each item (model / specs)").max(200, "Item description is too long"),
+          qty: z.coerce.number().int("Whole numbers only").min(1, "Quantity must be at least 1").max(100_000, "Quantity is too large"),
+        })
+      )
+      .min(1, "Add at least one item you need")
+      .max(30, "Too many rows – put the rest in the message"),
+    budget: z.string().trim().max(120, "Budget is too long"),
+    message: z.string().trim().max(3000, "Message is too long"),
+    source: z.string().trim().max(200).regex(/^\/[^\s]*$/).optional().catch(undefined),
+  });
 
 const str = (fd: FormData, k: string) => {
   const v = fd.get(k);
@@ -71,7 +77,7 @@ export async function submitWholesaleQuote(_prev: QuoteState, fd: FormData): Pro
   if (str(fd, HONEYPOT).trim()) return { ok: true, message: "Thank you! Your quote request has been received.", summary: "", firstName: "", units: 0, ts };
   if (!(await verifyTurnstile(fd, "wholesale"))) return { ok: false, message: BOT_MESSAGE, ts };
 
-  const parsed = schema.safeParse({
+  const parsed = schema((await getStoreLocale()).country).safeParse({
     name: str(fd, "name"),
     businessName: str(fd, "businessName"),
     phone: str(fd, "phone"),

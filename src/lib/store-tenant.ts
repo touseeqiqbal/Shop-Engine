@@ -7,6 +7,7 @@ import { byStorefrontId } from "@/lib/cms/sales";
 import { isCmsConfigured } from "@/lib/db/config";
 import { rateLimitKey } from "@/lib/rate-limit";
 import { log } from "@/lib/log";
+import { countryDefaults, isCurrency, isTimeZone, toCountryCode } from "@/lib/locale";
 
 /**
  * Merchant self-service (Account → Stores): open a store, choose a plan, accept team invitations, publish.
@@ -204,9 +205,11 @@ export async function createStoreForUser(sessionUserId: string, input: StoreTena
   const plan = (input.planId ? plans.find((p) => p.id === input.planId || p.slug === input.planId) : undefined) ?? plans[0];
   if (input.planId && !plans.some((p) => p.id === input.planId || p.slug === input.planId)) return { ok: false, error: "This plan isn't available. Please choose another." };
 
-  const country = input.country?.trim() || "Pakistan";
-  const currency = (input.currency?.trim() || "PKR").toUpperCase().slice(0, 3);
-  const timezone = input.timezone?.trim() || "Asia/Karachi";
+  // the country brings its currency and time zone unless the owner chose others
+  const country = toCountryCode(input.country) ?? "PK";
+  const home = countryDefaults(country);
+  const currency = input.currency?.trim() && isCurrency(input.currency.trim().toUpperCase()) ? input.currency.trim().toUpperCase() : home.currency;
+  const timezone = input.timezone?.trim() && isTimeZone(input.timezone.trim()) ? input.timezone.trim() : home.timezone;
   const language = input.defaultLanguage?.trim() || "en";
   let store: Doc;
   try {
@@ -358,20 +361,26 @@ export async function cancelStorePlanForUser(sessionUserId: string, storeIdRaw: 
   return r.ok ? { ok: true } : { ok: false, error: r.error ?? "Couldn't cancel." };
 }
 
-/** The owner connects the store's card payment account (Stripe Connect onboarding link). */
+/**
+ * The owner connects the store's card payment account with the provider that works in the store's country (Stripe
+ * Connect onboarding for now – lib/payments/gateways.ts).
+ */
 export async function paymentsLinkForUser(sessionUserId: string, storeIdRaw: string): Promise<Result<{ url: string }>> {
   const payload = await payloadClient();
   const user = await userDoc(payload, sessionUserId);
   const storeId = Number(storeIdRaw);
   if (!user || (await roleIn(payload, Number(user.id), storeId)) !== "store_owner") return { ok: false, error: "Only the store's owner can connect payments." };
-  const { stripeConfigured } = await import("@/lib/payments/stripe");
-  if (!stripeConfigured()) return { ok: false, error: "Card payments aren't available on this platform yet." };
+  const store = (await payload.findByID({ collection: "stores", id: storeId, depth: 0, overrideAccess: true })) as unknown as Doc;
+  const { storeGateway } = await import("@/lib/payments/gateways");
+  const { countryName, storeLocale } = await import("@/lib/locale");
+  const gateway = storeGateway(store);
+  const country = storeLocale(store as { country?: string }).country;
+  if (!gateway?.connectLink || !gateway.configured())
+    return { ok: false, error: gateway ? "Card payments aren't available on this platform yet." : `No card payment provider works in ${countryName(country)} yet – use bank transfer, cash on delivery or your own payment methods (Settings → Payments).` };
   const { hasFeature, storeLimits } = await import("@/lib/billing");
   if (!hasFeature(await storeLimits(payload, storeId), "online_payments")) return { ok: false, error: "Your plan doesn't include online card payments – upgrade to use them." };
-  const store = (await payload.findByID({ collection: "stores", id: storeId, depth: 0, overrideAccess: true })) as unknown as Doc;
-  const { paymentsOnboardingLink } = await import("@/lib/payments");
   try {
-    return { ok: true, url: await paymentsOnboardingLink(payload, { storeId, email: String(store.billingEmail || user.email), country: null, returnUrl: `${billingReturnUrl()}?payments=${storeId}` }) };
+    return { ok: true, url: await gateway.connectLink(payload, { storeId, email: String(store.billingEmail || user.email), country, returnUrl: `${billingReturnUrl()}?payments=${storeId}` }) };
   } catch (e) {
     log.error("stores.payments_link_failed", e, { store: storeId });
     return { ok: false, error: "We couldn't open the payment setup. Please try again." };
@@ -384,9 +393,12 @@ export async function refreshPaymentsForUser(sessionUserId: string, storeIdRaw: 
   const user = await userDoc(payload, sessionUserId);
   const storeId = Number(storeIdRaw);
   if (!user || !(await roleIn(payload, Number(user.id), storeId))) return { ok: false, error: "Not your store." };
-  const { refreshPaymentsAccount } = await import("@/lib/payments");
+  const store = (await payload.findByID({ collection: "stores", id: storeId, depth: 0, overrideAccess: true })) as unknown as Doc;
+  const { storeGateway } = await import("@/lib/payments/gateways");
+  const gateway = storeGateway(store);
+  if (!gateway?.refreshAccount) return { ok: true, ready: false };
   try {
-    return { ok: true, ready: await refreshPaymentsAccount(payload, storeId) };
+    return { ok: true, ready: await gateway.refreshAccount(payload, storeId) };
   } catch (e) {
     log.error("stores.payments_refresh_failed", e, { store: storeId });
     return { ok: false, error: "Couldn't check the payment account right now." };

@@ -2,6 +2,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { useStoreLocale } from "@/components/providers/locale";
 import { AnimatePresence, m as motion, useReducedMotion } from "framer-motion";
 import { ArrowRight, ChevronLeft, ChevronRight, ShieldCheck, Truck, Wallet } from "lucide-react";
 import type { Banner } from "@/lib/types";
@@ -10,6 +11,7 @@ import { cn } from "@/lib/utils";
 const INTERVAL = 6000;
 
 export function HeroSlider({ slides }: { slides: Banner[] }) {
+  const pk = useStoreLocale().country === "PK";
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   // The first slide is server-rendered fully visible (fast LCP); only later slide changes animate in.
@@ -106,7 +108,7 @@ export function HeroSlider({ slides }: { slides: Banner[] }) {
             </div>
             <ul className="mt-7 hidden flex-wrap gap-x-5 gap-y-2 text-sm text-muted sm:flex">
               <li className="flex items-center gap-1.5"><Wallet className="size-4 text-emerald-400" aria-hidden="true" /> Cash on Delivery</li>
-              <li className="flex items-center gap-1.5"><Truck className="size-4 text-sky-400" aria-hidden="true" /> All over Pakistan</li>
+              <li className="flex items-center gap-1.5"><Truck className="size-4 text-sky-400" aria-hidden="true" /> {pk ? "All over Pakistan" : "Nationwide delivery"}</li>
               <li className="flex items-center gap-1.5"><ShieldCheck className="size-4 text-violet-400" aria-hidden="true" /> Warranty</li>
             </ul>
           </motion.div>

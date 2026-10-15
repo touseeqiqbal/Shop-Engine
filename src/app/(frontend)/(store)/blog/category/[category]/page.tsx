@@ -8,6 +8,7 @@ import { getSiteInfo } from "@/lib/repo/site-content";
 import { storePlace } from "@/lib/site-info";
 import { blogCategories, blogCategorySlug } from "@/lib/blog";
 import { pageMetadata } from "@/lib/seo";
+import { getStoreLocale } from "@/lib/store-locale";
 
 export const revalidate = 300;
 
@@ -29,6 +30,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!name) return {};
   const place = storePlace(site, " ");
   return pageMetadata({
+    locale: await getStoreLocale(),
     title: `${name} – Laptop & Tech Articles | ${site.name} Blog`,
     description: `${posts.length} ${name.toLowerCase()} article${posts.length === 1 ? "" : "s"} from ${site.name}${place ? `, ${place}` : ""}: practical advice on laptops, prices in Pakistan, chargers and accessories.`,
     path: `/blog/category/${category}`,

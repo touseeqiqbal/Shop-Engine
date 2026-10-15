@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { cn, formatPKR } from "@/lib/utils";
+import { useMoney, useStoreLocale } from "@/components/providers/locale";
+import { cn } from "@/lib/utils";
 
 const thumb =
   "pointer-events-none absolute inset-0 m-0 h-full w-full cursor-pointer appearance-none bg-transparent outline-none focus-visible:outline-none " +
@@ -43,6 +44,8 @@ export function RangeSlider({
   const [loText, setLoText] = useState(String(lo0));
   const [hiText, setHiText] = useState(String(hi0));
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const money = useMoney();
+  const { locale } = useStoreLocale();
 
   // Sync when the URL (props) changes from elsewhere, e.g. "Clear all".
   useEffect(() => {
@@ -64,7 +67,7 @@ export function RangeSlider({
     timer.current = setTimeout(() => commit(a, b), 550);
   };
 
-  const fmt = (n: number) => (currency ? formatPKR(n) : `${n.toLocaleString("en-PK")}${unit ? ` ${unit}` : ""}`);
+  const fmt = (n: number) => (currency ? money(n) : `${n.toLocaleString(locale)}${unit ? ` ${unit}` : ""}`);
   const span = Math.max(1, max - min);
   const left = ((lo - min) / span) * 100;
   const right = 100 - ((hi - min) / span) * 100;
@@ -175,7 +178,7 @@ function autoStep(min: number, max: number) {
   return 1;
 }
 
-/** PKR price range bound to the `min` / `max` URL params. */
+/** Price range (store currency) bound to the `min` / `max` URL params. */
 export function PriceRange({
   bounds,
   value,
@@ -185,12 +188,13 @@ export function PriceRange({
   value: [number | undefined, number | undefined];
   onCommit: (v: [number, number] | null) => void;
 }) {
+  const money = useMoney();
   const [bmin, bmax] = bounds;
   // Round bounds outward to a friendly step so slider ends are clean numbers.
   const step = autoStep(bmin, bmax);
   const min = Math.floor(bmin / step) * step;
   const max = Math.ceil(bmax / step) * step;
-  if (max <= min) return <p className="text-sm text-muted">All products are {formatPKR(bmin)}</p>;
+  if (max <= min) return <p className="text-sm text-muted">All products are {money(bmin)}</p>;
   return (
     <RangeSlider
       id="price"

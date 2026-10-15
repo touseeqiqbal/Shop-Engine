@@ -1,13 +1,11 @@
 /** Client-safe display helpers for orders (labels, payment instructions). `src/lib/repo/orders.ts` is server-only. */
+import { intlDigits } from "./phone";
+import { BUILT_IN_METHODS, findCheckoutMethod, paymentLabel } from "./payments/methods";
 import type { OrderStatus, PaymentMethod, PaymentStatus, StoreSettings } from "./types";
 
-export const PAYMENT_LABEL: Record<PaymentMethod, string> = {
-  cod: "Cash on Delivery",
-  jazzcash: "JazzCash",
-  easypaisa: "EasyPaisa",
-  bank: "Bank Transfer",
-  card: "Debit / Credit Card",
-};
+/** Names of the built-in payment methods. An order's own method name: `paymentLabel(order.paymentMethod, order.paymentMethodLabel)`. */
+export const PAYMENT_LABEL: Record<string, string> = Object.fromEntries(Object.entries(BUILT_IN_METHODS).map(([id, m]) => [id, m.label]));
+export { paymentLabel };
 
 export const PAYMENT_STATUS_LABEL: Record<PaymentStatus, string> = {
   unpaid: "Unpaid",
@@ -34,35 +32,18 @@ export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
 /** Happy-path progression shown in the tracking timeline. */
 export const ORDER_FLOW: OrderStatus[] = ["pending", "confirmed", "dispatched", "out-for-delivery", "delivered"];
 
-/** Account lines to show for an online payment method. */
+/** Where to send the money for a method paid before shipping (wallets, bank, the store's own methods). */
 export function paymentAccountLines(method: PaymentMethod, s: StoreSettings): { label: string; value: string }[] {
-  switch (method) {
-    case "bank":
-      return [
-        { label: "Bank", value: s.bank.bankName },
-        { label: "Account title", value: s.bank.accountTitle },
-        { label: "Account number", value: s.bank.accountNumber },
-        { label: "IBAN", value: s.bank.iban },
-      ];
-    case "jazzcash":
-      return [
-        { label: "JazzCash account", value: s.jazzcash.title },
-        { label: "Mobile number", value: s.jazzcash.number },
-      ];
-    case "easypaisa":
-      return [
-        { label: "EasyPaisa account", value: s.easypaisa.title },
-        { label: "Mobile number", value: s.easypaisa.number },
-      ];
-    default:
-      return [];
-  }
+  return findCheckoutMethod(method, s)?.account ?? [];
 }
 
-/** 0342-6693115 → 923426693115 (wa.me / WhatsApp Cloud API format). */
-export function toIntlPkPhone(phone: string) {
-  const d = phone.replace(/\D/g, "");
-  if (d.startsWith("92")) return d;
-  if (d.startsWith("0")) return `92${d.slice(1)}`;
-  return d;
+/** 0342-6693115 → 923426693115 (wa.me / WhatsApp Cloud API format); other countries' numbers by `country`. */
+export function toIntlPkPhone(phone: string, country = "PK") {
+  return intlDigits(phone, country);
+}
+
+/** "Lahore" / "Austin, TX 78701" – the city line of an address (state and postcode when the customer gave them). */
+export function cityLine(c: { city?: string | null; region?: string | null; postalCode?: string | null }) {
+  const tail = [c.region, c.postalCode].map((v) => (v ?? "").trim()).filter(Boolean).join(" ");
+  return [c.city?.trim(), tail].filter(Boolean).join(", ");
 }

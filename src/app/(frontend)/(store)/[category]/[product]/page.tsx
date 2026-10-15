@@ -40,9 +40,12 @@ import { storePlace, type SiteInfo } from "@/lib/site-info";
 import { getReturnsPolicy } from "@/lib/cms/aftersales";
 import { getConversionSettings, getProductQuestions } from "@/lib/cms/engagement";
 import { EmiBlock, ProductQuestions, StockPriceAlert } from "@/components/product-detail/product-extras";
-import { conditionMeta, effectivePrice, formatPKR, truncate } from "@/lib/utils";
+import { conditionMeta, effectivePrice, truncate } from "@/lib/utils";
 import { isWholesaleAvailable } from "@/lib/wholesale";
 import type { CatalogProduct } from "@/lib/types";
+import { countryName, type StoreLocale } from "@/lib/locale";
+import { formatMoney } from "@/lib/money";
+import { getStoreLocale } from "@/lib/store-locale";
 
 export const revalidate = 300;
 
@@ -64,27 +67,31 @@ async function resolveProduct(params: Params): Promise<CatalogProduct> {
   return product;
 }
 
-/** Search results show ~60 characters: the name and "Price in Pakistan" come first; condition and store name only if they fit. */
-function metaTitle(p: CatalogProduct, site: SiteInfo) {
+/**
+ * Search results show ~60 characters: the name and "Price in <country>" come first; condition and store name only if they fit.
+ * `loc` = the store's country and currency (`getStoreLocale()`).
+ */
+function metaTitle(p: CatalogProduct, site: SiteInfo, loc: StoreLocale) {
   if (p.seoTitle) return p.seoTitle;
   const SUFFIX = ` | ${site.name}`;
   const fit = (base: string, ...extra: string[]) => extra.reduce((t, part) => ((t + part).length <= 65 ? t + part : t), base);
   if (p.priceOnRequest) return fit(p.name, " – Wholesale Price on Request", SUFFIX);
   const cond = p.condition ? ` – ${conditionMeta[p.condition].label}` : "";
-  return fit(`${p.name} Price in Pakistan`, cond, SUFFIX);
+  return fit(`${p.name} Price in ${countryName(loc.country)}`, cond, SUFFIX);
 }
 
-function metaDescription(p: CatalogProduct, site: SiteInfo) {
+function metaDescription(p: CatalogProduct, site: SiteInfo, loc: StoreLocale) {
   if (p.seoDescription) return p.seoDescription;
   // "<store name>, <area> <city>" – the store's own name and place (Settings → Store details)
   const from = [site.name, storePlace(site, " ")].filter(Boolean).join(", ");
   const cond = p.condition && p.condition !== "new" ? ` (${conditionMeta[p.condition].label})` : "";
+  const allOver = loc.country === "PK" ? "all over Pakistan" : "nationwide";
   const lead = p.priceOnRequest
     ? `${p.name}${cond} – wholesale price on request.`
-    : `Buy ${p.name}${cond} at ${formatPKR(effectivePrice(p))} in Pakistan.`;
+    : `Buy ${p.name}${cond} at ${formatMoney(effectivePrice(p), loc)} in ${countryName(loc.country)}.`;
   const tail = p.priceOnRequest
-    ? ` Request a bulk quote from ${from} – delivery all over Pakistan.`
-    : ` Cash on Delivery & delivery all over Pakistan from ${from}.`;
+    ? ` Request a bulk quote from ${from} – delivery ${allOver}.`
+    : ` Cash on Delivery & delivery ${allOver} from ${from}.`;
   const budget = 300 - lead.length - tail.length;
   const mid = budget > 40 ? ` ${truncate(p.shortDescription, budget)}` : "";
   return `${lead}${mid}${tail}`;
@@ -92,15 +99,15 @@ function metaDescription(p: CatalogProduct, site: SiteInfo) {
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { product: slug } = await params;
-  const [p, site] = await Promise.all([getProductBySlug(slug), getSiteInfo()]);
+  const [p, site, loc] = await Promise.all([getProductBySlug(slug), getSiteInfo(), getStoreLocale()]);
   if (!p) return { title: { absolute: `Product not found | ${site.name}` }, robots: { index: false, follow: true } };
-  return pageMetadata({ title: metaTitle(p, site), description: metaDescription(p, site), path: p.url, image: p.images[0], noindex: p.seoNoindex, canonical: p.seoCanonical });
+  return pageMetadata({ title: metaTitle(p, site, loc), description: metaDescription(p, site, loc), path: p.url, image: p.images[0], noindex: p.seoNoindex, canonical: p.seoCanonical, locale: loc });
 }
 
 export default async function ProductPage({ params }: { params: Params }) {
   const product = await resolveProduct(params);
 
-  const [categories, reviews, related, addons, settings, models, brands, returnsPolicy, conversion, questions] = await Promise.all([
+  const [categories, reviews, related, addons, settings, models, brands, returnsPolicy, conversion, questions, loc] = await Promise.all([
     getCategories(),
     getApprovedReviews(product.id),
     getRelatedProducts(product, 10),
@@ -111,6 +118,7 @@ export default async function ProductPage({ params }: { params: Params }) {
     getReturnsPolicy(),
     getConversionSettings(),
     getProductQuestions(product.id).catch(() => []),
+    getStoreLocale(),
   ]);
 
   const delivery = deliveryInfo(settings);
@@ -142,7 +150,7 @@ export default async function ProductPage({ params }: { params: Params }) {
             shippingRate: settings.freeDeliveryThreshold > 0 && effectivePrice(product) >= settings.freeDeliveryThreshold ? 0 : settings.defaultDeliveryCharge,
             returnDays: returnsPolicy.returnDays,
             restockingFee: returnsPolicy.restockingFeePercent > 0,
-          })}
+          }, loc)}
         />
       )}
 

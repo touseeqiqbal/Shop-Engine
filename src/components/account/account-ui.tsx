@@ -7,9 +7,11 @@ import { AlertCircle, Heart, Info, LayoutDashboard, Loader2, MapPin, Package, Se
 import { findOrdersByPhoneAction, type FindOrdersState } from "@/app/(frontend)/(store)/account/actions";
 import { ORDER_STATUS_LABEL } from "@/lib/order-display";
 import type { OrderStatus } from "@/lib/types";
-import { cn, formatDate, formatPKR } from "@/lib/utils";
+import { phonePlaceholder } from "@/lib/phone";
+import { cn } from "@/lib/utils";
 import { Field, fieldAria } from "@/components/checkout/field";
 import { formatPhoneInput } from "@/components/checkout/phone";
+import { useDateFormatter, useMoney, useStoreLocale } from "@/components/providers/locale";
 import { useState } from "react";
 
 const LINKS = [
@@ -73,6 +75,8 @@ export const STATUS_TONE: Record<OrderStatus, string> = {
 };
 
 export function OrderRows({ orders }: { orders: { orderNumber: string; createdAt: string; status: OrderStatus; total: number; itemsLabel?: string }[] }) {
+  const money = useMoney();
+  const date = useDateFormatter();
   return (
     <ul className="divide-y divide-border">
       {orders.map((o) => (
@@ -80,12 +84,12 @@ export function OrderRows({ orders }: { orders: { orderNumber: string; createdAt
           <div className="min-w-0 flex-1">
             <p className="font-mono text-sm font-bold">{o.orderNumber}</p>
             <p className="text-xs text-muted">
-              {formatDate(o.createdAt)}
+              {date(o.createdAt)}
               {o.itemsLabel ? ` · ${o.itemsLabel}` : ""}
             </p>
           </div>
           <span className={cn("chip", STATUS_TONE[o.status])}>{ORDER_STATUS_LABEL[o.status]}</span>
-          <span className="w-28 text-right font-semibold tabular-nums">{formatPKR(o.total)}</span>
+          <span className="w-28 text-right font-semibold tabular-nums">{money(o.total)}</span>
           <Link href={`/account/orders/${encodeURIComponent(o.orderNumber)}`} className="btn btn-secondary btn-sm">
             View
           </Link>
@@ -98,6 +102,8 @@ export function OrderRows({ orders }: { orders: { orderNumber: string; createdAt
 export function FindOrdersByPhone() {
   const [state, action] = useActionState<FindOrdersState, FormData>(findOrdersByPhoneAction, { status: "idle" });
   const [phone, setPhone] = useState("");
+  const { country } = useStoreLocale();
+  const pk = country === "PK"; // other countries type the number with its +code
   return (
     <div className="space-y-4">
       <form action={action} className="flex flex-col gap-3 sm:flex-row sm:items-start" noValidate>
@@ -106,12 +112,12 @@ export function FindOrdersByPhone() {
             {...fieldAria("find-phone")}
             name="phone"
             type="tel"
-            inputMode="numeric"
-            placeholder="03XX-XXXXXXX"
-            autoComplete="tel-national"
+            inputMode={pk ? "numeric" : "tel"}
+            placeholder={phonePlaceholder(country)}
+            autoComplete={pk ? "tel-national" : "tel"}
             value={phone}
-            onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
-            maxLength={12}
+            onChange={(e) => setPhone(formatPhoneInput(e.target.value, country))}
+            maxLength={pk ? 12 : 20}
           />
         </Field>
         <div className="sm:pt-[1.625rem]">

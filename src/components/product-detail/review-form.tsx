@@ -2,6 +2,7 @@
 import { startTransition, useActionState, useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, m as motion } from "framer-motion";
 import { CheckCircle2, Loader2, PenLine, Star } from "lucide-react";
+import { useStoreLocale } from "@/components/providers/locale";
 import { submitReview, type ReviewFormState } from "@/app/(frontend)/(store)/[category]/[product]/actions";
 import { cn } from "@/lib/utils";
 import { Turnstile } from "@/components/ui/turnstile";
@@ -12,6 +13,7 @@ const LABELS = ["Poor", "Fair", "Good", "Very good", "Excellent"];
 const initial: ReviewFormState = { ok: false, message: "" };
 
 export function ReviewForm({ productId, productName }: { productId: string; productName: string }) {
+  const pk = useStoreLocale().country === "PK";
   const uid = useId();
   const [open, setOpen] = useState(false);
   const [photos, setPhotos] = useState<File[]>([]);
@@ -38,7 +40,7 @@ export function ReviewForm({ productId, productName }: { productId: string; prod
         <CheckCircle2 className="size-6 shrink-0 text-emerald-400" aria-hidden="true" />
         <div>
           <p className="font-semibold text-fg">{state.message}</p>
-          <p className="mt-1 text-sm text-muted">We read every review – thank you for helping other shoppers in Pakistan.</p>
+          <p className="mt-1 text-sm text-muted">We read every review – thank you for helping other shoppers{pk ? " in Pakistan" : ""}.</p>
         </div>
       </div>
     );

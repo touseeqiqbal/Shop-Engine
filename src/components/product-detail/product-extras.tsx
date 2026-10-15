@@ -3,7 +3,9 @@ import { useActionState, useState } from "react";
 import { BellRing, MessageCircleQuestion, TrendingDown } from "lucide-react";
 import { askQuestion, subscribeAlert, type SimpleState } from "@/app/(frontend)/(store)/[category]/[product]/engagement-actions";
 import { Turnstile } from "@/components/ui/turnstile";
-import { formatPKR } from "@/lib/utils";
+import { useMoney, useStoreLocale } from "@/components/providers/locale";
+import { currencyDigits } from "@/lib/money";
+import { phonePlaceholder } from "@/lib/phone";
 import { honeypotProps } from "@/lib/honeypot";
 
 /** Product page extras: back-in-stock / price-drop alert, installments block, questions & answers. */
@@ -12,6 +14,7 @@ export function StockPriceAlert({ productId, inStock }: { productId: string; inS
   const kind = inStock ? "price" : "stock";
   const [open, setOpen] = useState(!inStock);
   const [state, action, pending] = useActionState<SimpleState, FormData>(subscribeAlert.bind(null, productId, kind), {});
+  const { country } = useStoreLocale();
   if (state.ok) return <p className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{state.message}</p>;
   if (!open)
     return (
@@ -30,7 +33,7 @@ export function StockPriceAlert({ productId, inStock }: { productId: string; inS
         <label className="sr-only" htmlFor={`alert-${productId}`}>
           Email or mobile number
         </label>
-        <input id={`alert-${productId}`} name="contact" className="input flex-1" placeholder="Email or 0300-1234567" required />
+        <input id={`alert-${productId}`} name="contact" className="input flex-1" placeholder={`Email or ${country === "PK" ? "0300-1234567" : phonePlaceholder(country)}`} required />
         <button className="btn btn-primary" disabled={pending}>
           {pending ? "…" : "Notify me"}
         </button>
@@ -43,13 +46,17 @@ export function StockPriceAlert({ productId, inStock }: { productId: string; inS
 export type EmiProps = { price: number; heading: string; note: string; plans: { bank: string; months: number; markupPercent: number; minAmount: number }[] };
 
 export function EmiBlock({ price, heading, note, plans }: EmiProps) {
+  const money = useMoney();
   const rows = plans.filter((p) => !p.minAmount || price >= p.minAmount);
   if (!rows.length) return null;
-  const cheapest = Math.min(...rows.map((p) => Math.ceil((price * (1 + p.markupPercent / 100)) / p.months)));
+  // instalments round UP to the currency's smallest unit (whole rupees, cents …) so they cover the price
+  const minor = 10 ** currencyDigits(money.currency);
+  const perMonth = (p: EmiProps["plans"][number]) => Math.ceil(((price * (1 + p.markupPercent / 100)) / p.months) * minor) / minor;
+  const cheapest = Math.min(...rows.map(perMonth));
   return (
     <details className="mt-4 rounded-2xl border border-border bg-surface p-4">
       <summary className="cursor-pointer text-sm font-semibold">
-        {heading} – from <span className="text-fg">{formatPKR(cheapest)}/month</span>
+        {heading} – from <span className="text-fg">{money(cheapest)}/month</span>
       </summary>
       <table className="mt-3 w-full text-sm">
         <thead>
@@ -64,7 +71,7 @@ export function EmiBlock({ price, heading, note, plans }: EmiProps) {
             <tr key={`${p.bank}-${p.months}`} className="border-t border-border">
               <td className="py-1.5">{p.bank}</td>
               <td className="py-1.5">{p.months}</td>
-              <td className="py-1.5 text-right tabular-nums">{formatPKR(Math.ceil((price * (1 + p.markupPercent / 100)) / p.months))}</td>
+              <td className="py-1.5 text-right tabular-nums">{money(perMonth(p))}</td>
             </tr>
           ))}
         </tbody>

@@ -3,8 +3,8 @@ import Link from "next/link";
 import { AdminPage } from "../ui/AdminPage";
 import { getTenant } from "../../tenancy";
 import { overviewFor } from "../../endpoints/platform";
-
-const n = (v: number) => Math.round(v).toLocaleString("en-PK");
+import { storeLocaleOf } from "../../store-locale";
+import { formatMoney } from "../../../lib/money";
 
 /** /cms/platform – ShopEngine at a glance: stores, merchants, plan revenue, payments to chase, busiest stores. */
 export async function PlatformView(props: AdminViewServerProps) {
@@ -17,6 +17,10 @@ export async function PlatformView(props: AdminViewServerProps) {
       </AdminPage>
     );
   const o = await overviewFor(req);
+  // numbers as the default store writes them; money per currency (never added across currencies)
+  const { locale } = await storeLocaleOf(req.payload, null, req);
+  const n = (v: number) => Math.round(v).toLocaleString(locale);
+  const amounts = (byCurrency: Record<string, number>) => Object.entries(byCurrency).map(([currency, v]) => formatMoney(v, { currency, locale })).join(" + ") || formatMoney(0, { currency: "PKR", locale });
   const card = (label: string, value: string, sub?: string) => (
     <div className="urko-card">
       <div className="urko-muted">{label}</div>
@@ -32,8 +36,8 @@ export async function PlatformView(props: AdminViewServerProps) {
           {card("Stores", n(o.stores.total), `${n(o.stores.active)} live · ${n(o.stores.draft)} setting up · ${n(o.stores.suspended)} suspended · ${n(o.stores.closed)} closed`)}
           {card("New stores (30 days)", n(o.stores.newLast30Days))}
           {card("Merchants", n(o.merchants))}
-          {card("Monthly plan revenue (MRR)", n(o.subscriptions.mrr), Object.entries(o.subscriptions.byStatus).map(([k, v]) => `${v} ${k.replace("_", " ")}`).join(" · ") || "no subscriptions yet")}
-          {card("Orders across stores (30 days)", n(o.gmvLast30Days.orders), `worth ${n(o.gmvLast30Days.total)}`)}
+          {card("Monthly plan revenue (MRR)", amounts(o.subscriptions.mrr), Object.entries(o.subscriptions.byStatus).map(([k, v]) => `${v} ${k.replace("_", " ")}`).join(" · ") || "no subscriptions yet")}
+          {card("Orders across stores (30 days)", n(o.gmvLast30Days.orders), `worth ${amounts(o.gmvLast30Days.byCurrency)}`)}
           {card("Messages that failed", n(o.deadDeliveries), "Background deliveries marked Dead")}
         </div>
         <div className="urko-grid urko-grid--panels">
@@ -55,7 +59,7 @@ export async function PlatformView(props: AdminViewServerProps) {
                         <Link href={`/cms/collections/stores/${s.id}`}>{s.name}</Link>
                       </td>
                       <td>{n(s.orders)}</td>
-                      <td>{n(s.total)}</td>
+                      <td>{formatMoney(s.total, { currency: s.currency, locale })}</td>
                     </tr>
                   ))}
                 </tbody>

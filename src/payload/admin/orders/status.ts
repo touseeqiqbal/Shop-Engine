@@ -1,4 +1,8 @@
-/** Plain-language order wording and colours used across the admin (list, order page, search, dashboard). */
+import { DEFAULT_LOCALE, type StoreLocale } from "../../../lib/locale";
+import { intlDigits } from "../../../lib/phone";
+import { formatDate } from "../../../lib/time";
+
+/** Plain-language order wording and colours used across the admin (list, order page, search, dashboard). Money: useAdminMoney. */
 
 export type Tone = "y" | "b" | "g" | "r" | "n";
 
@@ -41,9 +45,8 @@ export const NEXT_STEP: Record<string, { to: string; label: string; askCourier?:
   "out-for-delivery": { to: "delivered", label: "Mark as delivered" },
 };
 
-export const rs = (n: number) => `Rs ${Math.round(n).toLocaleString("en-PK")}`;
-
-export function timeAgo(iso: string) {
+/** "3 hours ago", or the date in the store's time zone (`loc` from useAdminLocale) once it's a week old. */
+export function timeAgo(iso: string, loc: Pick<StoreLocale, "timezone" | "locale"> = DEFAULT_LOCALE) {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return "";
   const min = Math.round((Date.now() - t) / 60000);
@@ -53,8 +56,8 @@ export function timeAgo(iso: string) {
   if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
   const d = Math.round(h / 24);
   if (d < 7) return `${d} day${d === 1 ? "" : "s"} ago`;
-  return new Date(t).toLocaleDateString("en-PK", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Karachi" });
+  return formatDate(t, loc, { day: "numeric", month: "short", year: "numeric" });
 }
 
-/** WhatsApp / tel links from a Pakistani number (03xx… → 923xx…) */
-export const intlPhone = (phone: string) => phone.replace(/\D/g, "").replace(/^0/, "92");
+/** WhatsApp / tel links: the number with its country code, no "+" (Pakistan 03xx… → 923xx…; `country` = the store's). */
+export const intlPhone = (phone: string, country?: string) => intlDigits(phone, country);

@@ -3,6 +3,8 @@ import { useActionState, useEffect, useRef } from "react";
 import { CheckCircle2, Loader2, Send } from "lucide-react";
 import { submitContact, type ContactState } from "@/app/(frontend)/(store)/contact/actions";
 import { trackEvent } from "@/components/analytics";
+import { useStoreLocale } from "@/components/providers/locale";
+import { phonePlaceholder } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import { Turnstile } from "@/components/ui/turnstile";
 import { honeypotProps } from "@/lib/honeypot";
@@ -12,6 +14,7 @@ const SUBJECTS = ["Laptop enquiry", "Charger / battery / parts", "Order & delive
 export function ContactForm() {
   const [state, action, pending] = useActionState<ContactState, FormData>(submitContact, { ok: false, message: "" });
   const formRef = useRef<HTMLFormElement>(null);
+  const { country } = useStoreLocale();
 
   useEffect(() => {
     if (state.ok) {
@@ -53,7 +56,7 @@ export function ContactForm() {
           <label htmlFor="phone" className="label">
             Mobile / WhatsApp <span className="text-rose-400">*</span>
           </label>
-          <input id="phone" name="phone" type="tel" inputMode="tel" required autoComplete="tel" className="input" placeholder="03XX-XXXXXXX" {...field("phone")} />
+          <input id="phone" name="phone" type="tel" inputMode="tel" required autoComplete="tel" className="input" placeholder={phonePlaceholder(country)} {...field("phone")} />
           {fieldError("phone")}
         </div>
         <div>

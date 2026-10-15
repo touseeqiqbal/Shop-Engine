@@ -3,6 +3,7 @@ import Link from "next/link";
 import { FileText } from "lucide-react";
 import { PageHero } from "./page-hero";
 import { WhatsAppCta } from "./whatsapp-cta";
+import { getStoreLocale } from "@/lib/store-locale";
 import { cn, formatDate } from "@/lib/utils";
 
 export const POLICY_PAGES = [
@@ -15,7 +16,7 @@ export const POLICY_PAGES = [
 ];
 
 /** Two-column layout for policy pages: hero + content + sticky "other policies" nav. */
-export function PolicyLayout({
+export async function PolicyLayout({
   path,
   name,
   eyebrow,
@@ -32,11 +33,13 @@ export function PolicyLayout({
   updated: string;
   children: ReactNode;
 }) {
+  const { locale } = await getStoreLocale();
   return (
     <div className="pb-16">
       <PageHero crumbs={[{ name, href: path }]} eyebrow={eyebrow ?? "Policies"} title={title} description={description}>
         <p className="mt-5 text-xs text-subtle">
-          Last updated: <time dateTime={updated}>{formatDate(updated, { dateStyle: "long" })}</time>
+          {/* `updated` is a calendar day (YYYY-MM-DD): shown in the store's language, never shifted by a time zone */}
+          Last updated: <time dateTime={updated}>{formatDate(updated, { dateStyle: "long", timeZone: "UTC" }, { locale })}</time>
         </p>
       </PageHero>
       <div className="container-x mt-8 grid gap-10 sm:mt-12 lg:grid-cols-[minmax(0,1fr)_16rem] lg:gap-14">

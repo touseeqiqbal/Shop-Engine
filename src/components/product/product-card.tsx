@@ -6,6 +6,7 @@ import { GitCompareArrows, Heart, ShoppingBag, Flame, FileText } from "lucide-re
 import type { CatalogProduct } from "@/lib/types";
 import { cn, discountPercent, effectivePrice } from "@/lib/utils";
 import { trackEvent } from "@/components/analytics";
+import { useStoreLocale } from "@/components/providers/locale";
 import { Price } from "@/components/ui/price";
 import { Stars } from "@/components/ui/stars";
 import { ConditionBadge } from "@/components/ui/condition-badge";
@@ -30,6 +31,7 @@ export function ProductCard({
   const { wishlist, compare, toggleWishlist, toggleCompare } = useLists();
   const toast = useUi((s) => s.toast);
   const hydrated = useHydrated();
+  const { currency } = useStoreLocale();
   const wished = hydrated && wishlist.includes(p.id);
   const analyticsItem = { item_id: p.sku, item_name: p.name, item_brand: p.brandName, item_category: p.categoryName, price: effectivePrice(p), quantity: 1 };
   const comparing = hydrated && compare.includes(p.id);
@@ -99,7 +101,7 @@ export function ProductCard({
             type="button"
             onClick={() => {
               toggleWishlist(p.id);
-              if (!wished) trackEvent("add_to_wishlist", { currency: "PKR", value: analyticsItem.price, items: [analyticsItem] });
+              if (!wished) trackEvent("add_to_wishlist", { currency, value: analyticsItem.price, items: [analyticsItem] });
               toast(wished ? "Removed from wishlist" : "Saved to wishlist", "info");
             }}
             aria-pressed={wished}
@@ -180,7 +182,7 @@ export function ProductCard({
             disabled={outOfStock}
             onClick={() => {
               add(p);
-              trackEvent("add_to_cart", { currency: "PKR", value: analyticsItem.price, items: [analyticsItem], source: "product_card" });
+              trackEvent("add_to_cart", { currency, value: analyticsItem.price, items: [analyticsItem], source: "product_card" });
             }}
             className={cn("btn btn-sm mt-3 w-full", list ? "btn-primary sm:w-auto" : "btn-secondary group-hover:border-transparent group-hover:bg-brand-gradient group-hover:text-white")}
           >

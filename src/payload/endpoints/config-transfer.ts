@@ -2,6 +2,8 @@ import type { CollectionSlug, Endpoint, GlobalSlug, PayloadRequest } from "paylo
 import { getTenant, hasStoreRole } from "../tenancy";
 import { STORE_SETTING_ROLES, storeSettingsSlug } from "../store-settings";
 import { logActivity } from "../collections/history";
+import { storeLocaleOf } from "../store-locale";
+import { zoneOffsetMinutes } from "../../lib/time";
 
 /**
  * Store configuration backup (the store's owner, for the store being worked in):
@@ -70,7 +72,10 @@ export const configExportEndpoint: Endpoint = {
       collections[c.slug] = res.docs.map(strip);
     }
     const body = JSON.stringify({ format: FORMAT, exportedAt: new Date().toISOString(), scope: to.store == null ? "platform-defaults" : "store", globals, collections }, null, 2);
-    const stamp = new Date(Date.now() + 5 * 3600e3).toISOString().slice(0, 16).replace(/[:T]/g, "-");
+    // file name: the store's local date and time
+    const { timezone } = await storeLocaleOf(payload, to.store, req);
+    const now = Date.now();
+    const stamp = new Date(now + zoneOffsetMinutes(timezone, now) * 60000).toISOString().slice(0, 16).replace(/[:T]/g, "-");
     return new Response(body, {
       headers: {
         "Content-Type": "application/json; charset=utf-8",

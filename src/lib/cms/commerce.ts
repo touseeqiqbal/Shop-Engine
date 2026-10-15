@@ -1,5 +1,7 @@
 import "server-only";
 import type { PaymentSettings, ShippingZone, StoreSettings } from "@/lib/types";
+import type { ManualMethodSettings } from "@/lib/payments/methods";
+import { storeLocale } from "@/lib/locale";
 import { payloadClient } from "./catalog-source";
 
 /**
@@ -28,6 +30,7 @@ export async function loadCommerceSettings(storeId: number | null): Promise<Part
       (z): ShippingZone => ({
         name: str(z.name),
         cities: Array.isArray(z.cities) ? (z.cities as string[]) : [],
+        places: Array.isArray(z.places) ? (z.places as unknown[]).map(str).filter(Boolean) : [],
         rest: Boolean(z.rest),
         charge: num(z.charge),
         freeAbove: numOrNull(z.freeAbove),
@@ -53,8 +56,28 @@ export async function loadCommerceSettings(storeId: number | null): Promise<Part
     out.jazzcash = { title: str(jc.title), number: str(jc.number) };
     out.easypaisa = { title: str(ep.title), number: str(ep.number) };
     out.bank = { bankName: str(bank.bankName), accountTitle: str(bank.accountTitle), accountNumber: str(bank.accountNumber), iban: str(bank.iban) };
+    // the store's own methods (UPI, M-Pesa, card on delivery …)
+    out.manualMethods = (Array.isArray(pay.manualMethods) ? (pay.manualMethods as Doc[]) : [])
+      .filter((m) => str(m.methodId) && str(m.name))
+      .map(
+        (m): ManualMethodSettings => ({
+          id: str(m.methodId),
+          name: str(m.name),
+          enabled: m.enabled !== false,
+          note: str(m.note),
+          instructions: str(m.instructions),
+          details: (Array.isArray(m.details) ? (m.details as Doc[]) : []).map((d) => ({ label: str(d.label), value: str(d.value) })),
+          due: m.due === "on-delivery" ? "on-delivery" : "upfront",
+        }),
+      );
   }
-  out.cardReady = Boolean(process.env.STRIPE_SECRET_KEY && store?.paymentsAccountId && store?.paymentsChargesEnabled);
-  if (store?.currency) out.currency = str(store.currency).toUpperCase();
+  // cards: the store's connected provider (Stripe for now – lib/payments/catalog.ts) with its platform key set
+  const { gatewayReady } = await import("@/lib/payments/gateways");
+  out.cardGateway = store ? str(store.paymentsProvider) || "stripe" : null;
+  out.cardReady = Boolean(store && out.cardGateway && gatewayReady(out.cardGateway, store));
+  // country and currency: what the address form, phone numbers, rounding and payment methods follow
+  const loc = storeLocale(store as { country?: string; currency?: string } | null);
+  out.currency = loc.currency;
+  out.country = loc.country;
   return out;
 }

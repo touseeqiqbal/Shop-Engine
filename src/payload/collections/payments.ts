@@ -49,7 +49,8 @@ export const Payments: CollectionConfig = {
       },
     ] },
     { type: "row", fields: [
-      { name: "provider", type: "select", required: true, options: [{ label: "Stripe", value: "stripe" }, { label: "Manual", value: "manual" }], admin: { width: "25%" } },
+      // a payment provider plugin's id ("stripe" …, lib/payments/catalog.ts) or "manual"
+      { name: "provider", type: "text", required: true, index: true, admin: { width: "25%" } },
       { name: "providerRef", type: "text", required: true, index: true, label: "Provider id", admin: { width: "45%", description: "e.g. the checkout session / payment / refund id." } },
       { name: "amount", type: "number", required: true, min: 0, admin: { width: "15%" } },
       { name: "currency", type: "text", required: true, admin: { width: "15%" } },

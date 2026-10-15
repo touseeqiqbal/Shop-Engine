@@ -2,7 +2,8 @@
 import { m as motion } from "framer-motion";
 import { Check, Cpu, HardDrive, MemoryStick, Sparkles } from "lucide-react";
 import type { UpgradeOption } from "@/lib/types";
-import { cn, formatPKR } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { useMoney } from "@/components/providers/locale";
 
 const GROUP_ICON: Record<string, typeof Cpu> = { RAM: MemoryStick, SSD: HardDrive, Storage: HardDrive };
 
@@ -25,6 +26,7 @@ export function UpgradeConfigurator({
   idPrefix: string;
 }) {
   const groups = groupUpgrades(upgrades);
+  const money = useMoney();
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-2">
@@ -71,7 +73,7 @@ export function UpgradeConfigurator({
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold text-fg">{opt ? opt.label : "Keep standard"}</span>
                       <span className={cn("block text-xs", opt ? "text-violet-300 light:text-violet-700" : "text-muted")}>
-                        {opt ? `+ ${formatPKR(opt.price)}` : "Included"}
+                        {opt ? `+ ${money(opt.price)}` : "Included"}
                       </span>
                     </span>
                     <span

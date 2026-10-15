@@ -1,4 +1,6 @@
 import type { Endpoint, PayloadRequest, Where } from "payload";
+import { storeLocale } from "../../lib/locale";
+import { roundMoney } from "../../lib/money";
 import { getTenant, storeIdOf } from "../tenancy";
 import { logActivity } from "../collections/history";
 
@@ -11,7 +13,7 @@ import { logActivity } from "../collections/history";
 
 const bad = (error: string, status = 400) => Response.json({ error }, { status });
 
-type StoreRow = { id: number; name?: string; slug?: string; status?: string; subscriptionStatus?: string; isDefault?: boolean };
+type StoreRow = { id: number; name?: string; slug?: string; status?: string; subscriptionStatus?: string; isDefault?: boolean; country?: string; currency?: string; timezone?: string; defaultLanguage?: string };
 
 const mine: Endpoint = {
   path: "/platform/my-stores",
@@ -26,7 +28,7 @@ const mine: Endpoint = {
       activeStoreId: t.activeStoreId,
       storeRole: t.platformAdmin ? "platform_admin" : (t.roles.get(t.activeStoreId ?? -1) ?? null),
       readOnly: t.activeStoreId != null && t.readOnly.has(t.activeStoreId),
-      stores: stores.map((s) => ({ id: s.id, name: s.name, slug: s.slug, status: s.status, subscriptionStatus: s.subscriptionStatus, isDefault: Boolean(s.isDefault), role: t.platformAdmin ? "platform_admin" : (t.roles.get(Number(s.id)) ?? null) })),
+      stores: stores.map((s) => ({ id: s.id, name: s.name, slug: s.slug, status: s.status, subscriptionStatus: s.subscriptionStatus, isDefault: Boolean(s.isDefault), ...storeLocale(s), role: t.platformAdmin ? "platform_admin" : (t.roles.get(Number(s.id)) ?? null) })),
     });
   },
 };
@@ -69,34 +71,44 @@ export async function overviewFor(req: PayloadRequest) {
     count("users", { platformRole: { equals: "merchant_owner" } }),
     count("outbox-events", { status: { equals: "dead" } }),
   ]);
-  const subs = (await p.find({ collection: "store-subscriptions", limit: 0, pagination: false, depth: 0, overrideAccess: true, req })).docs as unknown as { status?: string; amount?: number; billingCycle?: string; store?: unknown; failedPayments?: number }[];
+  const subs = (await p.find({ collection: "store-subscriptions", limit: 0, pagination: false, depth: 0, overrideAccess: true, req })).docs as unknown as { status?: string; amount?: number; billingCycle?: string; currency?: string; store?: unknown; failedPayments?: number }[];
   const byStatus: Record<string, number> = {};
   for (const s of subs) byStatus[String(s.status)] = (byStatus[String(s.status)] ?? 0) + 1;
-  const mrr = subs.filter((s) => s.status === "active" || s.status === "past_due").reduce((sum, s) => sum + monthly(s), 0);
+  // money in different currencies is never added together: one total per currency
+  const mrr: Record<string, number> = {};
+  for (const s of subs.filter((x) => x.status === "active" || x.status === "past_due")) {
+    const cur = String(s.currency || "PKR").toUpperCase();
+    mrr[cur] = (mrr[cur] ?? 0) + monthly(s);
+  }
   const failing = subs.filter((s) => s.status === "past_due" || (Number(s.failedPayments) || 0) > 0).map((s) => storeIdOf(s.store));
 
   // gross order value per store over the last 30 days (orders that weren't cancelled / refused / returned)
-  const orders = (await p.find({ collection: "orders", where: { and: [{ placedAt: { greater_than: since } }, { status: { not_in: ["cancelled", "refused", "returned"] } }] }, limit: 0, pagination: false, depth: 0, select: { store: true, total: true }, overrideAccess: true, req })).docs as unknown as { store?: unknown; total?: number }[];
-  const gmv = new Map<number, { orders: number; total: number }>();
+  const orders = (await p.find({ collection: "orders", where: { and: [{ placedAt: { greater_than: since } }, { status: { not_in: ["cancelled", "refused", "returned"] } }] }, limit: 0, pagination: false, depth: 0, select: { store: true, total: true, currency: true }, overrideAccess: true, req })).docs as unknown as { store?: unknown; total?: number; currency?: string }[];
+  const gmv = new Map<number, { orders: number; total: number; currency: string }>();
+  const gmvByCurrency: Record<string, number> = {};
   for (const o of orders) {
+    const cur = String(o.currency || "PKR").toUpperCase();
+    gmvByCurrency[cur] = (gmvByCurrency[cur] ?? 0) + (Number(o.total) || 0);
     const s = storeIdOf(o.store);
     if (s == null) continue;
-    const row = gmv.get(s) ?? { orders: 0, total: 0 };
+    const row = gmv.get(s) ?? { orders: 0, total: 0, currency: cur };
     row.orders++;
     row.total += Number(o.total) || 0;
     gmv.set(s, row);
   }
-  const top = [...gmv.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 10);
+  const top = [...gmv.entries()].sort((a, b) => (a[1].currency === b[1].currency ? b[1].total - a[1].total : b[1].orders - a[1].orders)).slice(0, 10);
   const names = new Map(
     ((await p.find({ collection: "stores", where: { id: { in: [...new Set([...top.map(([id]) => id), ...failing.filter((x): x is number => x != null)])] } }, limit: 50, depth: 0, overrideAccess: true, req })).docs as unknown as StoreRow[]).map((s) => [Number(s.id), s.name ?? s.slug ?? `#${s.id}`]),
   );
   return {
     stores: { total: stores, active, draft, suspended, closed, newLast30Days: newStores },
     merchants,
-    subscriptions: { byStatus, mrr: Math.round(mrr) },
+    // per currency, e.g. { PKR: 45000, USD: 120 }
+    subscriptions: { byStatus, mrr: Object.fromEntries(Object.entries(mrr).map(([c, v]) => [c, roundMoney(v, c)])) },
     failingPayments: failing.filter((x): x is number => x != null).map((id) => ({ id, name: names.get(id) ?? `#${id}` })),
-    gmvLast30Days: { orders: orders.length, total: Math.round(orders.reduce((s, o) => s + (Number(o.total) || 0), 0)) },
-    topStores: top.map(([id, v]) => ({ id, name: names.get(id) ?? `#${id}`, orders: v.orders, total: Math.round(v.total) })),
+    gmvLast30Days: { orders: orders.length, byCurrency: Object.fromEntries(Object.entries(gmvByCurrency).map(([c, v]) => [c, roundMoney(v, c)])) },
+    // a store's orders are in its currency (ranked by order count when currencies differ)
+    topStores: top.map(([id, v]) => ({ id, name: names.get(id) ?? `#${id}`, orders: v.orders, total: roundMoney(v.total, v.currency), currency: v.currency })),
     deadDeliveries,
   };
 }

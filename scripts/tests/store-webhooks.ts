@@ -32,6 +32,10 @@ const server = createServer((req, res) => {
 });
 await new Promise<void>((r) => server.listen(3199, r));
 
+// test endpoints an interrupted earlier run left behind would receive this run's deliveries too
+for (const e of (await payload.find({ collection: "webhook-endpoints", where: { url: { like: "localhost:3199" } }, limit: 100, depth: 0, overrideAccess: true })).docs)
+  await payload.delete({ collection: "webhook-endpoints", id: Number(e.id), ...sys }).catch(() => undefined);
+
 const created: { collection: "webhook-endpoints" | "stores"; id: number }[] = [];
 try {
   const order = (await payload.find({ collection: "orders", where: { status: { in: ["pending", "confirmed"] } }, sort: "-id", limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;

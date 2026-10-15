@@ -6,13 +6,15 @@ import { AnimatePresence, m as motion } from "framer-motion";
 import { Minus, Plus, ShoppingBag, Trash2, Truck, X } from "lucide-react";
 import { cartCount, cartSubtotal, useCart } from "@/store/cart";
 import { usePrefs } from "@/components/providers/preferences";
-import { formatPKR } from "@/lib/utils";
+import { useMoney, useStoreLocale } from "@/components/providers/locale";
 import { CITY_KEY, freeDeliveryAbove, type DeliveryInfo } from "@/lib/cities";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 
 export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
   const { lines, drawerOpen, closeDrawer, setQty, remove } = useCart();
   const { t } = usePrefs();
+  const money = useMoney();
+  const pk = useStoreLocale().country === "PK"; // "all over Pakistan" only for Pakistani stores
   const panel = useRef<HTMLElement>(null);
   useFocusTrap(panel, drawerOpen);
   // the city picked on a product page (shipping zones can have their own free-delivery amount)
@@ -77,7 +79,7 @@ export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
                   <ShoppingBag className="size-9 text-muted" aria-hidden="true" />
                 </div>
                 <p className="text-lg font-semibold">{t("emptyCart")}</p>
-                <p className="text-sm text-muted">Browse laptops and accessories – Cash on Delivery all over Pakistan.</p>
+                <p className="text-sm text-muted">Browse laptops and accessories – {pk ? "Cash on Delivery all over Pakistan" : "fast delivery nationwide"}.</p>
                 <Link href="/shop" onClick={closeDrawer} className="btn btn-primary">
                   {t("continueShopping")}
                 </Link>
@@ -90,7 +92,7 @@ export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
                       <Truck className="size-4 text-emerald-400" aria-hidden="true" />
                       {remaining > 0 ? (
                         <span>
-                          Add <strong>{formatPKR(remaining)}</strong> more for <strong className="text-emerald-400">FREE delivery</strong>
+                          Add <strong>{money(remaining)}</strong> more for <strong className="text-emerald-400">FREE delivery</strong>
                         </span>
                       ) : (
                         <span className="font-semibold text-emerald-400">You&apos;ve unlocked FREE delivery!</span>
@@ -134,7 +136,7 @@ export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
                                 <Plus className="size-3.5" aria-hidden="true" />
                               </button>
                             </div>
-                            <span className="text-sm font-semibold tabular-nums">{formatPKR(l.unitPrice * l.qty)}</span>
+                            <span className="text-sm font-semibold tabular-nums">{money(l.unitPrice * l.qty)}</span>
                           </div>
                         </div>
                         <button type="button" onClick={() => remove(l.key)} className="self-start p-1 text-subtle hover:text-rose-400" aria-label={`Remove ${l.name}`}>
@@ -147,7 +149,7 @@ export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
                 <div className="space-y-3 border-t border-border p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
                   <div className="flex items-center justify-between text-base">
                     <span className="text-muted">{t("subtotal")}</span>
-                    <span className="font-display text-xl font-bold tabular-nums">{formatPKR(subtotal)}</span>
+                    <span className="font-display text-xl font-bold tabular-nums">{money(subtotal)}</span>
                   </div>
                   <p className="text-xs text-muted">Delivery calculated at checkout · Cash on Delivery available</p>
                   <div className="grid grid-cols-2 gap-2">

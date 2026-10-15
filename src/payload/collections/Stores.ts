@@ -4,6 +4,8 @@ import { dbName } from "../fields";
 import { userError } from "../errors";
 import { forgetDefaultStore, getTenant, hasStoreRole, platformAdminField, platformAdmins, storeIdOf } from "../tenancy";
 import { clearRedirectCache, revalidate } from "../revalidate";
+import { countryDefaults, isCurrency, isTimeZone, toCountryCode } from "../../lib/locale";
+import { GATEWAYS } from "../../lib/payments/catalog";
 
 /** Sub-domains and store addresses the platform keeps for itself. */
 export const RESERVED_STORE_NAMES = new Set([
@@ -65,7 +67,7 @@ export const Stores: CollectionConfig = {
   },
   hooks: {
     beforeValidate: [
-      ({ data, originalDoc }) => {
+      ({ data, originalDoc, operation }) => {
         if (!data) return data;
         if (data.subdomain !== undefined) data.subdomain = normalizeHandle(data.subdomain) || null;
         if (data.customDomain !== undefined) data.customDomain = normalizeDomain(data.customDomain) || null;
@@ -73,6 +75,27 @@ export const Stores: CollectionConfig = {
         const sub = data.subdomain ?? originalDoc?.subdomain;
         if (sub && RESERVED_STORE_NAMES.has(String(sub))) throw userError(`“${sub}” is reserved – choose another store address.`, 400);
         if (data.customDomain && !DOMAIN_RE.test(String(data.customDomain))) throw userError("Enter a domain like shop.example.com (no https://).", 400);
+        // region: ISO codes ("Pakistan" → "PK"); a new store is in Pakistan unless it says otherwise; a new country
+        // brings its currency and time zone unless those were changed in the same save (the admin sends every field,
+        // so "given" means "different from before")
+        const creating = operation === "create";
+        if (data.country !== undefined || creating) {
+          const code = toCountryCode(data.country || "PK");
+          if (!code) throw userError(`Unknown country “${data.country}” – choose one from the list.`, 400);
+          const changed = creating || code !== toCountryCode(originalDoc?.country);
+          data.country = code;
+          if (changed && (!data.currency || data.currency === originalDoc?.currency)) data.currency = countryDefaults(code).currency;
+          if (changed && (!data.timezone || data.timezone === originalDoc?.timezone)) data.timezone = countryDefaults(code).timezone;
+        }
+        const home = countryDefaults(toCountryCode(data.country ?? originalDoc?.country) ?? "PK");
+        if (data.currency !== undefined) {
+          data.currency = String(data.currency ?? "").trim().toUpperCase() || home.currency;
+          if (!isCurrency(data.currency)) throw userError(`Unknown currency “${data.currency}” – use its 3-letter code, e.g. USD.`, 400);
+        }
+        if (data.timezone !== undefined) {
+          data.timezone = String(data.timezone ?? "").trim() || home.timezone;
+          if (!isTimeZone(data.timezone)) throw userError(`Unknown time zone “${data.timezone}” – e.g. Europe/London.`, 400);
+        }
         return data;
       },
     ],
@@ -97,7 +120,9 @@ export const Stores: CollectionConfig = {
         if (doc.isDefault && !previousDoc?.isDefault)
           await req.payload.update({ collection: "stores", where: { and: [{ isDefault: { equals: true } }, { id: { not_equals: doc.id } }] }, data: { isDefault: false } as never, overrideAccess: true, req });
         forgetDefaultStore();
-        revalidate(["stores"]);
+        // country / currency / payment account feed the checkout settings too
+        const settingsChanged = ["country", "currency", "timezone", "paymentsProvider", "paymentsAccountId", "paymentsChargesEnabled"].some((k) => doc[k] !== previousDoc?.[k]);
+        revalidate(settingsChanged ? ["stores", "settings"] : ["stores"]);
         clearRedirectCache();
         return doc;
       },
@@ -147,9 +172,10 @@ export const Stores: CollectionConfig = {
       label: "Region",
       fields: [
         { type: "row", fields: [
-          { name: "country", type: "text", defaultValue: "Pakistan", access: { update: storeOwnerField }, admin: { width: "25%" } },
-          { name: "currency", type: "text", defaultValue: "PKR", access: { update: storeOwnerField }, admin: { width: "25%", description: "ISO code, e.g. PKR, USD." } },
-          { name: "timezone", type: "text", defaultValue: "Asia/Karachi", access: { update: storeOwnerField }, admin: { width: "25%" } },
+          // no default values: the store's country decides its currency and time zone (Stores hooks above)
+          { name: "country", type: "text", access: { update: storeOwnerField }, admin: { width: "25%", description: "ISO code, e.g. PK, US, AE.", components: { Field: "/payload/admin/RegionFields#CountryField" } } },
+          { name: "currency", type: "text", access: { update: storeOwnerField }, admin: { width: "25%", description: "ISO code, e.g. PKR, USD.", components: { Field: "/payload/admin/RegionFields#CurrencyField" } } },
+          { name: "timezone", type: "text", access: { update: storeOwnerField }, admin: { width: "25%", components: { Field: "/payload/admin/RegionFields#TimezoneField" } } },
           { name: "defaultLanguage", type: "text", defaultValue: "en", access: { update: storeOwnerField }, admin: { width: "25%" } },
         ] },
         { name: "orderPrefix", type: "text", access: { update: storeOwnerField }, admin: { description: "Start of every order number, e.g. ABC → ABC-261014-123456 (2–6 letters/numbers)." } },
@@ -190,7 +216,8 @@ export const Stores: CollectionConfig = {
       label: "Online payments",
       admin: { initCollapsed: true },
       fields: [
-        { name: "paymentsProvider", type: "select", options: [{ label: "Stripe", value: "stripe" }], access: { update: platformAdminField } },
+        // the payment provider plugins the platform has (lib/payments/catalog.ts)
+        { name: "paymentsProvider", type: "select", options: GATEWAYS.map((g) => ({ label: g.label, value: g.id })), access: { update: platformAdminField } },
         { name: "paymentsAccountId", type: "text", access: { read: storeOwnerField, update: platformAdminField }, admin: { readOnly: true, description: "Connected payment account (set when the owner connects payments)." } },
         { name: "paymentsChargesEnabled", type: "checkbox", defaultValue: false, access: { update: platformAdminField }, admin: { readOnly: true } },
       ],

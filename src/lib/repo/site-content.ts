@@ -8,6 +8,7 @@ import { mergeHomeConfig, type HomeConfig } from "@/lib/content/home";
 import { fillTokens, resolvePageContent, tokenValues } from "@/lib/content/page-defaults";
 import { cmsPageTexts, cmsSeo, cmsSiteInfo } from "@/lib/cms/site";
 import { currentStoreId, storeDirectory, storeOrigin } from "@/lib/tenant";
+import { getMoney } from "@/lib/store-locale";
 
 /**
  * Admin-editable site content & SEO (key/value settings). Every getter is cached with the
@@ -112,9 +113,10 @@ export async function getPageContent(key: string) {
  * charges…) filled from the live Store info / Delivery settings. Also returns those for convenience.
  */
 export async function getResolvedPageContent(key: string) {
-  const [saved, info, settings, storeId] = await Promise.all([getPageContent(key), getSiteInfo(), getStoreSettings(), currentStoreId()]);
+  const [saved, info, settings, storeId, money] = await Promise.all([getPageContent(key), getSiteInfo(), getStoreSettings(), currentStoreId(), getMoney()]);
   const c = resolvePageContent(key, saved, { original: !(await otherStore(storeId)) });
-  const values = tokenValues(info, settings);
+  // amounts in the store's own currency
+  const values = tokenValues(info, settings, money);
   const fill = (s: string) => fillTokens(s, values);
   return {
     eyebrow: fill(c.eyebrow),

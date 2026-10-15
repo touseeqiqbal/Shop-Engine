@@ -5,6 +5,8 @@ import { useAuth, useListQuery } from "@payloadcms/ui";
 import type { DefaultCellComponentProps } from "payload";
 import { getThumb } from "./thumbs";
 import { toast } from "../ui/toast";
+import { useAdminMoney } from "../ui/store-context";
+import { currencyDigits } from "../../../lib/money";
 
 /** Product list cells: photo + name + SKU, coloured status, and quick edit for price and stock. */
 
@@ -76,21 +78,23 @@ const STOCK: Record<string, { label: string; tone: string }> = {
   out: { label: "Out", tone: "r" },
 };
 
-const rs = (n: number) => `Rs ${Math.round(n).toLocaleString("en-PK")}`;
-
-/** Click the number, type, press Enter. Esc cancels. Saves straight away. */
+/** Click the number, type, press Enter. Esc cancels. Saves straight away. `round`: prices to the currency's cents. */
 function QuickNumber({
   id,
   field,
   value,
   label,
   format,
+  round = Math.round,
+  decimal = false,
 }: {
   id: unknown;
   field: string;
   value: number | null;
   label: string;
   format: (n: number) => string;
+  round?: (n: number) => number;
+  decimal?: boolean;
 }) {
   const { refineListData, query } = useListQuery();
   const [editing, setEditing] = useState(false);
@@ -118,7 +122,7 @@ function QuickNumber({
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         // stock: also send what this row showed, so a sale made meanwhile is never overwritten (server refuses instead)
-        body: JSON.stringify(field === "stock" ? { stock: Math.round(next), stockSeen: shown } : { [field]: Math.round(next) }),
+        body: JSON.stringify(field === "stock" ? { stock: Math.round(next), stockSeen: shown } : { [field]: round(next) }),
       });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as {
@@ -126,7 +130,7 @@ function QuickNumber({
         };
         throw new Error(j.errors?.[0]?.message || "Could not save");
       }
-      setShown(Math.round(next));
+      setShown(round(next));
       setEditing(false);
       toast(`${label} saved`);
       // stock changes the In stock / Low / Out badge, so reload the rows
@@ -143,7 +147,7 @@ function QuickNumber({
       <input
         ref={input}
         className="urko-quick__input"
-        inputMode="numeric"
+        inputMode={decimal ? "decimal" : "numeric"}
         aria-label={label}
         value={draft}
         disabled={busy}
@@ -181,6 +185,8 @@ export function ProductPriceCell({
   cellData,
 }: DefaultCellComponentProps) {
   const { user } = useAuth();
+  // the product's own store's currency
+  const money = useAdminMoney(rowData.store);
   const compare = Number(rowData.compareAtPrice) || 0;
   const price = typeof cellData === "number" ? cellData : null;
   if (rowData.priceOnRequest)
@@ -190,8 +196,8 @@ export function ProductPriceCell({
   if (role !== "owner" && role !== "manager")
     return (
       <span className="urko-pprice" title="Only owners and managers can change prices">
-        {price == null ? "—" : rs(price)}
-        {compare > (price ?? 0) && <s>{rs(compare)}</s>}
+        {price == null ? "—" : money(price)}
+        {compare > (price ?? 0) && <s>{money(compare)}</s>}
       </span>
     );
   return (
@@ -201,9 +207,11 @@ export function ProductPriceCell({
         field="price"
         value={price}
         label="Price"
-        format={rs}
+        format={money}
+        round={money.round}
+        decimal={currencyDigits(money.currency) > 0}
       />
-      {compare > (price ?? 0) && <s>{rs(compare)}</s>}
+      {compare > (price ?? 0) && <s>{money(compare)}</s>}
     </span>
   );
 }

@@ -1,11 +1,13 @@
 import { randomInt } from "node:crypto";
-import type { CollectionBeforeChangeHook, CollectionConfig, Field, GlobalConfig } from "payload";
+import type { CollectionBeforeChangeHook, CollectionConfig, Field, GlobalConfig, PayloadRequest } from "payload";
 import { nobody, platformAdmins } from "../access";
 import { assignStore, sameStore, storeAccess, storeField, storeIdOf } from "../tenancy";
 import { dbName } from "../fields";
 import { revalidate } from "../revalidate";
 import { userError } from "../errors";
+import { storeLocaleOf, storeMoneyOf } from "../store-locale";
 import { log } from "../../lib/log";
+import { compactDay } from "../../lib/time";
 
 /**
  * Returns & warranty.
@@ -16,9 +18,9 @@ import { log } from "../../lib/log";
  * - Returns & warranty rules (editable) – used by the customer form and shown on /warranty-returns.
  */
 
-const PKT = 5 * 3600e3;
-const ymd = () => new Date(Date.now() + PKT).toISOString().slice(2, 10).replace(/-/g, "");
-const ref = (prefix: string) => `${prefix}-${ymd()}-${randomInt(100000, 1000000)}`;
+/** <PREFIX>-YYMMDD-NNNNNN – the date is the store's own day (its time zone). */
+const ref = async (prefix: string, req: PayloadRequest, store: unknown) =>
+  `${prefix}-${compactDay((await storeLocaleOf(req.payload, storeIdOf(store), req)).timezone)}-${randomInt(100000, 1000000)}`;
 const relId = (v: unknown) => (v && typeof v === "object" ? (v as { id: number }).id : (v as number | null | undefined));
 
 const photoField: Field = {
@@ -146,7 +148,7 @@ export const RETURN_STATUSES = [
 const RETURN_DONE = new Set(["refunded", "replaced", "repaired"]);
 
 type ReturnItem = { product?: unknown; qty?: number; serial?: string; unitPrice?: number };
-type OrderDoc = { id: number; status?: string; stockHeld?: boolean; total?: number; paymentStatus?: string; items?: { product?: unknown; qty?: number }[] };
+type OrderDoc = { id: number; status?: string; stockHeld?: boolean; total?: number; paymentStatus?: string; currency?: string | null; items?: { product?: unknown; qty?: number }[] };
 
 /**
  * Finishing a return: credit note number, stock back (if ticked), order marked Returned.
@@ -169,19 +171,25 @@ const returnResolution: CollectionBeforeChangeHook = async ({ data, originalDoc,
   // refund can't be more than what was paid for the returned items – nor, with the order's earlier refunds, its total
   const refund = Number(data.refundAmount ?? originalDoc?.refundAmount) || 0;
   const paidForItems = items.reduce((s, i) => s + (Number(i.unitPrice) || 0) * (Number(i.qty) || 1), 0);
-  if (data.status === "refunded" && paidForItems > 0 && refund > paidForItems)
-    throw userError(`The refund (Rs ${refund.toLocaleString("en-PK")}) is more than was paid for these items (Rs ${paidForItems.toLocaleString("en-PK")}).`, 400);
+  // amounts in the order's currency (or the store's)
+  const money = () => storeMoneyOf(req.payload, storeId, req, order?.currency);
+  if (data.status === "refunded" && paidForItems > 0 && refund > paidForItems) {
+    const m = await money();
+    throw userError(`The refund (${m(refund)}) is more than was paid for these items (${m(paidForItems)}).`, 400);
+  }
   let refundedBefore = 0;
   if (data.status === "refunded" && order) {
     const earlierRefunds = await req.payload.find({ collection: "return-requests", where: { and: [{ order: { equals: order.id } }, { status: { equals: "refunded" } }, ...notThis] }, limit: 100, depth: 0, overrideAccess: true, req });
     refundedBefore = (earlierRefunds.docs as { refundAmount?: number }[]).reduce((s, r) => s + (Number(r.refundAmount) || 0), 0);
     const total = Number(order.total) || 0;
-    if (refundedBefore + refund > total)
-      throw userError(`Refunds for this order would come to Rs ${(refundedBefore + refund).toLocaleString("en-PK")} – more than its total (Rs ${total.toLocaleString("en-PK")}). Already refunded: Rs ${refundedBefore.toLocaleString("en-PK")}.`, 400);
+    if (refundedBefore + refund > total) {
+      const m = await money();
+      throw userError(`Refunds for this order would come to ${m(refundedBefore + refund)} – more than its total (${m(total)}). Already refunded: ${m(refundedBefore)}.`, 400);
+    }
   }
 
   if (data.status === "refunded" && !(originalDoc?.creditNoteNumber || data.creditNoteNumber)) {
-    data.creditNoteNumber = ref("CN");
+    data.creditNoteNumber = await ref("CN", req, storeId);
     data.creditNoteDate = new Date().toISOString();
   }
   const orderGaveStockBack = Boolean(order && (order.stockHeld === false || ["cancelled", "refused", "returned"].includes(String(order.status))));
@@ -298,7 +306,7 @@ const itemsField: Field = {
     ] },
     { type: "row", fields: [
       { name: "qty", type: "number", defaultValue: 1, min: 1, admin: { width: "30%" } },
-      { name: "unitPrice", type: "number", min: 0, label: "Price paid (Rs)", admin: { width: "35%" } },
+      { name: "unitPrice", type: "number", min: 0, label: "Price paid", admin: { width: "35%" } },
       { name: "serial", type: "text", label: "Serial number", admin: { width: "35%" } },
     ] },
   ],
@@ -343,7 +351,7 @@ export const ReturnRequests: CollectionConfig = {
   access: { ...storeAccess("store_staff"), delete: nobody },
   hooks: {
     beforeValidate: [assignStore()],
-    beforeChange: [({ data, operation }) => (operation === "create" && !data.requestNumber ? { ...data, requestNumber: ref("RET") } : data), statusHistory, returnResolution],
+    beforeChange: [async ({ data, operation, req }) => (operation === "create" && !data.requestNumber ? { ...data, requestNumber: await ref("RET", req, data.store) } : data), statusHistory, returnResolution],
   },
   fields: [
     storeField(),
@@ -376,7 +384,7 @@ export const ReturnRequests: CollectionConfig = {
             { label: "EasyPaisa", value: "easypaisa" },
             { label: "Store credit", value: "credit" },
           ], admin: { width: "50%" } },
-          { name: "refundAmount", type: "number", min: 0, label: "Refund amount (Rs)", admin: { width: "50%" } },
+          { name: "refundAmount", type: "number", min: 0, label: "Refund amount", admin: { width: "50%" } },
         ] },
         { type: "row", fields: [
           { name: "restock", type: "checkbox", label: "Put the items back in stock", admin: { width: "50%", style: { alignSelf: "center" } } },
@@ -407,7 +415,7 @@ export const WARRANTY_STATUSES = [
 
 /** Fill in sale date, warranty months and end date from the serial / order, and say if it's still covered. */
 const checkWarranty: CollectionBeforeChangeHook = async ({ data, originalDoc, operation, req }) => {
-  if (operation === "create" && !data.claimNumber) data.claimNumber = ref("WAR");
+  if (operation === "create" && !data.claimNumber) data.claimNumber = await ref("WAR", req, data.store);
   const serial = String(data.serial ?? originalDoc?.serial ?? "").trim();
   const recalc = operation === "create" || (serial && serial !== originalDoc?.serial) || data.recheck;
   if (!recalc) return data;

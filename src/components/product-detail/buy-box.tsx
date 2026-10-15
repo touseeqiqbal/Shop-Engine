@@ -6,10 +6,11 @@ import {
   Banknote, Check, GitCompareArrows, Heart, MapPin, Minus, Plus, Share2, ShieldCheck, ShoppingBag, Truck, Zap,
 } from "lucide-react";
 import type { CatalogProduct, UpgradeOption } from "@/lib/types";
-import { cn, effectivePrice, formatPKR, stockLabel } from "@/lib/utils";
+import { cn, effectivePrice, stockLabel } from "@/lib/utils";
 import { waLink } from "@/lib/site";
 import { primaryPhone } from "@/lib/site-info";
 import { useSiteInfo } from "@/components/providers/site-info";
+import { useMoney } from "@/components/providers/locale";
 import { CITY_KEY, PAKISTAN_CITIES, deliveryEstimate, freeDeliveryAbove, type DeliveryInfo } from "@/lib/cities";
 import { Price } from "@/components/ui/price";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
@@ -25,6 +26,7 @@ import { VariantPicker, initialPick, matchVariant } from "./variant-picker";
 export function BuyBox({ product: main, delivery }: { product: CatalogProduct; delivery: DeliveryInfo }) {
   const site = useSiteInfo(); // live business profile (/cms → Settings → Store details)
   const phone = primaryPhone(site);
+  const money = useMoney();
   const router = useRouter();
   const idPrefix = useId();
   const add = useCart((s) => s.add);
@@ -52,23 +54,26 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
 
   const [selected, setSelected] = useState<Record<string, string | null>>({});
   const [qty, setQty] = useState(1);
-  const [city, setCity] = useState("Karachi");
+  // Pakistani stores pick from the city list (Karachi first); elsewhere the shopper types their city
+  const pk = (delivery.country ?? "PK") === "PK";
+  const [city, setCity] = useState(pk ? "Karachi" : "");
   const ctaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem(CITY_KEY);
-      if (saved && PAKISTAN_CITIES.includes(saved)) setCity(saved);
+      if (saved && (!pk || PAKISTAN_CITIES.includes(saved))) setCity(saved);
     } catch {}
-  }, []);
+  }, [pk]);
 
   const chosen: UpgradeOption[] = useMemo(
     () => p.upgrades.filter((u) => Object.values(selected).includes(u.id)),
     [p.upgrades, selected]
   );
   const base = effectivePrice(p);
-  const unit = base + chosen.reduce((s, u) => s + u.price, 0);
-  const total = unit * qty;
+  // to the currency's smallest unit (cents add up to float noise: 19.99 × 3)
+  const unit = money.round(base + chosen.reduce((s, u) => s + u.price, 0));
+  const total = money.round(unit * qty);
   const outOfStock = unavailable || p.stock <= 0;
   const maxQty = Math.max(1, Math.min(p.stock, 10));
   const stock = stockLabel(p.stock);
@@ -84,13 +89,13 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
   const addToCart = (openDrawer = true) => {
     if (outOfStock) return;
     add(p, { qty, upgrades: chosen, openDrawer });
-    trackEvent("add_to_cart", { currency: "PKR", value: total, items: [analyticsItem] });
+    trackEvent("add_to_cart", { currency: money.currency, value: total, items: [analyticsItem] });
   };
 
   const buyNow = () => {
     if (outOfStock) return;
     addToCart(false);
-    trackEvent("begin_checkout", { currency: "PKR", value: total, items: [analyticsItem] });
+    trackEvent("begin_checkout", { currency: money.currency, value: total, items: [analyticsItem] });
     router.push("/checkout");
   };
 
@@ -103,7 +108,7 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
     `SKU: ${p.sku}`,
     chosen.length ? `Upgrades: ${chosen.map((u) => `${u.group} – ${u.label}`).join(", ")}` : null,
     `Quantity: ${qty}`,
-    `Price: ${formatPKR(total)}${qty > 1 ? ` (${formatPKR(unit)} each)` : ""}`,
+    `Price: ${money(total)}${qty > 1 ? ` (${money(unit)} each)` : ""}`,
     `Delivery city: ${city}`,
     ``,
     productUrl,
@@ -115,7 +120,7 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
     const url = productUrl;
     try {
       if (navigator.share) {
-        await navigator.share({ title: p.name, text: `${p.name} – ${formatPKR(base)} at ${site.name}`, url });
+        await navigator.share({ title: p.name, text: `${p.name} – ${money(base)} at ${site.name}`, url });
         return;
       }
       await navigator.clipboard.writeText(url);
@@ -253,7 +258,7 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
             type="button"
             onClick={() => {
               toggleWishlist(main.id);
-              if (!wished) trackEvent("add_to_wishlist", { currency: "PKR", value: unit, items: [analyticsItem] });
+              if (!wished) trackEvent("add_to_wishlist", { currency: money.currency, value: unit, items: [analyticsItem] });
               toast(wished ? "Removed from wishlist" : "Saved to wishlist", "info");
             }}
             aria-pressed={wished}
@@ -276,7 +281,7 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
             {comparing ? "Comparing" : "Compare"}
           </button>
           <a
-            href={`https://wa.me/?text=${encodeURIComponent(`${p.name} – ${formatPKR(base)}\n${productUrl}`)}`}
+            href={`https://wa.me/?text=${encodeURIComponent(`${p.name} – ${money(base)}\n${productUrl}`)}`}
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => trackEvent("share", { method: "whatsapp", item_id: p.id })}
@@ -301,38 +306,55 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
             <label htmlFor={`${idPrefix}-city`} className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted">
               <MapPin className="size-3.5" aria-hidden="true" /> Deliver to
             </label>
-            <select
-              id={`${idPrefix}-city`}
-              value={city}
-              onChange={(e) => {
-                setCity(e.target.value);
-                try {
-                  localStorage.setItem(CITY_KEY, e.target.value);
-                } catch {}
-              }}
-              className="input mt-1.5 h-11 py-0"
-            >
-              {PAKISTAN_CITIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+            {pk ? (
+              <select
+                id={`${idPrefix}-city`}
+                value={city}
+                onChange={(e) => {
+                  setCity(e.target.value);
+                  try {
+                    localStorage.setItem(CITY_KEY, e.target.value);
+                  } catch {}
+                }}
+                className="input mt-1.5 h-11 py-0"
+              >
+                {PAKISTAN_CITIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                id={`${idPrefix}-city`}
+                value={city}
+                placeholder="Your city"
+                autoComplete="address-level2"
+                maxLength={80}
+                onChange={(e) => {
+                  setCity(e.target.value);
+                  try {
+                    localStorage.setItem(CITY_KEY, e.target.value);
+                  } catch {}
+                }}
+                className="input mt-1.5 h-11"
+              />
+            )}
             <p className="mt-2.5 text-sm text-fg" aria-live="polite">
-              Delivery to <strong>{city.startsWith("Other") ? "your city" : city}</strong>:{" "}
+              Delivery to <strong>{!city.trim() || city.startsWith("Other") ? "your city" : city}</strong>:{" "}
               <span className="font-semibold text-emerald-400">{eta.label}</span>
             </p>
             <ul className="mt-2 space-y-1 text-xs text-muted">
               {delivery.cod.enabled && (
                 <li className="flex items-center gap-1.5">
                   <Banknote className="size-3.5 text-emerald-400" aria-hidden="true" />
-                  {codMax && total > codMax ? `Cash on Delivery up to ${formatPKR(codMax)} – pay online for this order` : "Cash on Delivery available"}
+                  {codMax && total > codMax ? `Cash on Delivery up to ${money(codMax)} – pay online for this order` : "Cash on Delivery available"}
                 </li>
               )}
               {freeAbove > 0 && (
                 <li className="flex items-center gap-1.5">
                   <Check className="size-3.5 text-emerald-400" aria-hidden="true" />
-                  {total >= freeAbove ? "Free delivery on this order" : `Free delivery on orders over ${formatPKR(freeAbove)}`}
+                  {total >= freeAbove ? "Free delivery on this order" : `Free delivery on orders over ${money(freeAbove)}`}
                 </li>
               )}
             </ul>

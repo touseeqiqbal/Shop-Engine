@@ -62,6 +62,14 @@ check(placed === 1, "the 'order received' message is queued now that it's paid")
 r = await send(event(`evt_${tag}_1`, "checkout.session.completed", session(n1, 250000)));
 check(r.status === 200 && r.json.duplicate === true, "replayed event ignored");
 
+// 2b. the provider-plugin address (/api/webhooks/payments/<provider>) is the same handler: same event = same record
+const generic = URL_.replace(/\/stripe$/, "/payments/stripe");
+const replayBody = JSON.stringify(event(`evt_${tag}_1`, "checkout.session.completed", session(n1, 250000)));
+const g = await fetch(generic, { method: "POST", headers: { "content-type": "application/json", "stripe-signature": sign(replayBody) }, body: replayBody });
+check(g.status === 200 && (await g.json().catch(() => ({}))).duplicate === true, "the provider-plugin webhook address shares the stored events (replay ignored there too)");
+const unknown = await fetch(URL_.replace(/\/stripe$/, "/payments/no-such-provider"), { method: "POST", body: "{}" });
+check(unknown.status === 404, `an unknown payment provider's address answers 404 (${unknown.status})`);
+
 // 3. wrong amount (or another account) never marks paid
 const n2 = `T${tag}B`;
 const o2 = await mkOrder(n2, 3000);

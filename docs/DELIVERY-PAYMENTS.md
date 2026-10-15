@@ -2,13 +2,17 @@
 
 Under **Delivery & payments** and **Settings → Fake order protection** in the `/cms` sidebar. Only **Owner** and **Manager** accounts can change these.
 
+All amounts are in **your store's currency** (Stores → Region: country, currency and time zone). Pakistani stores pick
+cities from a list; stores in other countries type cities, areas or postcodes. The examples below are for a store in
+Pakistan (Rs); a store elsewhere works the same way in its own currency.
+
 ---
 
 ## 1. How the delivery fee is worked out
 
 For each order the website:
 1. Looks at the customer's **city**.
-2. Finds the **zone** that lists that city. If none does, it uses the zone marked **Rest of Pakistan**. If there is no such zone, it uses **Charge when no zone matches**.
+2. Finds the **zone** that lists that city (or, outside Pakistan, the city, area or postcode). If none does, it uses the zone marked **Rest of the country**. If there is no such zone, it uses **Charge when no zone matches**.
 3. Checks **free delivery**: if the cart total (before coupon) is at or above the zone's **Free above** – or, if the zone's Free above is empty, the store-wide **Free delivery above** – delivery is free.
 4. Adds the **COD handling fee** if the customer pays cash on delivery.
 
@@ -17,25 +21,28 @@ The cart, checkout, shipping-policy page and the fee tester all use the same rul
 ## 2. Set up zones and fees
 
 1. **Delivery & payments → Delivery charges**.
-2. **Free delivery above (Rs)** – e.g. `15000`. `0` = no free delivery.
-3. **Charge when no zone matches (Rs)** – a safety net, e.g. `350`.
+2. **Free delivery above** – e.g. `15000`. `0` = no free delivery.
+3. **Charge when no zone matches** – a safety net, e.g. `350`.
 4. Under **Zones** click **Add Zone** for each group of cities. Example:
 
    | Zone name | Cities | Delivery charge | Free above | Delivery time |
    |---|---|---|---|---|
    | Karachi | Karachi | 200 | 10000 | 1–2 working days |
    | Major cities | Lahore, Islamabad, Rawalpindi, Faisalabad, Multan, Hyderabad, Peshawar | 300 | *(empty = store-wide)* | 2–3 working days |
-   | Rest of Pakistan | tick **Rest of Pakistan (all other cities)** | 400 | 25000 | 3–5 working days |
+   | Rest of Pakistan | tick **Rest of the country (all other addresses)** | 400 | 25000 | 3–5 working days |
 
    - **Free above** empty = use the store-wide amount. **0 = never free** in that zone.
    - **Delivery time** empty = automatic estimate.
-5. **Always add a "Rest of Pakistan" zone** – so every city gets a sensible fee.
+   - **Outside Pakistan:** type into **Cities, areas or postcodes** and press Enter for each – e.g. `London`, `Manchester`,
+     or a postcode start ending in `*` such as `SW1*` (every postcode starting SW1) or `100*`. A full postcode
+     (`EC1A 1BB`) matches only that one.
+5. **Always add a "Rest of the country" zone** – so every address gets a sensible fee.
 6. **Save**. The **Shipping policy** page updates itself.
 
 ## 3. Test the fees (fee tester)
 
 1. Scroll to the bottom of **Delivery & payments → Delivery charges**.
-2. Pick a **City** and type a **Cart total (Rs)**.
+2. Pick a **City** (outside Pakistan also a **Postcode**) and type a **Cart total**.
 3. It shows the **fee**, the **zone** it matched, and the **delivery time** – using what's on screen, even before you save.
 4. Try at least: Karachi below and above the free amount, a major city, a small town, and a city you didn't list.
 5. The tester does **not** add the COD handling fee – remember to add it in your head for COD orders.
@@ -46,16 +53,26 @@ The cart, checkout, shipping-policy page and the fee tester all use the same rul
 **Delivery & payments → Payment methods**. Each method has **Offer …** (on/off) and **Note at checkout**.
 
 **Cash on Delivery**
-- **COD handling fee (Rs)** – added to COD orders (0 = none).
-- **Max COD order (Rs)** – above this, COD isn't offered (empty = no limit).
-- **Ask advance above (Rs)** and **Advance amount (Rs)** – for big COD orders the customer pays a part first (e.g. Rs 5,000 above Rs 100,000) by JazzCash / EasyPaisa / bank and uploads a screenshot. `Advance amount` 0 = never ask.
+- **COD handling fee** – added to COD orders (0 = none).
+- **Max COD order** – above this, COD isn't offered (empty = no limit).
+- **Ask advance above** and **Advance amount** – for big COD orders the customer pays a part first (e.g. Rs 5,000 above Rs 100,000) by bank transfer or one of your wallets and uploads a screenshot. `Advance amount` 0 = never ask.
 
-**JazzCash / EasyPaisa** – **Account title** and **Mobile account number**.
-**Bank transfer** – bank name, account title, account number, **IBAN**.
+**JazzCash / EasyPaisa** (stores in Pakistan only) – **Account title** and **Mobile account number**.
+**Bank transfer** – bank name, account title, account number, **IBAN / SWIFT / routing**.
+
+**Other payment methods** – any way your customers pay you directly: UPI, M-Pesa, PIX, bKash, GCash, Zelle,
+"Card on delivery", "Pay at pickup" … The page suggests the popular ones in your country. For each:
+- **Name shown at checkout**, **Offer it**, and **Paid**: *Before shipping (with receipt)* – the customer pays, uploads
+  the receipt and its transaction id, and you approve it on the order (like bank transfer) – or *On delivery / pickup*
+  (like cash on delivery).
+- **Where to pay** – lines such as `UPI ID → shop@okbank` or `Paybill → 123456`, and optional **Instructions**.
+- A "before shipping" method without any details or instructions is not shown (customers would pay nowhere).
+
+**Card payments** – shown once the store's owner has connected a card payment account (Account → Stores → Online
+payments) with a provider that works in your country (Stripe today). Developers add providers for other countries –
+see `docs/PAYMENT-PLUGINS.md`.
 
 > ⚠️ Check every number twice. These are printed at checkout, in emails and on invoices. The defaults in the system are examples – replace them with your real accounts.
-
-Card payments are shown as "coming soon" – no card gateway is connected.
 
 ## 5. COD rules (fake order protection)
 

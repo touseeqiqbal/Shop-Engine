@@ -2,9 +2,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useDocumentInfo } from "@payloadcms/ui";
 import { toast } from "../ui/toast";
-import { useStoreName } from "../ui/store-context";
-import { NEXT_STEP, ORDER_STATUS, PAYMENT_METHOD, PAYMENT_STATUS, intlPhone, rs, timeAgo } from "./status";
-import { PROCEED_STATUSES, amountToCollect, creditedAdvance, paymentBlocksShipping } from "@/lib/order-money";
+import { useAdminDates, useAdminLocale, useAdminMoney, useStoreName } from "../ui/store-context";
+import { NEXT_STEP, ORDER_STATUS, PAYMENT_STATUS, intlPhone, timeAgo } from "./status";
+import { cityLine, paymentLabel } from "@/lib/order-display";
+import { PROCEED_STATUSES, amountToCollect, creditedAdvance, paidOnDelivery, paymentBlocksShipping } from "@/lib/order-money";
+import { formatMoney, type Money } from "@/lib/money";
 
 /**
  * Top of the order page: what to do next (one big button), money and amount to collect, the customer with
@@ -17,7 +19,7 @@ type Order = {
   orderNumber: string;
   status: string;
   placedAt?: string;
-  customer?: { name?: string; phone?: string; email?: string; city?: string; address?: string; landmark?: string };
+  customer?: { name?: string; phone?: string; email?: string; city?: string; address?: string; landmark?: string; region?: string; postalCode?: string };
   items?: { title?: string; qty?: number; unitPrice?: number; serials?: string }[];
   subtotal?: number;
   discount?: number;
@@ -27,6 +29,8 @@ type Order = {
   advancePaid?: number;
   couponCode?: string;
   paymentMethod?: string;
+  paymentMethodLabel?: string | null;
+  paymentDue?: string | null;
   paymentStatus?: string;
   paymentScreenshotKey?: string;
   paymentReference?: string;
@@ -36,6 +40,8 @@ type Order = {
   risk?: { score?: number; level?: string; reasons?: string };
   confirmation?: { token?: string; code?: string; expiresAt?: string; confirmedAt?: string; via?: string };
   store?: number | { id?: number } | null;
+  /** the currency the order was placed in */
+  currency?: string;
   shipments?: Shipment[];
 };
 
@@ -51,8 +57,10 @@ const inHours = (iso?: string) => {
 
 type CardPayment = { id: number; kind: string; status: string; amount: number; refundedAmount: number; currency: string; at: string; failureReason?: string | null };
 
-/** Card payments of an order (paid through the payment provider) and refunds back to the card. */
-function CardPayments({ orderId, onDone }: { orderId: number; onDone: () => void }) {
+/** Card payments of an order (paid through the payment provider) and refunds back to the card. `money` = the order's. */
+function CardPayments({ orderId, onDone, money }: { orderId: number; onDone: () => void; money: Money }) {
+  // each payment in the currency it was charged in
+  const paid = (p: CardPayment, n: number) => (p.currency && p.currency.toUpperCase() !== money.currency ? formatMoney(n, { currency: p.currency.toUpperCase(), locale: money.locale }) : money(n));
   const [rows, setRows] = useState<CardPayment[]>([]);
   const [refundable, setRefundable] = useState(0);
   const [amount, setAmount] = useState("");
@@ -70,8 +78,8 @@ function CardPayments({ orderId, onDone }: { orderId: number; onDone: () => void
   }, [load]);
   async function refund() {
     const value = Number(amount);
-    if (!(value > 0) || value > refundable) return toast(`Enter an amount up to ${rs(refundable)}.`, "error");
-    if (!window.confirm(`Refund ${rs(value)} to the customer's card? This can't be undone.`)) return;
+    if (!(value > 0) || value > refundable) return toast(`Enter an amount up to ${money(refundable)}.`, "error");
+    if (!window.confirm(`Refund ${money(value)} to the customer's card? This can't be undone.`)) return;
     setBusy(true);
     try {
       const r = await fetch("/cms-api/payments/refund", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderId, amount: value, reason }) });
@@ -92,8 +100,8 @@ function CardPayments({ orderId, onDone }: { orderId: number; onDone: () => void
       <ul>
         {rows.map((p) => (
           <li key={p.id}>
-            {p.kind === "refund" ? "Refund" : "Payment"} {rs(p.amount)} · {p.status.replace(/_/g, " ")}
-            {p.refundedAmount > 0 && p.kind === "charge" ? ` (refunded ${rs(p.refundedAmount)})` : ""}
+            {p.kind === "refund" ? "Refund" : "Payment"} {paid(p, p.amount)} · {p.status.replace(/_/g, " ")}
+            {p.refundedAmount > 0 && p.kind === "charge" ? ` (refunded ${paid(p, p.refundedAmount)})` : ""}
             {p.failureReason ? ` – ${p.failureReason}` : ""}
           </li>
         ))}
@@ -111,12 +119,14 @@ function CardPayments({ orderId, onDone }: { orderId: number; onDone: () => void
   );
 }
 
-const COURIERS = ["TCS", "Leopards", "M&P", "Trax", "PostEx", "Call Courier", "BlueEx", "Rider (own)"];
+/** Courier suggestions (any name can be typed): Pakistan's, else international ones with tracking links (lib/couriers.ts). */
+const couriersFor = (country: string) => (country === "PK" ? ["TCS", "Leopards", "M&P", "Trax", "PostEx", "Call Courier", "BlueEx", "Rider (own)"] : ["DHL", "FedEx", "UPS", "Aramex", "USPS", "Royal Mail", "Rider (own)"]);
 
 const SHIPPABLE = new Set(["confirmed", "dispatched", "out-for-delivery"]);
 
 /** Parcels of this order: send some (or all remaining) items, then mark each parcel delivered – or cancel it. */
 function Shipments({ order, onDone }: { order: Order; onDone: () => void }) {
+  const COURIERS = couriersFor(useAdminLocale(order.store).country);
   const items = order.items ?? [];
   const shipments = order.shipments ?? [];
   const sent = new Map<number, number>();
@@ -220,8 +230,12 @@ export function OrderPanel() {
   const [courier, setCourier] = useState("");
   const [tracking, setTracking] = useState("");
   const [note, setNote] = useState("");
-  // the order's own store, named in messages to the customer
+  // the order's own store, named in messages to the customer; money in the currency the order was placed in
   const storeName = useStoreName(order?.store);
+  const loc = useAdminLocale(order?.store);
+  const COURIERS = couriersFor(loc.country);
+  const money = useAdminMoney(order?.store, order?.currency);
+  const date = useAdminDates(order?.store);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -268,15 +282,15 @@ export function OrderPanel() {
   const toCollect = amountToCollect(o);
   const unpaidOnline = paymentBlocksShipping(o);
   const phone = o.customer?.phone ?? "";
-  const wa = phone ? `https://wa.me/${intlPhone(phone)}?text=${encodeURIComponent(`Hi ${o.customer?.name?.split(" ")[0] ?? ""}! ${storeName ? `This is ${storeName} about` : "A message about"} your order ${o.orderNumber}.`)}` : "";
+  const wa = phone ? `https://wa.me/${intlPhone(phone, loc.country)}?text=${encodeURIComponent(`Hi ${o.customer?.name?.split(" ")[0] ?? ""}! ${storeName ? `This is ${storeName} about` : "A message about"} your order ${o.orderNumber}.`)}` : "";
   const history = [...(o.history ?? [])].reverse();
 
   const waiting = o.status === "awaiting-confirmation";
   const confirmLink = o.confirmation?.token ? `${window.location.origin}/confirm-order/${o.confirmation.token}` : "";
   const waConfirm =
     phone && confirmLink
-      ? `https://wa.me/${intlPhone(phone)}?text=${encodeURIComponent(
-          `Assalam o Alaikum ${o.customer?.name?.split(" ")[0] ?? ""}! Please confirm your ${storeName ? `${storeName} ` : ""}order ${o.orderNumber} (${rs(total)}, cash on delivery): ${confirmLink}  – or reply YES and we will confirm it for you. Code: ${o.confirmation?.code ?? ""}`
+      ? `https://wa.me/${intlPhone(phone, loc.country)}?text=${encodeURIComponent(
+          `${loc.country === "PK" ? "Assalam o Alaikum" : "Hi"} ${o.customer?.name?.split(" ")[0] ?? ""}! Please confirm your ${storeName ? `${storeName} ` : ""}order ${o.orderNumber} (${money(total)}, cash on delivery): ${confirmLink}  – or reply YES and we will confirm it for you. Code: ${o.confirmation?.code ?? ""}`
         )}`
       : "";
 
@@ -311,7 +325,7 @@ export function OrderPanel() {
   function runNext() {
     if (!next) return;
     if (unpaidOnline && PROCEED_STATUSES.has(next.to))
-      return toast(`Check the ${PAYMENT_METHOD[o.paymentMethod ?? ""] ?? "online"} payment first – approve it below (or change the payment method to cash on delivery).`, "error");
+      return toast(`Check the ${paymentLabel(o.paymentMethod, o.paymentMethodLabel) || "online"} payment first – approve it below (or change the payment method to cash on delivery).`, "error");
     if (next.askCourier && !shipping) return setShipping(true);
     if (next.askCourier && (!courier || !tracking.trim())) return toast("Choose the courier and enter the tracking number", "error");
     const extra = waiting ? { confirmation: { ...o.confirmation, confirmedAt: new Date().toISOString(), via: "phone call (staff)" } } : {};
@@ -342,7 +356,7 @@ export function OrderPanel() {
             )}
           </div>
           <p className="urko-opanel__help">
-            {st.help} {o.placedAt && <span>Placed {timeAgo(o.placedAt)}.</span>}
+            {st.help} {o.placedAt && <span>Placed {timeAgo(o.placedAt, loc)}.</span>}
           </p>
         </div>
         <div className="urko-opanel__print">
@@ -420,7 +434,7 @@ export function OrderPanel() {
           <p className="urko-opanel__strong">{o.customer?.name}</p>
           <p>
             {o.customer?.address}
-            {o.customer?.landmark ? ` (near ${o.customer.landmark})` : ""}, {o.customer?.city}
+            {o.customer?.landmark ? ` (near ${o.customer.landmark})` : ""}, {cityLine(o.customer ?? {})}
           </p>
           <p>{phone}</p>
           {o.customer?.email && <p>{o.customer.email}</p>}
@@ -453,45 +467,45 @@ export function OrderPanel() {
           <dl className="urko-opanel__money">
             <div>
               <dt>Items</dt>
-              <dd>{rs(o.subtotal ?? 0)}</dd>
+              <dd>{money(o.subtotal ?? 0)}</dd>
             </div>
             {(o.discount ?? 0) > 0 && (
               <div>
                 <dt>Discount{o.couponCode ? ` (${o.couponCode})` : ""}</dt>
-                <dd>− {rs(o.discount ?? 0)}</dd>
+                <dd>− {money(o.discount ?? 0)}</dd>
               </div>
             )}
             <div>
               <dt>Delivery</dt>
-              <dd>{(o.deliveryCharge ?? 0) > 0 ? rs(o.deliveryCharge ?? 0) : "Free"}</dd>
+              <dd>{(o.deliveryCharge ?? 0) > 0 ? money(o.deliveryCharge ?? 0) : "Free"}</dd>
             </div>
             {(o.taxTotal ?? 0) > 0 && (
               <div>
                 <dt>Tax (included in total)</dt>
-                <dd>{rs(o.taxTotal ?? 0)}</dd>
+                <dd>{money(o.taxTotal ?? 0)}</dd>
               </div>
             )}
             <div className="is-total">
               <dt>Total</dt>
-              <dd>{rs(total)}</dd>
+              <dd>{money(total)}</dd>
             </div>
             {advance > 0 && (
               <div>
                 <dt>Advance paid</dt>
-                <dd>− {rs(advance)}</dd>
+                <dd>− {money(advance)}</dd>
               </div>
             )}
             {advance === 0 && claimedAdvance > 0 && o.paymentStatus === "awaiting-verification" && (
               <div>
                 <dt>Advance (not checked yet)</dt>
-                <dd>{rs(claimedAdvance)}</dd>
+                <dd>{money(claimedAdvance)}</dd>
               </div>
             )}
           </dl>
           <p className="urko-opanel__collect">
             {toCollect > 0 ? (
               <>
-                Rider collects <strong>{rs(toCollect)}</strong>
+                Rider collects <strong>{money(toCollect)}</strong>
               </>
             ) : (
               "Fully paid – collect nothing"
@@ -499,12 +513,12 @@ export function OrderPanel() {
           </p>
           {unpaidOnline && !closed && (
             <p className="urko-opanel__collect" role="alert">
-              ⚠️ {PAYMENT_METHOD[o.paymentMethod ?? ""] ?? "Online"} payment not verified – don&apos;t ship yet.
+              ⚠️ {paymentLabel(o.paymentMethod, o.paymentMethodLabel) || "Online"} payment not verified – don&apos;t ship yet.
             </p>
           )}
           {o.paymentStatus === "awaiting-verification" && (
             <div className="urko-opanel__verify">
-              <p>Check the payment in your {PAYMENT_METHOD[o.paymentMethod ?? ""] ?? "account"} before approving.</p>
+              <p>Check the payment in your {paymentLabel(o.paymentMethod, o.paymentMethodLabel) || "account"} before approving.</p>
               {o.paymentReference && (
                 <p>
                   Transaction ID: <strong>{o.paymentReference}</strong>
@@ -516,7 +530,7 @@ export function OrderPanel() {
                     See screenshot
                   </a>
                 )}
-                <button type="button" className="urko-btn urko-btn--primary" disabled={busy} onClick={() => patch({ paymentStatus: o.paymentMethod === "cod" ? "partial" : "paid" }, "Payment approved")}>
+                <button type="button" className="urko-btn urko-btn--primary" disabled={busy} onClick={() => patch({ paymentStatus: paidOnDelivery(o) ? "partial" : "paid" }, "Payment approved")}>
                   Approve
                 </button>
                 <button
@@ -534,7 +548,7 @@ export function OrderPanel() {
               </div>
             </div>
           )}
-          {o.paymentMethod === "card" && <CardPayments orderId={o.id} onDone={() => void load()} />}
+          {o.paymentMethod === "card" && <CardPayments orderId={o.id} onDone={() => void load()} money={money} />}
           {o.trackingNumber && (
             <p className="urko-opanel__track">
               {o.courier} · {o.trackingNumber}
@@ -556,7 +570,7 @@ export function OrderPanel() {
             {history.map((h, i) => (
               <li key={i}>
                 <strong>{h.note ? h.note : (ORDER_STATUS[h.status ?? ""]?.label ?? h.status)}</strong>
-                <small>{h.at ? new Date(h.at).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Karachi" }) : ""}</small>
+                <small>{h.at ? date(h.at, { dateStyle: "medium", timeStyle: "short" }) : ""}</small>
               </li>
             ))}
           </ol>

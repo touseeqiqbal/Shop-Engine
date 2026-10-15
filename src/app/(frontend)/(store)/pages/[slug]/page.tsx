@@ -6,6 +6,7 @@ import { LivePreview } from "@/components/blocks/live-preview";
 import { getPage } from "@/lib/cms/pages";
 import { pageMetadata } from "@/lib/seo";
 import { getSiteInfo } from "@/lib/repo/site-content";
+import { getStoreLocale } from "@/lib/store-locale";
 
 /** Pages built in /cms → Online store → Pages (any handle except “home”, which is the home page). */
 
@@ -18,6 +19,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const [page, site] = await Promise.all([getPage(slug), getSiteInfo()]);
   if (!page) return {};
   return pageMetadata({
+    locale: await getStoreLocale(),
     title: page.meta.title || `${page.title} | ${site.name}`,
     description: page.meta.description || page.h1Text || page.title,
     image: page.meta.image,

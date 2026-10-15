@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CheckCircle2, CircleAlert, PackageX } from "lucide-react";
 import { findOrderByConfirmToken } from "@/lib/cms/confirm";
-import { formatPKR } from "@/lib/utils";
+import { moneyFormatter } from "@/lib/money";
+import { getStoreLocale } from "@/lib/store-locale";
+import { formatDate } from "@/lib/time";
 import { amountToCollect } from "@/lib/order-money";
 import { cancelByLink, confirmByLink } from "../actions";
 
@@ -33,11 +35,14 @@ export default async function ConfirmOrderPage({ params, searchParams }: Props) 
   }
 
   const first = order.customer.name.split(" ")[0];
+  // amounts and the deadline in the store's currency and time zone
+  const loc = await getStoreLocale();
+  const money = moneyFormatter(loc);
   // an uploaded advance only counts once the shop has checked it (same rule as the rider's slip)
   const due = amountToCollect(order);
   const advancePending = order.paymentStatus === "awaiting-verification" && (order.advancePaid ?? 0) > 0;
   const deadline = order.confirmation?.expiresAt
-    ? new Date(order.confirmation.expiresAt).toLocaleString("en-PK", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Karachi" })
+    ? formatDate(order.confirmation.expiresAt, loc, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
     : "";
 
   if (order.status === "awaiting-confirmation" && !e) {
@@ -52,13 +57,13 @@ export default async function ConfirmOrderPage({ params, searchParams }: Props) 
               <span className="line-clamp-1">
                 {i.name} × {i.qty}
               </span>
-              <span className="tabular-nums">{formatPKR(i.unitPrice * i.qty)}</span>
+              <span className="tabular-nums">{money(i.unitPrice * i.qty)}</span>
             </li>
           ))}
         </ul>
         <p className="mt-4 rounded-xl border border-border bg-surface px-4 py-3 text-sm">
-          Pay <strong className="text-fg">{formatPKR(due)}</strong> in cash when the rider arrives.
-          {advancePending ? ` Once we've checked your advance of ${formatPKR(order.advancePaid ?? 0)}, it is taken off this amount.` : ""}
+          Pay <strong className="text-fg">{money(due)}</strong> in cash when the rider arrives.
+          {advancePending ? ` Once we've checked your advance of ${money(order.advancePaid ?? 0)}, it is taken off this amount.` : ""}
         </p>
         {deadline && <p className="mt-3 text-xs text-subtle">Not confirmed by {deadline} = cancelled automatically.</p>}
         <form className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:justify-center">

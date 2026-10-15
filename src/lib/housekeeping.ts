@@ -3,7 +3,7 @@ import { log } from "@/lib/log";
 import { cleanupOldEngagementData, sendCartReminders, sendStockAndPriceAlerts } from "@/lib/engagement-jobs";
 import { payloadClient } from "@/lib/cms/catalog-source";
 import { processOutbox } from "@/lib/outbox";
-import { reconcileCardPayments } from "@/lib/payments";
+import { allGateways } from "@/lib/payments/gateways";
 import { runBillingLifecycle } from "@/lib/billing";
 
 let lastCleanup = 0;
@@ -84,11 +84,15 @@ async function chores(reason: string): Promise<Record<string, unknown>> {
     report.cartError = String((e as Error).message ?? e);
     log.error("housekeeping.carts", e);
   }
-  try {
-    const r = await reconcileCardPayments(payload);
-    if (r.paid || r.cancelled) report.cardPayments = r;
-  } catch (e) {
-    log.error("housekeeping.card_reconcile", e);
+  // online payments whose webhook never came – each provider plugin asks its provider
+  for (const gateway of allGateways()) {
+    if (!gateway.reconcile || !gateway.configured()) continue;
+    try {
+      const r = await gateway.reconcile(payload);
+      if (r.paid || r.cancelled) report.cardPayments = { ...(report.cardPayments as object | undefined), [gateway.id]: r };
+    } catch (e) {
+      log.error("housekeeping.card_reconcile", e, { provider: gateway.id });
+    }
   }
   if (Date.now() - lastBilling > 3600e3) {
     lastBilling = Date.now();

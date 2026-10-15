@@ -7,7 +7,8 @@ import { AccountNav } from "@/components/account/account-ui";
 import { BuyAgain } from "@/components/account/buy-again";
 import { getSessionUser } from "@/lib/auth";
 import { courierInfo, courierTrackingUrl } from "@/lib/couriers";
-import { ORDER_FLOW, ORDER_STATUS_LABEL, PAYMENT_LABEL, PAYMENT_STATUS_LABEL } from "@/lib/order-display";
+import { cityLine, ORDER_FLOW, ORDER_STATUS_LABEL, PAYMENT_STATUS_LABEL, paymentLabel } from "@/lib/order-display";
+import { paidOnDelivery } from "@/lib/order-money";
 import { amountToCollect, creditedAdvance } from "@/lib/order-money";
 import { ORDER_NUMBER_RE } from "@/lib/order-number";
 import { getProductsByIds } from "@/lib/repo/catalog";
@@ -15,7 +16,10 @@ import { getSiteInfo } from "@/lib/repo/site-content";
 import { pageMetadata } from "@/lib/seo";
 import { waLink } from "@/lib/site";
 import { primaryPhone } from "@/lib/site-info";
-import { cn, formatDate, formatPKR } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { moneyFormatter } from "@/lib/money";
+import { getStoreLocale } from "@/lib/store-locale";
+import { formatDate, formatDateTime } from "@/lib/time";
 import { loadViewableOrder } from "../load";
 
 export const dynamic = "force-dynamic";
@@ -23,8 +27,8 @@ export const dynamic = "force-dynamic";
 type Props = { params: Promise<{ orderNumber: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const [{ orderNumber }, { name }] = await Promise.all([params, getSiteInfo()]);
-  return pageMetadata({ title: `Order ${decodeURIComponent(orderNumber).toUpperCase()} | ${name}`, description: "Your order details, delivery status and invoice.", path: "/account/orders", noindex: true });
+  const [{ orderNumber }, { name }, locale] = await Promise.all([params, getSiteInfo(), getStoreLocale()]);
+  return pageMetadata({ title: `Order ${decodeURIComponent(orderNumber).toUpperCase()} | ${name}`, description: "Your order details, delivery status and invoice.", path: "/account/orders", noindex: true, locale });
 }
 
 const STOPPED = new Set(["cancelled", "refused", "returned"]);
@@ -47,7 +51,9 @@ export default async function OrderDetailPage({ params }: Props) {
   const { order, signedIn } = found;
 
   // "Buy again": the same items at today's price – only what is still for sale
-  const [products, site] = await Promise.all([getProductsByIds(order.items.map((i) => i.productId)), getSiteInfo()]);
+  const [products, site, loc] = await Promise.all([getProductsByIds(order.items.map((i) => i.productId)), getSiteInfo(), getStoreLocale()]);
+  // amounts and dates in the store's currency and time zone
+  const money = moneyFormatter(loc);
   const current = new Map(products.map((p) => [p.id, p]));
   const lines = order.items.flatMap((i) => {
     const p = current.get(i.productId);
@@ -79,7 +85,7 @@ export default async function OrderDetailPage({ params }: Props) {
           <h1 className="font-display text-3xl font-bold sm:text-4xl">
             Order <span className="gradient-text">{order.orderNumber}</span>
           </h1>
-          <p className="mt-1 text-sm text-muted">Placed {formatDate(order.createdAt)}</p>
+          <p className="mt-1 text-sm text-muted">Placed {formatDate(order.createdAt, loc)}</p>
         </div>
         <span className={cn("chip text-sm", stopped ? "border-rose-500/40 bg-rose-500/10 text-rose-300" : "border-violet-500/40 bg-violet-500/10 text-violet-200")}>{ORDER_STATUS_LABEL[order.status]}</span>
       </div>
@@ -121,21 +127,21 @@ export default async function OrderDetailPage({ params }: Props) {
                     )}
                     {i.upgrades?.length ? <p className="text-xs text-muted">{i.upgrades.map((u) => u.label).join(" · ")}</p> : null}
                     <p className="text-xs text-muted">
-                      {i.qty} × {formatPKR(i.unitPrice)}
+                      {i.qty} × {money(i.unitPrice)}
                     </p>
                   </div>
-                  <span className="font-semibold tabular-nums">{formatPKR(i.qty * i.unitPrice)}</span>
+                  <span className="font-semibold tabular-nums">{money(i.qty * i.unitPrice)}</span>
                 </li>
               ))}
             </ul>
             <dl className="mt-3 space-y-1.5 border-t border-border pt-3 text-sm">
-              <Row label="Subtotal" value={formatPKR(order.subtotal)} />
-              {order.discount > 0 && <Row label={`Discount${order.couponCode ? ` (${order.couponCode})` : ""}`} value={`− ${formatPKR(order.discount)}`} />}
-              <Row label="Delivery" value={order.deliveryCharge ? formatPKR(order.deliveryCharge) : "Free"} />
-              <Row label="Total" value={formatPKR(order.total)} strong />
-              {advance > 0 && <Row label="Advance paid" value={`− ${formatPKR(advance)}`} />}
+              <Row label="Subtotal" value={money(order.subtotal)} />
+              {order.discount > 0 && <Row label={`Discount${order.couponCode ? ` (${order.couponCode})` : ""}`} value={`− ${money(order.discount)}`} />}
+              <Row label="Delivery" value={order.deliveryCharge ? money(order.deliveryCharge) : "Free"} />
+              <Row label="Total" value={money(order.total)} strong />
+              {advance > 0 && <Row label="Advance paid" value={`− ${money(advance)}`} />}
               {order.paymentStatus !== "paid" && order.status !== "cancelled" && (
-                <Row label={order.paymentMethod === "cod" ? "To pay on delivery" : "Amount due"} value={formatPKR(due)} strong />
+                <Row label={paidOnDelivery(order) ? "To pay on delivery" : "Amount due"} value={money(due)} strong />
               )}
             </dl>
           </section>
@@ -149,7 +155,7 @@ export default async function OrderDetailPage({ params }: Props) {
                 {timeline.map((e, i) => (
                   <li key={`${e.at}-${i}`} className="flex justify-between gap-3">
                     <span>{ORDER_STATUS_LABEL[e.status] ?? e.status}</span>
-                    <span className="text-muted tabular-nums">{new Date(e.at).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Karachi" })}</span>
+                    <span className="text-muted tabular-nums">{formatDateTime(e.at, loc)}</span>
                   </li>
                 ))}
               </ol>
@@ -173,7 +179,7 @@ export default async function OrderDetailPage({ params }: Props) {
             <p className="text-muted">{order.customer.phone}</p>
             <p className="text-muted">
               {order.customer.address}
-              {order.customer.landmark ? ` (near ${order.customer.landmark})` : ""}, {order.customer.city}
+              {order.customer.landmark ? ` (near ${order.customer.landmark})` : ""}, {cityLine(order.customer)}
             </p>
             {order.trackingNumber ? (
               <p className="flex items-center gap-2 pt-1">
@@ -200,7 +206,7 @@ export default async function OrderDetailPage({ params }: Props) {
             <h2 id="payment-h" className="flex items-center gap-2 font-display font-bold">
               <PackageCheck className="size-4 text-violet-400" aria-hidden="true" /> Payment
             </h2>
-            <p>{PAYMENT_LABEL[order.paymentMethod]}</p>
+            <p>{paymentLabel(order.paymentMethod, order.paymentMethodLabel)}</p>
             <p className="text-muted">{PAYMENT_STATUS_LABEL[order.paymentStatus]}</p>
           </section>
 

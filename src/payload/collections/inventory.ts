@@ -122,7 +122,7 @@ export const Purchases: CollectionConfig = {
         { type: "row", fields: [
           { name: "product", type: "relationship", relationTo: "products", required: true, filterOptions: sameStore, admin: { width: "50%" } },
           { name: "qty", type: "number", required: true, min: 1, defaultValue: 1, label: "Quantity", admin: { width: "20%" } },
-          { name: "unitCost", type: "number", min: 0, label: "Cost each (Rs)", access: { read: storeRoleField("store_owner"), update: storeRoleField("store_owner"), create: storeRoleField("store_owner") }, admin: { width: "30%" } },
+          { name: "unitCost", type: "number", min: 0, label: "Cost each", access: { read: storeRoleField("store_owner"), update: storeRoleField("store_owner"), create: storeRoleField("store_owner") }, admin: { width: "30%" } },
         ] },
         { name: "serials", type: "textarea", label: "Serial numbers (laptops tracked by serial – one per line)" },
       ],
@@ -132,7 +132,7 @@ export const Purchases: CollectionConfig = {
         { label: "Draft (not in stock yet)", value: "draft" },
         { label: "Received (adds to stock)", value: "received" },
       ], admin: { width: "34%" } },
-      { name: "total", type: "number", label: "Total (Rs)", access: { read: storeRoleField("store_owner") }, admin: { width: "33%", readOnly: true } },
+      { name: "total", type: "number", label: "Total", access: { read: storeRoleField("store_owner") }, admin: { width: "33%", readOnly: true } },
       { name: "updateCostPrice", type: "checkbox", label: "Update products' cost price", access: { read: storeRoleField("store_owner"), update: storeRoleField("store_owner"), create: storeRoleField("store_owner") }, admin: { width: "33%", style: { alignSelf: "center" } } },
     ] },
     { name: "notes", type: "textarea" },

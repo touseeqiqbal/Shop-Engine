@@ -5,17 +5,19 @@ import { isCmsConfigured } from "@/lib/db/config";
 import { notifyFromStorefront } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
 import { BOT_MESSAGE, verifyTurnstile } from "@/lib/turnstile";
-import { normalizePkPhone } from "@/lib/utils";
+import { normalizePhone, phonePlaceholder } from "@/lib/phone";
+import { getStoreLocale } from "@/lib/store-locale";
 import { HONEYPOT } from "@/lib/honeypot";
 
 /** Product page: ask a question, and "tell me when it's back / cheaper". */
 
 export type SimpleState = { ok?: boolean; message?: string; ts?: number };
 
-const contactOf = (raw: string) => {
+/** An email, or a phone number of the store's country (`country` = its ISO code). */
+const contactOf = (raw: string, country: string) => {
   const v = raw.trim();
   if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return v.toLowerCase();
-  return normalizePkPhone(v);
+  return normalizePhone(v, country);
 };
 
 export async function askQuestion(productId: string, _prev: SimpleState, fd: FormData): Promise<SimpleState> {
@@ -39,8 +41,9 @@ export async function subscribeAlert(productId: string, kind: "stock" | "price",
   const ts = Date.now();
   if (String(fd.get(HONEYPOT) ?? "")) return { ok: true, message: "Done!", ts };
   if (!isCmsConfigured) return { ok: false, message: "Alerts aren't available right now.", ts };
-  const contact = contactOf(String(fd.get("contact") ?? ""));
-  if (!contact) return { ok: false, message: "Enter your email or a mobile number like 0300-1234567.", ts };
+  const { country } = await getStoreLocale();
+  const contact = contactOf(String(fd.get("contact") ?? ""), country);
+  if (!contact) return { ok: false, message: country === "PK" ? "Enter your email or a mobile number like 0300-1234567." : `Enter your email or a phone number like ${phonePlaceholder(country)}.`, ts };
   if (!(await rateLimit("alert", 10, 3600_000))) return { ok: false, message: "Too many requests – please try again later.", ts };
   const ok = await createAlert(productId, kind, contact);
   if (!ok) return { ok: false, message: "This product isn't available any more.", ts };

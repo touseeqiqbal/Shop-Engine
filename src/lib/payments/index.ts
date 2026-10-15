@@ -3,7 +3,8 @@ import { fromMinor, stripe, stripeConfigured, toMinor } from "./stripe";
 import { log } from "@/lib/log";
 
 /**
- * Online payments (customer → merchant), provider-neutral on the outside, Stripe inside for now.
+ * Online card payments through Stripe (customer → merchant) – the Stripe provider plugin (stripe-gateway.ts) calls
+ * these; the rest of the shop goes through lib/payments/gateways.ts, which works the same for every provider.
  *
  * The rules that keep money right:
  *  - an order is marked Paid ONLY from the provider (a verified webhook, or asking the provider directly when
@@ -22,19 +23,20 @@ export const CHECKOUT_MINUTES = 30;
 
 /** Can this store take cards right now? */
 export function storeCanTakeCards(store: Doc | null | undefined) {
-  return stripeConfigured() && Boolean(store?.paymentsAccountId) && store?.paymentsChargesEnabled === true;
+  return stripeConfigured() && (!store?.paymentsProvider || store.paymentsProvider === "stripe") && Boolean(store?.paymentsAccountId) && store?.paymentsChargesEnabled === true;
 }
 
 /**
  * Starts a card payment for a just-placed order: a hosted Stripe Checkout page on the store's connected account.
  * Returns the page to send the shopper to.
  */
-export async function startCardPayment(payload: Payload, input: { orderId: number; orderNumber: string; total: number; storeId: number; email?: string | null; origin: string }): Promise<{ url: string }> {
+export async function startCardPayment(payload: Payload, input: { orderId: number; orderNumber: string; total: number; currency?: string; storeId: number; email?: string | null; origin: string }): Promise<{ url: string }> {
   const store = (await payload.findByID({ collection: "stores", id: input.storeId, depth: 0, overrideAccess: true })) as unknown as Doc;
   if (!storeCanTakeCards(store)) throw new Error("This store can't take card payments right now.");
   const { hasFeature, storeLimits } = await import("@/lib/billing");
   if (!hasFeature(await storeLimits(payload, input.storeId), "online_payments")) throw new Error("This store's plan doesn't include card payments.");
-  const currency = String(store.currency || "PKR").toLowerCase();
+  // the order's currency (the store's when it was placed)
+  const currency = String(input.currency || store.currency || "PKR").toLowerCase();
   const account = String(store.paymentsAccountId);
   const feePercent = Number(process.env.PLATFORM_FEE_PERCENT || 0);
   const metadata = { orderId: String(input.orderId), orderNumber: input.orderNumber, storeId: String(input.storeId) };
@@ -209,7 +211,7 @@ export async function paymentsOnboardingLink(payload: Payload, input: { storeId:
     const created = await stripe<{ id: string }>(
       "POST",
       "/accounts",
-      { type: "express", email: input.email || undefined, metadata: { storeId: String(input.storeId) }, capabilities: { card_payments: { requested: true }, transfers: { requested: true } } },
+      { type: "express", country: input.country || undefined, email: input.email || undefined, metadata: { storeId: String(input.storeId) }, capabilities: { card_payments: { requested: true }, transfers: { requested: true } } },
       { idempotencyKey: `account:${input.storeId}` },
     );
     account = created.id;

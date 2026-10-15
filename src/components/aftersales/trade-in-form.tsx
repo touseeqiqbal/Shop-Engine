@@ -2,15 +2,20 @@
 import { useActionState, useRef, useState } from "react";
 import { CheckCircle2, ImagePlus, X } from "lucide-react";
 import { submitTradeIn, type TradeInState } from "@/app/(frontend)/(store)/sell-your-laptop/actions";
+import { useMoney, useStoreLocale } from "@/components/providers/locale";
 import { Turnstile } from "@/components/ui/turnstile";
 import { compressImage } from "@/lib/compress-image";
 import { honeypotProps } from "@/lib/honeypot";
+import { phonePlaceholder } from "@/lib/phone";
 
 /** "Sell / trade in your laptop": brand, model, specs, condition, photos, expected price, contact. */
 export function TradeInForm() {
   const [state, action, pending] = useActionState<TradeInState, FormData>(submitTradeIn, {});
   const [files, setFiles] = useState<File[]>([]);
   const input = useRef<HTMLInputElement>(null);
+  const money = useMoney();
+  const { country } = useStoreLocale();
+  const pk = country === "PK";
   if (state.ok)
     return (
       <div className="card p-8 text-center" role="status">
@@ -113,8 +118,8 @@ export function TradeInForm() {
       <fieldset className="grid gap-3 sm:grid-cols-2">
         <legend className="mb-2 font-display text-lg font-bold">Price & contact</legend>
         <label className="block text-sm font-medium">
-          Price you expect (Rs) <span className="text-subtle">(optional)</span>
-          <input name="expectedPrice" inputMode="numeric" className="input mt-1" placeholder="e.g. 85000" />
+          Price you expect ({money.symbol}) <span className="text-subtle">(optional)</span>
+          <input name="expectedPrice" inputMode="numeric" className="input mt-1" placeholder={pk ? "e.g. 85000" : undefined} />
         </label>
         <label className="flex items-center gap-2 self-end text-sm font-medium">
           <input type="checkbox" name="wantsTradeIn" className="size-5" /> I want to trade it in for another laptop
@@ -125,7 +130,7 @@ export function TradeInForm() {
         </label>
         <label className="block text-sm font-medium">
           Mobile (WhatsApp)
-          <input name="phone" inputMode="tel" className="input mt-1" required placeholder="0300-1234567" />
+          <input name="phone" inputMode="tel" className="input mt-1" required placeholder={pk ? "0300-1234567" : phonePlaceholder(country)} />
         </label>
         <label className="block text-sm font-medium sm:col-span-2">
           City <span className="text-subtle">(optional)</span>

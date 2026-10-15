@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { CheckCircle2, Loader2, PlusCircle } from "lucide-react";
 import {
@@ -19,10 +19,69 @@ import {
 import { Field, fieldAria } from "@/components/checkout/field";
 import { Turnstile } from "@/components/ui/turnstile";
 import type { MyStore, SubscriptionPlanOption } from "@/lib/store-tenant";
+import { allCurrencies, allTimeZones, countryDefaults, countryOptions } from "@/lib/locale";
+import { formatMoney } from "@/lib/money";
+import { formatDate } from "@/lib/time";
 
 export type StorePlanOption = SubscriptionPlanOption;
 
-const money = (amount: number, currency = "PKR") => (amount === 0 ? "Free" : `${currency} ${amount.toLocaleString("en-PK")}`);
+const money = (amount: number, currency = "PKR") => (amount === 0 ? "Free" : formatMoney(amount, { currency, locale: "en" }));
+// same on the server and in the browser (no time-zone guess that could differ between the two)
+const day = (iso: string) => formatDate(iso, { timezone: "UTC", locale: "en" });
+
+/** Country first: it fills in the currency and time zone (both can still be changed). */
+function RegionInputs() {
+  const countries = useMemo(() => countryOptions(), []);
+  const currencies = useMemo(() => allCurrencies(), []);
+  const zones = useMemo(() => allTimeZones(), []);
+  const [country, setCountry] = useState("PK");
+  const [currency, setCurrency] = useState("PKR");
+  const [timezone, setTimezone] = useState("Asia/Karachi");
+  const pick = (code: string) => {
+    const d = countryDefaults(code);
+    setCountry(code);
+    setCurrency(d.currency);
+    setTimezone(d.timezone);
+  };
+  return (
+    <>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field id="store-country" label="Country" hint="Sets your currency, time zone and the checkout address form">
+          <select {...fieldAria("store-country", undefined, "hint")} name="country" value={country} onChange={(e) => pick(e.target.value)}>
+            {countries.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field id="store-currency" label="Currency">
+          <select {...fieldAria("store-currency")} name="currency" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+            {currencies.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field id="store-timezone" label="Time zone">
+          <select {...fieldAria("store-timezone")} name="timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
+            {zones.map((z) => (
+              <option key={z} value={z}>
+                {z.replace(/_/g, " ")}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field id="store-language" label="Language">
+          <input {...fieldAria("store-language")} name="defaultLanguage" placeholder="en" />
+        </Field>
+      </div>
+    </>
+  );
+}
 
 function SubmitButton({ label, pendingLabel, className = "btn btn-primary btn-lg w-full", icon = true }: { label: string; pendingLabel?: string; className?: string; icon?: boolean }) {
   const { pending } = useFormStatus();
@@ -109,22 +168,7 @@ export function StoreOnboardingForm({ plans = [] }: { plans?: StorePlanOption[] 
       <Field id="store-business" label="Business name" hint="Shown on invoices (defaults to the store name)">
         <input {...fieldAria("store-business", undefined, "hint")} name="businessName" placeholder={name || "My Shop (Pvt) Ltd"} autoComplete="off" />
       </Field>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field id="store-country" label="Country">
-          <input {...fieldAria("store-country")} name="country" placeholder="Pakistan" />
-        </Field>
-        <Field id="store-currency" label="Currency">
-          <input {...fieldAria("store-currency")} name="currency" placeholder="PKR" maxLength={3} />
-        </Field>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field id="store-timezone" label="Timezone">
-          <input {...fieldAria("store-timezone")} name="timezone" placeholder="Asia/Karachi" />
-        </Field>
-        <Field id="store-language" label="Language">
-          <input {...fieldAria("store-language")} name="defaultLanguage" placeholder="en" />
-        </Field>
-      </div>
+      <RegionInputs />
 
       {plans.length > 0 ? (
         <div>
@@ -167,7 +211,7 @@ export function StoreInviteActions({ invitations, token }: { invitations: Invita
               <p className="font-semibold">{invitation.store?.name ?? "Store invitation"}</p>
               <p className="text-xs text-muted">
                 {ROLE_LABEL[invitation.role] ?? "Team member"}
-                {invitation.expiresAt ? ` · until ${new Date(invitation.expiresAt).toLocaleDateString("en-PK")}` : ""}
+                {invitation.expiresAt ? ` · until ${day(invitation.expiresAt)}` : ""}
               </p>
             </div>
             <input type="hidden" name="membershipId" value={String(invitation.id)} />
@@ -209,7 +253,7 @@ export function StoreCard({ store, plans, rootDomain }: { store: MyStore; plans:
           <p className="text-xs text-muted">
             {STATUS_LABEL[store.status] ?? store.status} · {ROLE_LABEL[store.role] ?? store.role}
             {store.planName ? ` · ${store.planName} (${PLAN_STATUS_LABEL[store.subscriptionStatus] ?? store.subscriptionStatus})` : ""}
-            {store.subscriptionStatus === "trialing" && store.trialEndsAt ? ` until ${new Date(store.trialEndsAt).toLocaleDateString("en-PK")}` : ""}
+            {store.subscriptionStatus === "trialing" && store.trialEndsAt ? ` until ${day(store.trialEndsAt)}` : ""}
           </p>
           {address ? (
             <a href={`https://${address}`} className="text-xs text-primary underline" target="_blank" rel="noreferrer">
@@ -224,7 +268,7 @@ export function StoreCard({ store, plans, rootDomain }: { store: MyStore; plans:
 
       {store.subscriptionStatus === "past_due" ? (
         <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-          The plan payment is due{store.graceEndsAt ? ` – the shop goes offline on ${new Date(store.graceEndsAt).toLocaleDateString("en-PK")}` : ""}. Choose the plan again below to pay.
+          The plan payment is due{store.graceEndsAt ? ` – the shop goes offline on ${day(store.graceEndsAt)}` : ""}. Choose the plan again below to pay.
         </p>
       ) : null}
 

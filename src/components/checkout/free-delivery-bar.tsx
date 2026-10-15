@@ -1,10 +1,12 @@
 "use client";
 import { m as motion } from "framer-motion";
 import { Truck } from "lucide-react";
-import { cn, formatPKR } from "@/lib/utils";
+import { useMoney } from "@/components/providers/locale";
+import { cn } from "@/lib/utils";
 
 /** Progress to free delivery. `where`: the chosen city (the threshold is that city's zone rule), else the store-wide rule. */
 export function FreeDeliveryBar({ subtotal, threshold, where, className }: { subtotal: number; threshold: number; where?: string | null; className?: string }) {
+  const money = useMoney();
   const remaining = Math.max(0, threshold - subtotal);
   const progress = threshold > 0 ? Math.min(100, (subtotal / threshold) * 100) : 100;
   return (
@@ -13,7 +15,7 @@ export function FreeDeliveryBar({ subtotal, threshold, where, className }: { sub
         <Truck className={cn("size-4 shrink-0", remaining ? "text-violet-300" : "text-emerald-400")} aria-hidden="true" />
         {remaining > 0 ? (
           <span>
-            Add <strong>{formatPKR(remaining)}</strong> more for <strong className="text-emerald-400">FREE delivery</strong>
+            Add <strong>{money(remaining)}</strong> more for <strong className="text-emerald-400">FREE delivery</strong>
             {where ? ` to ${where}` : ""}
           </span>
         ) : (

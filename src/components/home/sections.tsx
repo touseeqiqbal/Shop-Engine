@@ -11,6 +11,7 @@ import { waLink } from "@/lib/site";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { primaryPhone, SOCIAL_NETWORKS, socialLinks, storePlace, type SiteInfo } from "@/lib/site-info";
 import { getCurrentStore } from "@/lib/tenant";
+import { getStoreLocale } from "@/lib/store-locale";
 import { InlineText } from "@/components/content/inline-text";
 import { NEUTRAL_TRUST_TEXT, type TrustBadgeText } from "@/lib/content/home";
 import { cn } from "@/lib/utils";
@@ -34,9 +35,11 @@ async function isOriginalStore() {
  * Built-in texts about the original shop's Karachi delivery are replaced by plain ones on any other store.
  */
 export async function TrustBadges({ className, items }: { className?: string; items?: TrustBadgeText[] }) {
-  const original = await isOriginalStore();
+  const [original, { country }] = await Promise.all([isOriginalStore(), getStoreLocale()]);
   const own = (text: string) => (original ? text : NEUTRAL_TRUST_TEXT[text] ?? text);
-  const badges = TRUST_BADGES.map((b, i) => ({ ...b, title: items?.[i]?.title || b.title, text: own(items?.[i]?.text || b.text) }));
+  // "all over Pakistan" is for stores in Pakistan
+  const ownTitle = (title: string) => (country !== "PK" && title === TRUST_BADGES[1].title ? "Delivery Nationwide" : title);
+  const badges = TRUST_BADGES.map((b, i) => ({ ...b, title: ownTitle(items?.[i]?.title || b.title), text: own(items?.[i]?.text || b.text) }));
   return (
     <ul className={cn("snap-row -mx-4 scroll-px-4 gap-3 px-4 sm:mx-0 sm:grid sm:grid-cols-3 sm:px-0 lg:grid-cols-5", className)} aria-label="Why shop with us">
       {badges.map((b, i) => (

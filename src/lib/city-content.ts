@@ -1,6 +1,6 @@
 import { deliveryCharge, deliveryEstimate, deliveryZone, freeDeliveryAbove } from "./cities";
 import type { StoreSettings } from "./types";
-import { formatPKR } from "./utils";
+import { formatMoney } from "./money";
 import type { FaqItem } from "./types";
 
 /**
@@ -61,8 +61,9 @@ export function cityIntro(city: string, storeName: string, settings?: StoreSetti
 /**
  * City page FAQs (also sent to Google as FAQ data). Delivery charge, free-delivery amount, delivery time and the
  * advance rule all come from /cms → Delivery & payments, the same rules checkout uses.
+ * `money` = the store's money formatter (`await getMoney()`); the original shop's rupees when left out.
  */
-export function cityFaqs(city: string, settings: StoreSettings): FaqItem[] {
+export function cityFaqs(city: string, settings: StoreSettings, money: (amount: number) => string = formatMoney): FaqItem[] {
   const est = deliveryEstimate(city, settings);
   const karachi = deliveryZone(city) === "karachi";
   const charge = deliveryCharge(city, 0, settings);
@@ -77,7 +78,7 @@ export function cityFaqs(city: string, settings: StoreSettings): FaqItem[] {
     },
     {
       q: `Is Cash on Delivery available in ${city}?`,
-      a: `Yes. You can pay cash to the courier rider when your laptop arrives in ${city}.${advanceAbove ? ` For orders above ${formatPKR(advanceAbove)} we ask for an advance of ${formatPKR(settings.advanceAmount)} via JazzCash, EasyPaisa or bank transfer to confirm the order.` : ""}`,
+      a: `Yes. You can pay cash to the courier rider when your laptop arrives in ${city}.${advanceAbove ? ` For orders above ${money(advanceAbove)} we ask for an advance of ${money(settings.advanceAmount)} via JazzCash, EasyPaisa or bank transfer to confirm the order.` : ""}`,
     },
     {
       q: `What are the delivery charges to ${city}?`,
@@ -85,8 +86,8 @@ export function cityFaqs(city: string, settings: StoreSettings): FaqItem[] {
         charge <= 0
           ? `Delivery to ${city} is free.`
           : freeAbove > 0
-            ? `Delivery to ${city} costs ${formatPKR(charge)} on orders below ${formatPKR(freeAbove)}. Orders of ${formatPKR(freeAbove)} or more are delivered free.`
-            : `Delivery to ${city} costs ${formatPKR(charge)}. The exact charge is shown at checkout.`,
+            ? `Delivery to ${city} costs ${money(charge)} on orders below ${money(freeAbove)}. Orders of ${money(freeAbove)} or more are delivered free.`
+            : `Delivery to ${city} costs ${money(charge)}. The exact charge is shown at checkout.`,
     },
     {
       q: `Can I check the laptop before paying in ${city}?`,

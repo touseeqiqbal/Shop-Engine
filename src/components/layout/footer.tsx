@@ -44,8 +44,8 @@ function SocialIcon({ name }: { name: string }) {
 export async function Footer({ categories, settings = DEFAULT_CHROME.footer }: { categories: Category[]; settings?: Chrome["footer"] }) {
   const year = new Date().getFullYear();
   const [site, store] = await Promise.all([getSiteInfo(), getCurrentStore()]); // live business profile (/cms → Settings → Store details)
-  // the /laptops-in-{city} pages belong to the original (default) shop only
-  const cityLinks = settings.showCityLinks && (!store || store.isDefault);
+  // the /laptops-in-{city} pages belong to the original (default) shop only, while it is in Pakistan
+  const cityLinks = settings.showCityLinks && (!store || (store.isDefault && store.country === "PK"));
   const d = DEFAULT_CHROME.footer;
   // Untouched defaults keep following Store info (tagline, couriers, where the shop is) exactly as before.
   const place = storePlace(site);

@@ -62,7 +62,7 @@ export function PrivacyScreen() {
         <label className="urko-sr" htmlFor="privacy-q">
           Phone or email
         </label>
-        <input id="privacy-q" className="urko-privacy__input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="0300-1234567 or name@example.com" />
+        <input id="privacy-q" className="urko-privacy__input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Phone or email" />
         <button className="urko-btn urko-btn--primary" disabled={busy || q.trim().length < 6}>
           Find
         </button>

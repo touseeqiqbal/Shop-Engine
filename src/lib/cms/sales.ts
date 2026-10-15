@@ -1,4 +1,5 @@
 import "server-only";
+import { normalizePkMobile } from "@/lib/phone";
 import { randomBytes } from "node:crypto";
 import { sql } from "@payloadcms/db-postgres";
 import { commitTransaction, createLocalReq, initTransaction, killTransaction, type Payload, type Where } from "payload";
@@ -42,7 +43,7 @@ export function toOrder(d: Doc): Order {
     orderNumber: str(d.orderNumber),
     createdAt: str(d.placedAt) || str(d.createdAt),
     status: (str(d.status) || "pending") as Order["status"],
-    customer: { name: str(c.name), phone: str(c.phone), email: opt(str(c.email)), city: str(c.city), address: str(c.address), landmark: opt(str(c.landmark)) },
+    customer: { name: str(c.name), phone: str(c.phone), email: opt(str(c.email)), city: str(c.city), address: str(c.address), landmark: opt(str(c.landmark)), region: opt(str(c.region)), postalCode: opt(str(c.postalCode)), country: opt(str(c.country)) },
     items: (Array.isArray(d.items) ? (d.items as Doc[]) : []).map(
       (i): OrderItem => ({
         productId: obj(i.product) ? storefrontId(obj(i.product)) : str(i.productLegacyId) || (i.product != null ? String(i.product) : ""),
@@ -62,6 +63,9 @@ export function toOrder(d: Doc): Order {
     total: num(d.total),
     advancePaid: typeof d.advancePaid === "number" ? d.advancePaid : undefined,
     paymentMethod: str(d.paymentMethod) as PaymentMethod,
+    paymentMethodLabel: opt(str(d.paymentMethodLabel)) ?? null,
+    paymentDue: d.paymentDue === "on-delivery" || d.paymentDue === "upfront" ? d.paymentDue : null,
+    currency: opt(str(d.currency)),
     paymentStatus: str(d.paymentStatus) as PaymentStatus,
     paymentScreenshotUrl: opt(str(d.paymentScreenshotKey)) ?? null,
     courier: opt(str(d.courier)) ?? null,
@@ -86,7 +90,7 @@ async function orderData(payload: Payload, o: Partial<Order>, storeId: number | 
   if (o.orderNumber !== undefined) data.orderNumber = o.orderNumber;
   if (o.createdAt !== undefined) data.placedAt = o.createdAt;
   if (o.status !== undefined) data.status = o.status;
-  if (o.customer) data.customer = { ...o.customer, email: o.customer.email ?? null, landmark: o.customer.landmark ?? null };
+  if (o.customer) data.customer = { ...o.customer, email: o.customer.email ?? null, landmark: o.customer.landmark ?? null, region: o.customer.region ?? null, postalCode: o.customer.postalCode ?? null, country: o.customer.country ?? null };
   if (o.items) {
     data.items = await Promise.all(
       o.items.map(async (i) => {
@@ -109,7 +113,7 @@ async function orderData(payload: Payload, o: Partial<Order>, storeId: number | 
       })
     );
   }
-  for (const k of ["subtotal", "discount", "deliveryCharge", "total", "advancePaid", "paymentMethod", "paymentStatus", "courier", "trackingNumber", "couponCode", "taxTotal", "paymentReference"] as const) {
+  for (const k of ["subtotal", "discount", "deliveryCharge", "total", "advancePaid", "paymentMethod", "paymentMethodLabel", "paymentDue", "currency", "paymentStatus", "courier", "trackingNumber", "couponCode", "taxTotal", "paymentReference"] as const) {
     if (o[k] !== undefined) data[k] = o[k] ?? null;
   }
   // the customer's own note (never the team's internal notes)
@@ -277,11 +281,11 @@ const toUser = (u: Doc): CmsUser => ({
   wishlist: Array.isArray(u.wishlist) ? (u.wishlist as string[]) : [],
 });
 
-/** A Pakistani mobile as stored ("0300-1234567") or typed ("03001234567"). */
+/** A phone as stored: a Pakistani mobile ("0300-1234567", or typed "03001234567"), else international ("+447700900123"). */
 function phoneWhere(phone: string): Where[] {
-  const d = phone.replace(/\D/g, "").replace(/^92/, "0");
-  const formatted = d.length === 11 ? `${d.slice(0, 4)}-${d.slice(4)}` : phone;
-  return [{ phone: { equals: formatted } }, { phone: { equals: d } }];
+  const pk = normalizePkMobile(phone);
+  if (pk) return [{ phone: { equals: pk } }, { phone: { equals: pk.replace("-", "") } }];
+  return [{ phone: { equals: phone.trim() } }, { phone: { equals: `+${phone.replace(/\D/g, "")}` } }];
 }
 
 /** Is there a BLOCKED customer account with this phone or email? (/cms → Customers → "Blocked") */

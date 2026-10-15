@@ -6,6 +6,8 @@ import { CityCombobox } from "@/components/checkout/city-combobox";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
 import { trackEvent } from "@/components/analytics";
 import { useSiteInfo } from "@/components/providers/site-info";
+import { useStoreLocale } from "@/components/providers/locale";
+import { phonePlaceholder } from "@/lib/phone";
 import { waLink } from "@/lib/site";
 import { primaryPhone } from "@/lib/site-info";
 import { cn } from "@/lib/utils";
@@ -195,6 +197,7 @@ export function WholesaleQuoteForm({ initialItems, source = "/wholesale" }: { in
   const [state, action, pending] = useActionState<QuoteState, FormData>(submitWholesaleQuote, { ok: false });
   const site = useSiteInfo(); // the current store's own name and phone (Settings → Store details)
   const phone = primaryPhone(site);
+  const { country } = useStoreLocale();
   const [rows, setRows] = useState<Row[]>(() =>
     (initialItems.length ? initialItems : [{ productName: "", qty: 10 }]).map((i) => ({ ...i, key: newKey() }))
   );
@@ -328,7 +331,7 @@ export function WholesaleQuoteForm({ initialItems, source = "/wholesale" }: { in
           <label htmlFor="q-phone" className="label">
             Mobile / WhatsApp <span className="text-rose-400">*</span>
           </label>
-          <input id="q-phone" name="phone" type="tel" inputMode="tel" required autoComplete="tel" className="input" placeholder="03XX-XXXXXXX" {...field("phone")} />
+          <input id="q-phone" name="phone" type="tel" inputMode="tel" required autoComplete="tel" className="input" placeholder={phonePlaceholder(country)} {...field("phone")} />
           {fieldError("phone")}
         </div>
         <div>
@@ -356,7 +359,13 @@ export function WholesaleQuoteForm({ initialItems, source = "/wholesale" }: { in
           <label htmlFor="q-budget" className="label">
             Budget <span className="font-normal text-subtle">(optional)</span>
           </label>
-          <input id="q-budget" name="budget" className="input" placeholder="e.g. Rs 60,000 per unit or Rs 15 lakh total" {...field("budget")} />
+          <input
+            id="q-budget"
+            name="budget"
+            className="input"
+            placeholder={country === "PK" ? "e.g. Rs 60,000 per unit or Rs 15 lakh total" : "e.g. a price per unit or a total budget"}
+            {...field("budget")}
+          />
           {fieldError("budget")}
         </div>
       </div>

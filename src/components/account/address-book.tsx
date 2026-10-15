@@ -5,12 +5,13 @@ import { Loader2, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { saveAddressesAction } from "@/app/(frontend)/(store)/account/actions";
 import { readLocalAddresses, writeLocalAddresses } from "@/lib/addresses";
 import type { SavedAddress } from "@/lib/types";
-import { normalizePkPhone } from "@/lib/utils";
+import { normalizePhone, phonePlaceholder } from "@/lib/phone";
 import { useUi } from "@/store/ui";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { CityCombobox } from "@/components/checkout/city-combobox";
 import { Field, fieldAria } from "@/components/checkout/field";
 import { formatPhoneInput } from "@/components/checkout/phone";
+import { useStoreLocale } from "@/components/providers/locale";
 import { Skeleton } from "@/components/ui/skeleton";
 
 type Draft = Omit<SavedAddress, "id"> & { id?: string };
@@ -23,6 +24,8 @@ export function AddressBook({ mode, initial = [] }: { mode: "remote" | "local"; 
   const [draft, setDraft] = useState<Draft | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, startSaving] = useTransition();
+  const { country } = useStoreLocale();
+  const pk = country === "PK"; // other countries type the number with its +code
 
   useEffect(() => {
     if (mode === "local") setList(readLocalAddresses());
@@ -50,7 +53,7 @@ export function AddressBook({ mode, initial = [] }: { mode: "remote" | "local"; 
     const errs: Record<string, string> = {};
     if (!draft.label.trim()) errs.label = "Give this address a label";
     if (draft.name.trim().length < 3) errs.name = "Enter the receiver's name";
-    if (!normalizePkPhone(draft.phone)) errs.phone = "Enter a valid mobile number";
+    if (!normalizePhone(draft.phone, country)) errs.phone = "Enter a valid mobile number";
     if (!draft.city) errs.city = "Choose a city";
     if (draft.address.trim().length < 10) errs.address = "Enter the complete address";
     setErrors(errs);
@@ -59,7 +62,7 @@ export function AddressBook({ mode, initial = [] }: { mode: "remote" | "local"; 
       id: draft.id ?? crypto.randomUUID(),
       label: draft.label.trim(),
       name: draft.name.trim(),
-      phone: normalizePkPhone(draft.phone)!,
+      phone: normalizePhone(draft.phone, country)!,
       city: draft.city,
       address: draft.address.trim(),
       landmark: draft.landmark?.trim() || undefined,
@@ -102,11 +105,11 @@ export function AddressBook({ mode, initial = [] }: { mode: "remote" | "local"; 
               <input
                 {...fieldAria("ab-phone", errors.phone)}
                 type="tel"
-                inputMode="numeric"
-                placeholder="03XX-XXXXXXX"
+                inputMode={pk ? "numeric" : "tel"}
+                placeholder={phonePlaceholder(country)}
                 value={draft.phone}
-                onChange={(e) => setDraft({ ...draft, phone: formatPhoneInput(e.target.value) })}
-                maxLength={12}
+                onChange={(e) => setDraft({ ...draft, phone: formatPhoneInput(e.target.value, country) })}
+                maxLength={pk ? 12 : 20}
               />
             </Field>
             <CityCombobox id="ab-city" value={draft.city} onChange={(city) => setDraft({ ...draft, city })} required error={errors.city} name="ab-city" />

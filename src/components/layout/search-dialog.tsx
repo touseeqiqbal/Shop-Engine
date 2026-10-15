@@ -7,8 +7,8 @@ import { AnimatePresence, m as motion } from "framer-motion";
 import { ArrowRight, Search, TrendingUp, X } from "lucide-react";
 import { useUi } from "@/store/ui";
 import { usePrefs } from "@/components/providers/preferences";
+import { useMoney } from "@/components/providers/locale";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatPKR } from "@/lib/utils";
 import { trackEvent } from "@/components/analytics";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 
@@ -32,6 +32,7 @@ const POPULAR = ["HP EliteBook", "Dell charger", "Gaming mouse", "Mechanical key
 export function SearchDialog() {
   const { searchOpen, setSearchOpen } = useUi();
   const { t } = usePrefs();
+  const money = useMoney();
   const router = useRouter();
   const [q, setQ] = useState("");
   const [data, setData] = useState<SearchResponse | null>(null);
@@ -199,7 +200,7 @@ export function SearchDialog() {
                               {h.brandName} · {h.categoryName}
                             </span>
                           </span>
-                          <span className="text-sm font-semibold tabular-nums text-fg">{h.priceOnRequest ? "On request" : formatPKR(h.price)}</span>
+                          <span className="text-sm font-semibold tabular-nums text-fg">{h.priceOnRequest ? "On request" : money(h.price)}</span>
                         </Link>
                       </li>
                     ))}

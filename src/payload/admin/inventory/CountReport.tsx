@@ -1,15 +1,16 @@
 "use client";
 import { useFormFields } from "@payloadcms/ui";
-import { useStoreRole } from "../ui/store-context";
+import { useAdminMoney, useStoreRole } from "../ui/store-context";
 
 /** Variance report on a finished stock count: what's short / over, missing or unexpected serials, and the value. */
 
 type Line = { productId: number; title: string; sku: string; tracked: boolean; expected: number; counted: number; unitCost: number; expectedSerials: string[]; scannedSerials: string[]; touched?: boolean };
-const rs = (n: number) => `Rs ${Math.round(n).toLocaleString("en-PK")}`;
 
 export function CountReport() {
   const lines = useFormFields(([f]) => f.lines?.value) as Line[] | undefined;
   const status = useFormFields(([f]) => f.status?.value) as string | undefined;
+  const store = useFormFields(([f]) => f.store?.value);
+  const money = useAdminMoney(store);
   const { isOwner } = useStoreRole();
   if (!Array.isArray(lines)) return null;
   const counted = lines.filter((l) => l.touched);
@@ -31,7 +32,7 @@ export function CountReport() {
         <p>Everything matches. 🎉</p>
       ) : (
         <>
-          {isOwner && <p className="urko-tip">Value of the difference at cost: {rs(value)}</p>}
+          {isOwner && <p className="urko-tip">Value of the difference at cost: {money(value)}</p>}
           <table className="urko-table">
             <thead>
               <tr>

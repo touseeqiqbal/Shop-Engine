@@ -8,12 +8,14 @@ import { AlertCircle, CheckCircle2, CircleDashed, ExternalLink, Loader2, Package
 import { trackOrder, type TrackState, type TrackedOrder } from "@/app/(frontend)/(store)/track-order/actions";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
 import { useSiteInfo } from "@/components/providers/site-info";
+import { useDateFormatter, useMoney, useStoreLocale } from "@/components/providers/locale";
 import { deliveryEstimate } from "@/lib/cities";
-import { ORDER_FLOW, ORDER_STATUS_LABEL, PAYMENT_LABEL, PAYMENT_STATUS_LABEL } from "@/lib/order-display";
+import { ORDER_FLOW, ORDER_STATUS_LABEL, PAYMENT_STATUS_LABEL, paymentLabel } from "@/lib/order-display";
+import { phonePlaceholder } from "@/lib/phone";
 import { waLink } from "@/lib/site";
 import { primaryPhone } from "@/lib/site-info";
 import type { OrderStatus } from "@/lib/types";
-import { cn, formatDate, formatPKR } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { CopyButton } from "./order-bits";
 import { Field, fieldAria } from "./field";
 import { formatPhoneInput } from "./phone";
@@ -22,6 +24,8 @@ export function TrackOrderForm({ initialOrder = "" }: { initialOrder?: string })
   const [state, action] = useActionState<TrackState, FormData>(trackOrder, { status: "idle" });
   const [order, setOrder] = useState(initialOrder.toUpperCase());
   const [phone, setPhone] = useState("");
+  const { country } = useStoreLocale();
+  const pk = country === "PK"; // other countries type the number with its +code
   const resultRef = useRef<HTMLDivElement>(null);
   const errors = state.status === "error" ? (state.fieldErrors ?? {}) : {};
 
@@ -50,12 +54,12 @@ export function TrackOrderForm({ initialOrder = "" }: { initialOrder?: string })
             {...fieldAria("track-phone", errors.phone)}
             name="phone"
             type="tel"
-            inputMode="numeric"
-            autoComplete="tel-national"
-            placeholder="03XX-XXXXXXX"
+            inputMode={pk ? "numeric" : "tel"}
+            autoComplete={pk ? "tel-national" : "tel"}
+            placeholder={phonePlaceholder(country)}
             value={phone}
-            onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
-            maxLength={12}
+            onChange={(e) => setPhone(formatPhoneInput(e.target.value, country))}
+            maxLength={pk ? 12 : 20}
             required
           />
         </Field>
@@ -111,6 +115,8 @@ function lastAt(history: TrackedOrder["history"], status: OrderStatus) {
 
 function TrackResult({ order }: { order: TrackedOrder }) {
   const site = useSiteInfo(); // the current store's own WhatsApp number
+  const money = useMoney();
+  const date = useDateFormatter(); // the store's time zone, not the shopper's device
   const terminal = order.status === "cancelled" || order.status === "returned";
   // Highest happy-path step reached (from history, so cancelled/returned orders still show their progress)
   const reached = Math.max(
@@ -128,7 +134,7 @@ function TrackResult({ order }: { order: TrackedOrder }) {
           <div>
             <p className="text-xs uppercase tracking-wide text-subtle">Order</p>
             <p className="font-mono text-lg font-bold">{order.orderNumber}</p>
-            <p className="text-xs text-muted">Placed {formatDate(order.createdAt, { dateStyle: "medium", timeStyle: "short" })}</p>
+            <p className="text-xs text-muted">Placed {date(order.createdAt, { dateStyle: "medium", timeStyle: "short" })}</p>
           </div>
           <span
             className={cn(
@@ -190,7 +196,7 @@ function TrackResult({ order }: { order: TrackedOrder }) {
                   </p>
                   {ev ? (
                     <p className="text-xs text-muted">
-                      {formatDate(ev.at, { dateStyle: "medium", timeStyle: "short" })}
+                      {date(ev.at, { dateStyle: "medium", timeStyle: "short" })}
                       
                     </p>
                   ) : (
@@ -257,9 +263,9 @@ function TrackResult({ order }: { order: TrackedOrder }) {
           </ul>
           <div className="mt-4 flex items-baseline justify-between border-t border-border pt-3 text-sm">
             <span className="text-muted">
-              {PAYMENT_LABEL[order.paymentMethod]} · {PAYMENT_STATUS_LABEL[order.paymentStatus]}
+              {paymentLabel(order.paymentMethod, order.paymentMethodLabel)} · {PAYMENT_STATUS_LABEL[order.paymentStatus]}
             </span>
-            <span className="font-display text-lg font-bold tabular-nums">{formatPKR(order.total)}</span>
+            <span className="font-display text-lg font-bold tabular-nums">{money(order.total)}</span>
           </div>
         </section>
 

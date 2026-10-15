@@ -3,6 +3,8 @@ import { sameStoreAs, storeGate } from "./guard";
 import { getStoreSettings } from "../store-settings";
 import { storeIdOf } from "../tenancy";
 import { shippedPerLine, type ShipmentRow } from "../collections/content";
+import { storeLocaleOf } from "../store-locale";
+import { addDays, dayIn, dayStart } from "../../lib/time";
 
 /**
  * Order tools – the store's team, for the store being worked in.
@@ -13,9 +15,6 @@ import { shippedPerLine, type ShipmentRow } from "../collections/content";
 type Doc = Record<string, unknown>;
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-const PKT = 5 * 3600e3;
-const pktDay = (t: number) => new Date(t + PKT).toISOString().slice(0, 10);
-const pktStart = (day: string) => Date.parse(`${day}T00:00:00Z`) - PKT;
 
 const resend: Endpoint = {
   path: "/order-tools/resend-confirmation",
@@ -128,17 +127,19 @@ const rto: Endpoint = {
     const gate = await storeGate(req, "store_staff", { allowAll: true });
     if (gate instanceof Response) return gate;
     const url = new URL(req.url ?? "", "http://x");
-    const today = pktDay(Date.now());
-    const valid = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+    // days in the store's time zone (all stores: the default store's)
+    const { timezone: tz, currency } = await storeLocaleOf(req.payload, gate.store, req);
+    const today = dayIn(Date.now(), tz);
+    const valid = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v)) ? v : null);
     const to = valid(url.searchParams.get("to")) ?? today;
-    const from = valid(url.searchParams.get("from")) ?? pktDay(pktStart(to) - 89 * 864e5);
+    const from = valid(url.searchParams.get("from")) ?? addDays(to, -89);
     const [orders, shipping] = await Promise.all([
       req.payload.find({
         collection: "orders",
         where: {
           and: [
-            { placedAt: { greater_than_equal: new Date(pktStart(from)).toISOString() } },
-            { placedAt: { less_than: new Date(pktStart(to) + 864e5).toISOString() } },
+            { placedAt: { greater_than_equal: new Date(dayStart(from, tz)).toISOString() } },
+            { placedAt: { less_than: new Date(dayStart(addDays(to, 1), tz)).toISOString() } },
             { status: { in: ["delivered", "refused", "returned"] } },
             ...gate.inStore,
           ],
@@ -152,6 +153,8 @@ const rto: Endpoint = {
       getStoreSettings(req.payload, "shipping", gate.store, { req }).catch(() => null),
     ]);
     const zones = ((shipping as unknown as Doc | null)?.zones ?? []) as { name?: string; rest?: boolean; cities?: string[] }[];
+    // a parcel sent free still cost a delivery: about Rs 250 for the original shop, elsewhere the store's standard charge
+    const usualCharge = currency === "PKR" ? 250 : num((shipping as unknown as Doc | null)?.defaultCharge);
     const zoneOf = (city: string) => {
       const c = city.trim().toLowerCase();
       return zones.find((z) => !z.rest && (z.cities ?? []).some((x) => x.toLowerCase() === c))?.name ?? zones.find((z) => z.rest)?.name ?? "No zone";
@@ -163,7 +166,7 @@ const rto: Endpoint = {
       const c = (o.customer ?? {}) as Doc;
       const st = str(o.status) as "delivered" | "refused" | "returned";
       // what a refused parcel costs you: delivery both ways is roughly the delivery charge twice (or your average if it was free)
-      const lost = st === "refused" ? Math.max(num(o.deliveryCharge), 250) * 2 : 0;
+      const lost = st === "refused" ? Math.max(num(o.deliveryCharge), usualCharge) * 2 : 0;
       totals[st]++;
       totals.lost += lost;
       const keys: [string, string, string][] = [

@@ -12,6 +12,8 @@ import { ChromeProvider } from "@/components/providers/chrome";
 import { MotionProvider } from "@/components/providers/motion";
 import { getChrome } from "@/lib/cms/chrome";
 import { DEFAULT_CHROME, themeCss } from "@/lib/cms/chrome-types";
+import { LocaleProvider } from "@/components/providers/locale";
+import { DEFAULT_LOCALE, ogLocale, storeLocale } from "@/lib/locale";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 const montserrat = Montserrat({ subsets: ["latin"], variable: "--font-montserrat", display: "swap", weight: ["800"] });
@@ -55,7 +57,7 @@ export async function generateMetadata(): Promise<Metadata> {
     formatDetection: { telephone: true, email: true, address: true },
     openGraph: {
       siteName: info.name,
-      locale: "en_PK",
+      locale: ogLocale(store ? storeLocale(store) : DEFAULT_LOCALE),
       type: "website",
       ...(seo.defaultOgImage ? { images: [{ url: seo.defaultOgImage, width: 1200, height: 630 }] } : {}),
     },
@@ -88,8 +90,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const info = unknown ? blankSiteInfo(PLATFORM_NAME, origin) : storeInfo;
   const chrome = unknown ? DEFAULT_CHROME : storeChrome;
   const mode = chrome.theme.defaultMode;
+  // the store's currency, time zone and country for prices, dates and checkout (the original shop: PKR / Pakistan)
+  const locale = store && !unknown ? storeLocale(store) : DEFAULT_LOCALE;
   return (
-    <html lang="en" data-theme={mode} className={`${inter.variable} ${grotesk.variable} ${montserrat.variable} ${poppins.variable}`} suppressHydrationWarning>
+    <html lang={store?.language || "en"} data-theme={mode} className={`${inter.variable} ${grotesk.variable} ${montserrat.variable} ${poppins.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript(chrome.theme.allowModeToggle) }} />
         <style dangerouslySetInnerHTML={{ __html: themeCss(chrome.theme) }} />
@@ -101,7 +105,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <PreferencesProvider defaultTheme={mode}>
           <SiteInfoProvider info={info} original={!unknown && (!store || store.isDefault)}>
             <ChromeProvider chrome={chrome}>
-              <MotionProvider>{children}</MotionProvider>
+              <LocaleProvider locale={locale}>
+                <MotionProvider>{children}</MotionProvider>
+              </LocaleProvider>
             </ChromeProvider>
           </SiteInfoProvider>
         </PreferencesProvider>

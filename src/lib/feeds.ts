@@ -5,12 +5,13 @@ import { absoluteUrl } from "@/lib/site";
 import { jpegImageUrl } from "@/lib/seo";
 import { isCmsConfigured } from "@/lib/db/config";
 import { currentStoreId } from "@/lib/tenant";
+import { getStoreLocale } from "@/lib/store-locale";
 import type { CatalogProduct } from "@/lib/types";
 import { effectivePrice } from "@/lib/utils";
 
 /**
  * Product feed items for Google Merchant Center, Meta and TikTok – built from the live catalog
- * (active products, prices in PKR, condition, availability, images, delivery price).
+ * (active products, prices in the store's currency, condition, availability, images, delivery price to the store's country).
  * No GTIN / MPN: every item says identifier_exists = no.
  */
 
@@ -66,6 +67,9 @@ export type FeedItem = {
   googleCategory: string | null;
   shipping: number;
   inventory: number;
+  /** the store's currency (ISO, e.g. "PKR") and the country it delivers in (e.g. "PK") */
+  currency: string;
+  country: string;
 };
 
 const CONDITION: Record<string, FeedItem["condition"]> = { new: "new", refurbished: "refurbished", "open-box": "used", "used-a-plus": "used", "used-a": "used" };
@@ -87,7 +91,7 @@ const plain = (md: string) =>
     .trim();
 
 export async function feedItems(channel: FeedChannel): Promise<FeedItem[] | null> {
-  const [s, products, store, info] = await Promise.all([getFeedSettings(), getAllProducts(), getStoreSettings(), import("@/lib/repo/site-content").then((m) => m.getSiteInfo())]);
+  const [s, products, store, info, loc] = await Promise.all([getFeedSettings(), getAllProducts(), getStoreSettings(), import("@/lib/repo/site-content").then((m) => m.getSiteInfo()), getStoreLocale()]);
   const storeName = info.name;
   if (!s[channel]) return null;
   const baseShipping = s.shippingPrice ?? store.defaultDeliveryCharge;
@@ -119,12 +123,14 @@ export async function feedItems(channel: FeedChannel): Promise<FeedItem[] | null
         googleCategory: GOOGLE_CATEGORY[p.topCategorySlug] ?? null,
         shipping: store.freeDeliveryThreshold > 0 && sale >= store.freeDeliveryThreshold ? 0 : baseShipping,
         inventory: Math.max(0, p.stock),
+        currency: loc.currency,
+        country: loc.country,
       };
     });
 }
 
 const esc = (s: string) => s.replace(/[<>&'"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" })[c]!);
-const money = (n: number) => `${n.toFixed(2)} PKR`;
+const money = (n: number, currency: string) => `${n.toFixed(2)} ${currency}`;
 
 /**
  * RSS 2.0 with the Google namespace – accepted by Google Merchant Center and Meta Commerce Manager.
@@ -142,14 +148,14 @@ export function toGoogleXml(items: FeedItem[], title: string, storeName: string)
 ${i.extraImages.map((x) => `<g:additional_image_link>${esc(x)}</g:additional_image_link>`).join("\n")}
 <g:availability>${i.availability}</g:availability>
 <g:condition>${i.condition}</g:condition>
-<g:price>${money(i.price)}</g:price>
-${i.salePrice != null ? `<g:sale_price>${money(i.salePrice)}</g:sale_price>` : ""}
+<g:price>${money(i.price, i.currency)}</g:price>
+${i.salePrice != null ? `<g:sale_price>${money(i.salePrice, i.currency)}</g:sale_price>` : ""}
 <g:brand>${esc(i.brand)}</g:brand>
 <g:identifier_exists>no</g:identifier_exists>
 <g:product_type>${esc(i.productType)}</g:product_type>
 ${i.googleCategory ? `<g:google_product_category>${i.googleCategory}</g:google_product_category>` : ""}
 <g:inventory>${i.inventory}</g:inventory>
-<g:shipping><g:country>PK</g:country><g:service>Standard</g:service><g:price>${money(i.shipping)}</g:price></g:shipping>
+<g:shipping><g:country>${esc(i.country)}</g:country><g:service>Standard</g:service><g:price>${money(i.shipping, i.currency)}</g:price></g:shipping>
 </item>`
     )
     .join("\n");
@@ -172,7 +178,7 @@ export function toTikTokCsv(items: FeedItem[]) {
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const lines = items.map((i) =>
-    [i.id, i.title, i.description, i.availability.replace("_", " "), i.condition, money(i.price), i.salePrice != null ? money(i.salePrice) : "", i.link, i.image, i.extraImages.join(","), i.brand, i.googleCategory, i.productType, i.inventory].map(cell).join(",")
+    [i.id, i.title, i.description, i.availability.replace("_", " "), i.condition, money(i.price, i.currency), i.salePrice != null ? money(i.salePrice, i.currency) : "", i.link, i.image, i.extraImages.join(","), i.brand, i.googleCategory, i.productType, i.inventory].map(cell).join(",")
   );
   return [cols.join(","), ...lines].join("\n");
 }
