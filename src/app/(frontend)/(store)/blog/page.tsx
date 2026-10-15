@@ -11,6 +11,8 @@ import { InlineText } from "@/components/content/inline-text";
 import { Markdown } from "@/components/ui/markdown";
 import { getPageMeta } from "@/lib/page-seo";
 import { getResolvedPageContent } from "@/lib/repo/site-content";
+import { getStoreLocale } from "@/lib/store-locale";
+import { countryInText } from "@/lib/locale";
 
 export const revalidate = 300;
 
@@ -19,7 +21,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function BlogIndexPage() {
-  const [posts, c] = await Promise.all([getBlogPosts(), getResolvedPageContent("/blog")]);
+  const [posts, c, { country }] = await Promise.all([getBlogPosts(), getResolvedPageContent("/blog"), getStoreLocale()]);
   const site = c.info;
   const [featured, ...rest] = posts;
 
@@ -39,7 +41,7 @@ export default async function BlogIndexPage() {
         eyebrow={`${site.shortName} Blog`}
         title={
           <>
-            Laptop buying guides & <span className="gradient-text">tech tips</span> for Pakistan
+            Laptop buying guides & <span className="gradient-text">tech tips</span> for {countryInText(country)}
           </>
         }
         description={<InlineText text={c.intro} />}

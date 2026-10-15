@@ -372,11 +372,11 @@ export async function paymentsLinkForUser(sessionUserId: string, storeIdRaw: str
   if (!user || (await roleIn(payload, Number(user.id), storeId)) !== "store_owner") return { ok: false, error: "Only the store's owner can connect payments." };
   const store = (await payload.findByID({ collection: "stores", id: storeId, depth: 0, overrideAccess: true })) as unknown as Doc;
   const { storeGateway } = await import("@/lib/payments/gateways");
-  const { countryName, storeLocale } = await import("@/lib/locale");
+  const { countryInText, storeLocale } = await import("@/lib/locale");
   const gateway = storeGateway(store);
   const country = storeLocale(store as { country?: string }).country;
   if (!gateway?.connectLink || !gateway.configured())
-    return { ok: false, error: gateway ? "Card payments aren't available on this platform yet." : `No card payment provider works in ${countryName(country)} yet – use bank transfer, cash on delivery or your own payment methods (Settings → Payments).` };
+    return { ok: false, error: gateway ? "Card payments aren't available on this platform yet." : `No card payment provider works in ${countryInText(country)} yet – use bank transfer, cash on delivery or your own payment methods (Settings → Payments).` };
   const { hasFeature, storeLimits } = await import("@/lib/billing");
   if (!hasFeature(await storeLimits(payload, storeId), "online_payments")) return { ok: false, error: "Your plan doesn't include online card payments – upgrade to use them." };
   try {

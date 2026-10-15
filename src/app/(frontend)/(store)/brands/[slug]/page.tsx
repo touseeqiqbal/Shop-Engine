@@ -7,6 +7,8 @@ import { PageHero } from "@/components/shop/page-hero";
 import { ProductListing } from "@/components/shop/product-listing";
 import { getBrandCounts } from "@/components/shop/data";
 import { shouldNoindex, type RawSearchParams } from "@/components/shop/params";
+import { getStoreLocale } from "@/lib/store-locale";
+import { countryInText } from "@/lib/locale";
 
 /* Brand listing – same URL filter scheme as categories (components/shop/params.ts); `brand` is locked to the page's brand. */
 
@@ -20,15 +22,16 @@ export async function generateStaticParams() {
 
 export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const [{ slug }, sp] = await Promise.all([params, searchParams]);
-  const [brand, site] = await Promise.all([getBrand(slug), getSiteInfo()]);
+  const [brand, site, { country }] = await Promise.all([getBrand(slug), getSiteInfo(), getStoreLocale()]);
   if (!brand) return { title: "Brand not found", robots: { index: false } };
+  const where = countryInText(country);
   const what = LAPTOP_BRANDS.has(brand.slug) ? "Laptops & Accessories" : "Accessories";
   const from = site.address.city ? ` from ${site.address.city}` : "";
   // /cms → Online store → Page texts → "Brand pages" can override these with a {brand} template.
   return getPageMeta("/brands/{brand}", {
     vars: { brand: brand.name },
-    title: `${brand.name} ${what} Price in Pakistan | ${site.name}`,
-    description: `Buy genuine ${brand.name} ${what.toLowerCase()} at the best price in Pakistan. New, used & refurbished stock with warranty, Cash on Delivery and fast delivery${from} to all cities.`,
+    title: `${brand.name} ${what} Price in ${where} | ${site.name}`,
+    description: `Buy genuine ${brand.name} ${what.toLowerCase()} at the best price in ${where}. New, used & refurbished stock with warranty, Cash on Delivery and fast delivery${from} to all cities.`,
     path: `/brands/${brand.slug}`,
     image: brand.logo,
     noindex: shouldNoindex(sp),
@@ -39,7 +42,7 @@ export default async function BrandPage({ params, searchParams }: Props) {
   const [{ slug }, sp] = await Promise.all([params, searchParams]);
   const brand = await getBrand(slug);
   if (!brand) notFound();
-  const [counts, site] = await Promise.all([getBrandCounts(), getSiteInfo()]);
+  const [counts, site, { country }] = await Promise.all([getBrandCounts(), getSiteInfo(), getStoreLocale()]);
   const laptops = LAPTOP_BRANDS.has(brand.slug);
 
   return (
@@ -57,7 +60,7 @@ export default async function BrandPage({ params, searchParams }: Props) {
         }
         description={
           <p>
-            Shop {brand.name} {laptops ? "laptops, chargers, batteries and parts" : "accessories"} at the best price in Pakistan – checked & tested
+            Shop {brand.name} {laptops ? "laptops, chargers, batteries and parts" : "accessories"} at the best price in {countryInText(country)} – checked & tested
             with warranty, Cash on Delivery and delivery to every city.
           </p>
         }

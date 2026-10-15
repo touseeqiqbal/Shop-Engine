@@ -13,7 +13,7 @@ import { faqJsonLd } from "@/lib/seo";
 import { getPageMeta } from "@/lib/page-seo";
 import { getResolvedPageContent } from "@/lib/repo/site-content";
 import { getConversionSettings } from "@/lib/cms/engagement";
-import { countryName } from "@/lib/locale";
+import { countryInText } from "@/lib/locale";
 import { moneyFormatter } from "@/lib/money";
 import { getStoreLocale } from "@/lib/store-locale";
 import type { FaqItem } from "@/lib/types";
@@ -177,7 +177,7 @@ export default async function InstallmentsPage() {
           </>
         ) : (
           <>
-            <p className="mb-5 text-sm text-muted">We&apos;re finalising partnerships with banks in {countryName(loc.country)}. Partner names, eligible cards and exact terms will be announced at launch.</p>
+            <p className="mb-5 text-sm text-muted">We&apos;re finalising partnerships with banks in {countryInText(loc.country)}. Partner names, eligible cards and exact terms will be announced at launch.</p>
             <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {BANKS.map((b) => (
                 <li key={b} className="card flex flex-col items-center justify-center gap-1 p-5 text-center">

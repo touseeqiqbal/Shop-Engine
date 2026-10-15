@@ -28,7 +28,7 @@ import { readLocalAddresses, writeLocalAddresses } from "@/lib/addresses";
 import { deliveryEstimate, freeDeliveryAbove } from "@/lib/cities";
 import { orderTotals } from "@/lib/order-totals";
 import { checkoutMethods, type CheckoutMethod, type PaymentIcon } from "@/lib/payments/methods";
-import { countryName } from "@/lib/locale";
+import { deliveryArea } from "@/lib/locale";
 import { normalizePhone, phonePlaceholder } from "@/lib/phone";
 import type { PaymentMethod, SavedAddress, StoreSettings } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -411,7 +411,7 @@ export function CheckoutForm({
           </div>
         </Section>
 
-        <Section step={2} title="Delivery address" subtitle={pk ? "We deliver all over Pakistan via TCS, Leopards, M&P, Trax, PostEx & Call Courier" : `We deliver across ${countryName(loc.country)}`}>
+        <Section step={2} title="Delivery address" subtitle={pk ? "We deliver all over Pakistan via TCS, Leopards, M&P, Trax, PostEx & Call Courier" : `We deliver ${deliveryArea(loc.country)}`}>
           {addresses.length > 0 && (
             <div className="mb-5">
               <p className="label">Saved addresses</p>
@@ -487,7 +487,7 @@ export function CheckoutForm({
               />
             </Field>
             <Field id={fid("landmark")} label="Nearest landmark" optional error={errors.landmark}>
-              <input {...fieldAria(fid("landmark"), errors.landmark)} name="landmark" placeholder="e.g. near Imtiaz Supermarket" value={f.landmark} onChange={set("landmark")} maxLength={120} />
+              <input {...fieldAria(fid("landmark"), errors.landmark)} name="landmark" placeholder={pk ? "e.g. near Imtiaz Supermarket" : "e.g. opposite the park entrance"} value={f.landmark} onChange={set("landmark")} maxLength={120} />
             </Field>
             <Field id={fid("notes")} label="Order notes" optional error={errors.notes}>
               <input {...fieldAria(fid("notes"), errors.notes)} name="notes" placeholder="Preferred delivery time, etc." value={f.notes} onChange={set("notes")} maxLength={500} />

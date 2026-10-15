@@ -43,7 +43,7 @@ import { EmiBlock, ProductQuestions, StockPriceAlert } from "@/components/produc
 import { conditionMeta, effectivePrice, truncate } from "@/lib/utils";
 import { isWholesaleAvailable } from "@/lib/wholesale";
 import type { CatalogProduct } from "@/lib/types";
-import { countryName, type StoreLocale } from "@/lib/locale";
+import { countryInText, type StoreLocale } from "@/lib/locale";
 import { formatMoney } from "@/lib/money";
 import { getStoreLocale } from "@/lib/store-locale";
 
@@ -77,7 +77,7 @@ function metaTitle(p: CatalogProduct, site: SiteInfo, loc: StoreLocale) {
   const fit = (base: string, ...extra: string[]) => extra.reduce((t, part) => ((t + part).length <= 65 ? t + part : t), base);
   if (p.priceOnRequest) return fit(p.name, " – Wholesale Price on Request", SUFFIX);
   const cond = p.condition ? ` – ${conditionMeta[p.condition].label}` : "";
-  return fit(`${p.name} Price in ${countryName(loc.country)}`, cond, SUFFIX);
+  return fit(`${p.name} Price in ${countryInText(loc.country)}`, cond, SUFFIX);
 }
 
 function metaDescription(p: CatalogProduct, site: SiteInfo, loc: StoreLocale) {
@@ -88,7 +88,7 @@ function metaDescription(p: CatalogProduct, site: SiteInfo, loc: StoreLocale) {
   const allOver = loc.country === "PK" ? "all over Pakistan" : "nationwide";
   const lead = p.priceOnRequest
     ? `${p.name}${cond} – wholesale price on request.`
-    : `Buy ${p.name}${cond} at ${formatMoney(effectivePrice(p), loc)} in ${countryName(loc.country)}.`;
+    : `Buy ${p.name}${cond} at ${formatMoney(effectivePrice(p), loc)} in ${countryInText(loc.country)}.`;
   const tail = p.priceOnRequest
     ? ` Request a bulk quote from ${from} – delivery ${allOver}.`
     : ` Cash on Delivery & delivery ${allOver} from ${from}.`;

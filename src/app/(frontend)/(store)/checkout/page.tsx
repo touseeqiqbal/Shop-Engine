@@ -10,7 +10,7 @@ import { pageMetadata } from "@/lib/seo";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import type { SavedAddress } from "@/lib/types";
 import { getStoreLocale } from "@/lib/store-locale";
-import { countryName } from "@/lib/locale";
+import { deliveryArea } from "@/lib/locale";
 import { checkoutMethods } from "@/lib/payments/methods";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return pageMetadata({
     locale: loc,
     title: `Secure Checkout | ${name}`,
-    description: `Complete your order${pay ? ` – ${pay}` : ""}. Delivery ${loc.country === "PK" ? "all over Pakistan" : `across ${countryName(loc.country)}`}.`,
+    description: `Complete your order${pay ? ` – ${pay}` : ""}. Delivery ${deliveryArea(loc.country)}.`,
     path: "/checkout",
     noindex: true,
   });
@@ -53,7 +53,7 @@ export default async function CheckoutPage() {
             <span className="gradient-text">Checkout</span>
           </h1>
           <p className="mt-1 flex items-center gap-1.5 text-sm text-muted">
-            <Lock className="size-3.5 text-emerald-400" aria-hidden="true" /> Secure checkout · Delivery {loc.country === "PK" ? "all over Pakistan" : `across ${countryName(loc.country)}`}
+            <Lock className="size-3.5 text-emerald-400" aria-hidden="true" /> Secure checkout · Delivery {deliveryArea(loc.country)}
           </p>
         </div>
         {!user && isDatabaseConfigured && (

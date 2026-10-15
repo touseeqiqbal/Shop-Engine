@@ -21,6 +21,8 @@ import { primaryPhone, storePlace, type SiteInfo } from "@/lib/site-info";
 import { getCurrentStore } from "@/lib/tenant";
 import type { FaqItem } from "@/lib/types";
 import { WHOLESALE_CATEGORY_SLUG, WHOLESALE_PATH, isWholesaleAvailable, wholesaleMinQty } from "@/lib/wholesale";
+import { getStoreLocale } from "@/lib/store-locale";
+import { countryInText, deliveryArea } from "@/lib/locale";
 
 // Title/description/share image can be overridden in /cms → Online store → Page texts.
 export async function generateMetadata(): Promise<Metadata> {
@@ -75,7 +77,7 @@ const steps = (site: SiteInfo) => [
   { icon: PackageCheck, title: "Packed & delivered", text: "Units are packed securely and shipped by courier or cargo with an invoice and warranty." },
 ];
 
-const faqs = (site: SiteInfo): FaqItem[] => [
+const faqs = (site: SiteInfo, country: string): FaqItem[] => [
   {
     q: "Why don't you publish wholesale prices?",
     a: "Wholesale prices depend on the quantity, grade, specs and the current dollar rate, which changes almost daily. To give you the best real price we quote every bulk order individually – just send the quote form or WhatsApp us.",
@@ -94,7 +96,7 @@ const faqs = (site: SiteInfo): FaqItem[] => [
   },
   {
     q: `Do you deliver wholesale orders ${site.address.city ? `outside ${site.address.city}` : "to other cities"}?`,
-    a: "Yes, we deliver all over Pakistan. Smaller bulk orders go by courier (TCS, Leopards, M&P and others) and larger lots or pallets by cargo. Delivery charges are included in your quote.",
+    a: `Yes, we deliver ${deliveryArea(country)}. Smaller bulk orders go by courier (${country === "PK" ? "TCS, Leopards, M&P and others" : "our usual couriers"}) and larger lots or pallets by cargo. Delivery charges are included in your quote.`,
   },
   {
     q: "Can I inspect the laptops before paying the full amount?",
@@ -137,7 +139,7 @@ function serviceJsonLd() {
 }
 
 export default async function WholesalePage({ searchParams }: { searchParams: SP }) {
-  const [sp, all, site] = await Promise.all([searchParams, getAllProducts(), getSiteInfo()]);
+  const [sp, all, site, { country }] = await Promise.all([searchParams, getAllProducts(), getSiteInfo(), getStoreLocale()]);
   const initialItems = await prefill(sp);
 
   const lots = all.filter((p) => p.topCategorySlug === WHOLESALE_CATEGORY_SLUG || p.priceOnRequest);
@@ -146,7 +148,7 @@ export default async function WholesalePage({ searchParams }: { searchParams: SP
   const waText = `Hi ${site.name}! I'd like a wholesale quote for bulk laptops / accessories.`;
   const phone = primaryPhone(site);
   const place = storePlace(site);
-  const FAQS = faqs(site);
+  const FAQS = faqs(site, country);
 
   return (
     <div className="pb-16">
@@ -159,13 +161,13 @@ export default async function WholesalePage({ searchParams }: { searchParams: SP
         eyebrow={`Wholesale & bulk orders${place ? ` · ${place}` : ""}`}
         title={
           <>
-            Wholesale <span className="gradient-text">Laptops &amp; Accessories</span> in Pakistan
+            Wholesale <span className="gradient-text">Laptops &amp; Accessories</span> in {countryInText(country)}
           </>
         }
         description={
           <>
             Bulk used laptops, mixed laptop lots and accessories by the box for computer shops, resellers, offices and institutes. Checked &amp; tested
-            {place ? ` in ${place}` : ""} and delivered all over Pakistan – <strong className="text-fg">price on request</strong>.
+            {place ? ` in ${place}` : ""} and delivered {deliveryArea(country)} – <strong className="text-fg">price on request</strong>.
           </>
         }
         glow="from-cyan-500/25 via-blue-500/20 to-violet-500/15"

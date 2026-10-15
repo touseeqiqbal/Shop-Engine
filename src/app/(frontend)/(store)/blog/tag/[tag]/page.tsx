@@ -9,6 +9,7 @@ import { storePlace } from "@/lib/site-info";
 import { blogTagSlug, blogTags } from "@/lib/blog";
 import { pageMetadata } from "@/lib/seo";
 import { getStoreLocale } from "@/lib/store-locale";
+import { countryInText } from "@/lib/locale";
 
 export const revalidate = 300;
 
@@ -30,10 +31,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const [{ name, posts }, site] = await Promise.all([load(tag), getSiteInfo()]);
   if (!name) return {};
   const place = storePlace(site);
+  const locale = await getStoreLocale();
   return pageMetadata({
-    locale: await getStoreLocale(),
+    locale,
     title: `${name.charAt(0).toUpperCase() + name.slice(1)} – Articles & Guides | ${site.name}`,
-    description: `Read ${posts.length} ${site.name} article${posts.length === 1 ? "" : "s"} about ${name}: buying advice, prices in Pakistan and expert tips from our ${place ? `${place} ` : ""}laptop shop.`,
+    description: `Read ${posts.length} ${site.name} article${posts.length === 1 ? "" : "s"} about ${name}: buying advice, prices in ${countryInText(locale.country)} and expert tips from our ${place ? `${place} ` : ""}laptop shop.`,
     path: `/blog/tag/${tag}`,
     // Thin tag archives stay crawlable but out of the index.
     noindex: posts.length < 2,

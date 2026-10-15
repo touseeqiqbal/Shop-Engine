@@ -1,6 +1,6 @@
 "use client";
 import { useField } from "@payloadcms/ui";
-import { countryName } from "../../lib/locale";
+import { countryInText, countryName } from "../../lib/locale";
 import { gatewaysFor, LOCAL_METHOD_IDEAS } from "../../lib/payments/catalog";
 import { useAdminLocale } from "./ui/store-context";
 
@@ -24,7 +24,7 @@ export function PaymentIdeas() {
         )}
       </p>
       <p style={{ margin: "4px 0 0", color: "var(--theme-elevation-600)" }}>
-        Online card payments: {gateways.length ? `${gateways.map((g) => g.label).join(", ")} – connect it in Account → Stores → Online payments.` : `no connected provider works in ${countryName(country)} yet – use bank transfer, cash on delivery or your own methods.`}
+        Online card payments: {gateways.length ? `${gateways.map((g) => g.label).join(", ")} – connect it in Account → Stores → Online payments.` : `no connected provider works in ${countryInText(country)} yet – use bank transfer, cash on delivery or your own methods.`}
       </p>
     </div>
   );

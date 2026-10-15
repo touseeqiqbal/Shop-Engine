@@ -14,6 +14,7 @@ import { FinderPanel } from "@/components/shop/finder-panel";
 import { getCategoryCounts } from "@/components/shop/data";
 import { shouldNoindex, type RawSearchParams } from "@/components/shop/params";
 import { getStoreLocale } from "@/lib/store-locale";
+import { countryInText, deliveryArea } from "@/lib/locale";
 
 /*
  * Category / sub-category listing. Filters live in the URL – see src/components/shop/params.ts for the scheme:
@@ -33,12 +34,14 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
   const [category, site] = await Promise.all([getCategoryBySlug(slug), getSiteInfo()]);
   if (!category) return { title: "Category not found", robots: { index: false } };
   const place = storePlace(site);
+  const locale = await getStoreLocale();
+  const where = countryInText(locale.country);
   return pageMetadata({
-    locale: await getStoreLocale(),
-    title: category.seoTitle || `${category.name} Price in Pakistan | ${site.name}`,
+    locale,
+    title: category.seoTitle || `${category.name} Price in ${where} | ${site.name}`,
     description:
       category.seoDescription ||
-      `Buy ${category.name.toLowerCase()} online at the best price in Pakistan. ${category.shortDescription} Cash on Delivery, warranty & fast delivery${place ? ` from ${place}` : ""} to all cities.`,
+      `Buy ${category.name.toLowerCase()} online at the best price in ${where}. ${category.shortDescription} Cash on Delivery, warranty & fast delivery${place ? ` from ${place}` : ""} to all cities.`,
     path: `/category/${category.slug}`,
     image: category.image,
     noindex: shouldNoindex(sp) || category.seoNoindex,
@@ -48,7 +51,7 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
 
 export default async function CategoryPage({ params, searchParams }: Props) {
   const [{ slug }, sp] = await Promise.all([params, searchParams]);
-  const category = await getCategoryBySlug(slug);
+  const [category, { country }] = await Promise.all([getCategoryBySlug(slug), getStoreLocale()]);
   if (!category) notFound();
 
   const lineage = await getCategoryLineage(category);
@@ -69,7 +72,7 @@ export default async function CategoryPage({ params, searchParams }: Props) {
     <div className="container-x pb-16">
       <PageHero
         crumbs={[{ name: "Categories", href: "/category" }, ...lineage.map((c) => ({ name: c.name, href: `/category/${c.slug}` }))]}
-        eyebrow={`${counts[category.id] ?? 0} products · Delivery all over Pakistan`}
+        eyebrow={`${counts[category.id] ?? 0} products · Delivery ${deliveryArea(country)}`}
         title={category.name}
         description={<p>{category.shortDescription}</p>}
         icon={<CategoryIcon name={icon} className="size-7" />}

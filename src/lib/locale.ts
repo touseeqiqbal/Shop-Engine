@@ -102,6 +102,13 @@ export function toCountryCode(value: string | null | undefined): string | null {
   return byName.get(v.toLowerCase()) ?? null;
 }
 
+// names that read with "the" in a sentence
+const WITH_THE = new Set(["US", "GB", "AE", "NL", "PH", "BS", "GM", "MV", "CF", "DO", "KM", "SB"]);
+/** A country's name as it reads in a sentence: "Pakistan", "the United States". */
+export const countryInText = (code: string) => (WITH_THE.has(code) ? `the ${countryName(code)}` : countryName(code));
+/** Where a store delivers, in words: "all over Pakistan" (the original shop's wording) or "across the United States". */
+export const deliveryArea = (code: string) => (code === "PK" ? "all over Pakistan" : `across ${countryInText(code)}`);
+
 /** The starting currency / time zone / dialling code of a country. */
 export function countryDefaults(code: string): { currency: string; timezone: string; dial: string } {
   const row = C[toCountryCode(code) ?? ""] ?? C.PK;

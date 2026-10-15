@@ -8,6 +8,8 @@ import { getPageMeta } from "@/lib/page-seo";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { storePlace } from "@/lib/site-info";
 import { getCurrentStore } from "@/lib/tenant";
+import { getStoreLocale } from "@/lib/store-locale";
+import { deliveryArea } from "@/lib/locale";
 
 /** The original (default) store – or demo mode, which is that store. The hand-written texts below are about its Saddar shop. */
 async function isOriginalStore() {
@@ -27,7 +29,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function ContactPage() {
-  const [site, original] = await Promise.all([getSiteInfo(), isOriginalStore()]); // live business profile (/cms → Settings → Store details)
+  const [site, original, { country }] = await Promise.all([getSiteInfo(), isOriginalStore(), getStoreLocale()]); // live business profile (/cms → Settings → Store details)
   const place = storePlace(site);
   return (
     <div className="pb-16">
@@ -150,7 +152,7 @@ export default async function ContactPage() {
               </div>
             </address>
             <div className="mt-auto rounded-2xl border border-border bg-surface p-4 text-sm text-muted">
-              <strong className="text-fg">Delivery all over Pakistan.</strong>{" "}
+              <strong className="text-fg">Delivery {deliveryArea(country)}.</strong>{" "}
               {original ? "Karachi same / next day, major cities 1–3 working days, other areas 3–5 working days – with Cash on Delivery." : "With Cash on Delivery."}
             </div>
           </section>

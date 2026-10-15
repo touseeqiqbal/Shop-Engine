@@ -24,6 +24,7 @@ import { Markdown } from "@/components/ui/markdown";
 import { getPageMeta } from "@/lib/page-seo";
 import { getResolvedPageContent } from "@/lib/repo/site-content";
 import { getCurrentStore } from "@/lib/tenant";
+import { countryInText, deliveryArea } from "@/lib/locale";
 
 export const revalidate = 300;
 
@@ -33,7 +34,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 const STATS = [
   { value: "30+", label: "point inspection on every used laptop" },
-  { value: "1–5 days", label: "delivery to any city in Pakistan" },
+  { value: "1–5 days", label: "delivery to any city in {country}" },
   { value: "Warranty", label: "on every laptop and part" },
   { value: "COD", label: "Cash on Delivery nationwide" },
 ];
@@ -53,7 +54,7 @@ const PROCESS = [
   { icon: MonitorCheck, title: "Display & keyboard", text: "Dead-pixel, backlight and key-by-key tests, plus webcam, mic and speakers." },
   { icon: Thermometer, title: "Stress test", text: "CPU, SSD and thermals are load-tested so there are no surprises after delivery." },
   { icon: ShieldCheck, title: "Clean install", text: "Fresh Windows setup with drivers, then a final clean and quality check before listing." },
-  { icon: PackageCheck, title: "Pack & ship", text: "Bubble-wrapped, boxed and dispatched with tracking via trusted couriers all over Pakistan." },
+  { icon: PackageCheck, title: "Pack & ship", text: "Bubble-wrapped, boxed and dispatched with tracking via trusted couriers {allOver}." },
 ];
 
 export default async function AboutPage() {
@@ -62,6 +63,9 @@ export default async function AboutPage() {
   // the original (default) shop's own wording; any other store: its own area (Settings → Store details) or none
   const original = !store || store.isDefault;
   const area = (s: string) => s.replace("{area}", c.info.address.area ? `${c.info.address.area} ` : "");
+  // the store's own country ("in Pakistan" / "in the United States")
+  const country = store?.country ?? "PK";
+  const where = (s: string) => s.replace("{country}", countryInText(country)).replace("{allOver}", deliveryArea(country));
   return (
     <div className="pb-16">
       <PageHero
@@ -77,10 +81,10 @@ export default async function AboutPage() {
         <dl className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {STATS.map((s) => (
             <div key={s.label} className="card p-4">
-              <dt className="sr-only">{s.label}</dt>
+              <dt className="sr-only">{where(s.label)}</dt>
               <dd>
                 <span className="block font-display text-2xl font-bold text-fg sm:text-3xl">{s.value}</span>
-                <span className="mt-1 block text-xs text-muted">{s.label}</span>
+                <span className="mt-1 block text-xs text-muted">{where(s.label)}</span>
               </dd>
             </div>
           ))}
@@ -101,7 +105,7 @@ export default async function AboutPage() {
               {[
                 ["Honest grading", "Used A+, Used A, Refurbished and New – clearly labelled with real photos and notes."],
                 ["Right part, first time", "Our Find Parts tool and WhatsApp support match chargers, batteries and RAM to your exact model."],
-                ["Fair laptop prices in Pakistan", "Prices are updated daily to stay in line with the market."],
+                [where("Fair laptop prices in {country}"), "Prices are updated daily to stay in line with the market."],
                 ["Free installation", area("SSD, RAM and battery installation free at our {area}shop when you buy from us.")],
                 ["Real after-sales", "A physical shop you can walk into – not just a page on social media."],
               ].map(([t, d]) => (
@@ -155,7 +159,7 @@ export default async function AboutPage() {
                   <span className="absolute right-5 top-4 font-display text-3xl font-bold text-fg/10">{String(i + 1).padStart(2, "0")}</span>
                   <p.icon className="size-6 text-sky-400" aria-hidden="true" />
                   <h3 className="mt-3 font-bold text-fg">{p.title}</h3>
-                  <p className="mt-1 text-sm text-muted">{p.text}</p>
+                  <p className="mt-1 text-sm text-muted">{where(p.text)}</p>
                 </li>
               ))}
             </ol>
@@ -168,7 +172,7 @@ export default async function AboutPage() {
 
         <section className="grid gap-4 md:grid-cols-3" aria-label="Delivery and policies">
           {[
-            { icon: Truck, title: "Delivery all over Pakistan", text: original ? "Karachi same / next day; major cities 1–3 days; other areas 3–5 days." : "Fast, tracked delivery to every city.", href: "/shipping-policy", cta: "Shipping policy" },
+            { icon: Truck, title: `Delivery ${deliveryArea(country)}`, text: original ? "Karachi same / next day; major cities 1–3 days; other areas 3–5 days." : "Fast, tracked delivery to every city.", href: "/shipping-policy", cta: "Shipping policy" },
             { icon: ShieldCheck, title: "Warranty you can use", text: "Checking warranty on used laptops, up to 6 months on refurbished, brand warranty on new.", href: "/warranty-returns", cta: "Warranty & returns" },
             { icon: PackageCheck, title: "Questions answered", text: "Payments, COD, delivery, grades and returns – all explained.", href: "/faqs", cta: "Read FAQs" },
           ].map((c) => (

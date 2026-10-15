@@ -21,7 +21,7 @@ const brand = (await one("brands", { and: [{ store: { equals: storeId } }, { slu
 // a published product needs a photo
 const photo = (await one("media", { and: [{ store: { equals: storeId } }, { alt: { equals: "Demo product" } }] })) ?? ((await payload.create({ collection: "media", data: { store: storeId, alt: "Demo product" } as never, filePath: "public/icon-512.png", ...inStore })) as unknown as Doc);
 for (const p of [
-  { title: "Acme Wireless Earbuds", slug: "acme-wireless-earbuds", sku: "ACM-EB1", price: 79.99, salePrice: 59.99, stock: 25 },
+  { title: "Acme Wireless Earbuds", slug: "acme-wireless-earbuds", sku: "ACM-EB1", price: 59.99, compareAtPrice: 79.99, stock: 25 },
   { title: "Acme Studio Headphones", slug: "acme-studio-headphones", sku: "ACM-HP2", price: 149.5, stock: 8 },
 ]) {
   const found = await one("products", { and: [{ store: { equals: storeId } }, { slug: { equals: p.slug } }] });
@@ -46,5 +46,14 @@ const ship = await one("store-shipping", { store: { equals: storeId } });
 const shipData = { store: storeId, freeDeliveryThreshold: 100, defaultCharge: 12.5, zones: [{ name: "New York City", places: ["New York", "Brooklyn", "100*", "112*"], charge: 4.99, estimate: "Next day" }, { name: "Rest of the US", rest: true, charge: 9.99 }] };
 if (ship) await payload.update({ collection: "store-shipping" as never, id: Number(ship.id), data: shipData as never, ...inStore });
 else await payload.create({ collection: "store-shipping" as never, data: shipData as never, ...inStore });
+// its owner, for looking at /cms (2-step on with a fixed TEST secret: JBSWY3DPEHPK3PXP – local test database only)
+const { encrypt } = await import("../../src/payload/two-factor");
+const email = "owner@usdemo.test";
+let owner = await one("users", { email: { equals: email } });
+if (!owner)
+  owner = (await payload.create({ collection: "users", data: { email, password: "Demo-Owner-2026!", name: "Demo Owner", role: "customer", platformRole: "merchant_owner", emailVerified: true, currentStore: storeId } as never, ...sys })) as unknown as Doc;
+await payload.update({ collection: "users", id: Number(owner.id), data: { currentStore: storeId, twoFactor: { enabled: true, secret: encrypt("JBSWY3DPEHPK3PXP"), lastStep: 0, failedCodes: 0, lockedUntil: null } } as never, ...sys, context: { ...sys.context, twoFactorUpdate: true } });
+if (!(await one("store-memberships", { and: [{ store: { equals: storeId } }, { user: { equals: owner.id } }] })))
+  await payload.create({ collection: "store-memberships", data: { store: storeId, user: owner.id, email, role: "store_owner", status: "active" } as never, ...sys });
 console.log(`Demo US store #${storeId} ready (${store.country} ${store.currency} ${store.timezone})`);
 process.exit(0);

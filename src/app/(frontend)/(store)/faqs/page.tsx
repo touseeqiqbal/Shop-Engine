@@ -11,6 +11,8 @@ import { faqJsonLd } from "@/lib/seo";
 import { getPageMeta } from "@/lib/page-seo";
 import { slugify } from "@/lib/utils";
 import type { FaqItem } from "@/lib/types";
+import { getStoreLocale } from "@/lib/store-locale";
+import { deliveryArea } from "@/lib/locale";
 
 export const revalidate = 300;
 
@@ -19,7 +21,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function FaqsPage() {
-  const [faqs, site] = await Promise.all([getFaqs(), getSiteInfo()]);
+  const [faqs, site, { country }] = await Promise.all([getFaqs(), getSiteInfo(), getStoreLocale()]);
   const place = storePlace(site); // where the store is (Settings → Store details)
   const groups = new Map<string, FaqItem[]>();
   for (const f of faqs) {
@@ -38,7 +40,7 @@ export default async function FaqsPage() {
             Frequently asked <span className="gradient-text">questions</span>
           </>
         }
-        description={`Everything you need to know about ordering laptops and accessories from our ${place ? `${place} ` : ""}store – with delivery all over Pakistan.`}
+        description={`Everything you need to know about ordering laptops and accessories from our ${place ? `${place} ` : ""}store – with delivery ${deliveryArea(country)}.`}
       />
 
       <div className="container-x mt-8 grid gap-10 sm:mt-12 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-14">

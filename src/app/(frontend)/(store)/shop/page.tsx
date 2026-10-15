@@ -11,6 +11,7 @@ import { PageHero } from "@/components/shop/page-hero";
 import { ProductListing } from "@/components/shop/product-listing";
 import { shouldNoindex, type RawSearchParams } from "@/components/shop/params";
 import { getStoreLocale } from "@/lib/store-locale";
+import { deliveryArea } from "@/lib/locale";
 
 /*
  * All products + search results (?q=). Same URL filter scheme as category pages (see components/shop/params.ts);
@@ -29,10 +30,11 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   const q = getQ(sp);
   if (!q) return getPageMeta("/shop", { noindex: shouldNoindex(sp) });
   const { name } = await getSiteInfo();
+  const locale = await getStoreLocale();
   return pageMetadata({
-    locale: await getStoreLocale(),
+    locale,
     title: `Search results for "${q}" | ${name}`,
-    description: `Products matching "${q}" at ${name} – laptops, chargers, batteries & accessories with Cash on Delivery all over Pakistan.`,
+    description: `Products matching "${q}" at ${name} – laptops, chargers, batteries & accessories, delivered ${deliveryArea(locale.country)}.`,
     path: "/shop",
     noindex: shouldNoindex(sp),
   });

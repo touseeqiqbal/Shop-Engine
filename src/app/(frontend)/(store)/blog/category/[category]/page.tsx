@@ -9,6 +9,7 @@ import { storePlace } from "@/lib/site-info";
 import { blogCategories, blogCategorySlug } from "@/lib/blog";
 import { pageMetadata } from "@/lib/seo";
 import { getStoreLocale } from "@/lib/store-locale";
+import { countryInText } from "@/lib/locale";
 
 export const revalidate = 300;
 
@@ -29,10 +30,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const [{ name, posts }, site] = await Promise.all([load(category), getSiteInfo()]);
   if (!name) return {};
   const place = storePlace(site, " ");
+  const locale = await getStoreLocale();
   return pageMetadata({
-    locale: await getStoreLocale(),
+    locale,
     title: `${name} – Laptop & Tech Articles | ${site.name} Blog`,
-    description: `${posts.length} ${name.toLowerCase()} article${posts.length === 1 ? "" : "s"} from ${site.name}${place ? `, ${place}` : ""}: practical advice on laptops, prices in Pakistan, chargers and accessories.`,
+    description: `${posts.length} ${name.toLowerCase()} article${posts.length === 1 ? "" : "s"} from ${site.name}${place ? `, ${place}` : ""}: practical advice on laptops, prices in ${countryInText(locale.country)}, chargers and accessories.`,
     path: `/blog/category/${category}`,
   });
 }
