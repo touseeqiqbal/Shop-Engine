@@ -340,6 +340,8 @@ export interface ShippingZone {
   cities: string[];
   /** Any country: cities, areas or postcode starts typed by the store (matched without case; "SW1*" = postcodes starting SW1) */
   places?: string[];
+  /** ISO codes of the countries this zone covers; empty = the store's own country */
+  countries?: string[];
   /** Catch-all zone for every city not in another zone */
   rest?: boolean;
   charge: number;
@@ -401,6 +403,8 @@ export interface StoreSettings {
   currency?: string;
   /** ISO country of the store (address form, phone numbers, which payment methods exist) */
   country?: string;
+  /** other countries the store delivers to (ISO codes; empty = only its own) */
+  shipTo?: string[];
 }
 
 export interface Redirect {
@@ -485,6 +489,8 @@ export interface SavedAddress {
   landmark?: string;
   region?: string;
   postalCode?: string;
+  /** ISO code, when the store delivers abroad */
+  country?: string;
   isDefault?: boolean;
 }
 

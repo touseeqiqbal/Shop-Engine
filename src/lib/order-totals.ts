@@ -16,6 +16,8 @@ export function orderTotals(input: {
   discount: number;
   city: string | null | undefined;
   postalCode?: string | null;
+  /** the address's country (ISO); default the store's own */
+  country?: string | null;
   method: string;
   settings: StoreSettings;
   freeShipping?: boolean;
@@ -28,7 +30,7 @@ export function orderTotals(input: {
   const delivery = input.freeShipping
     ? 0
     : input.city
-      ? deliveryCharge(input.city, goods, settings, input.postalCode ?? "")
+      ? deliveryCharge(input.city, goods, settings, input.postalCode ?? "", input.country)
       : settings.freeDeliveryThreshold > 0 && goods >= settings.freeDeliveryThreshold
         ? 0
         : null;

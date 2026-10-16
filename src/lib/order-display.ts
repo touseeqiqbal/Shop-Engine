@@ -1,5 +1,6 @@
 /** Client-safe display helpers for orders (labels, payment instructions). `src/lib/repo/orders.ts` is server-only. */
 import { intlDigits } from "./phone";
+import { countryName } from "./locale";
 import { BUILT_IN_METHODS, findCheckoutMethod, paymentLabel } from "./payments/methods";
 import type { OrderStatus, PaymentMethod, PaymentStatus, StoreSettings } from "./types";
 
@@ -42,8 +43,12 @@ export function toIntlPkPhone(phone: string, country = "PK") {
   return intlDigits(phone, country);
 }
 
-/** "Lahore" / "Austin, TX 78701" – the city line of an address (state and postcode when the customer gave them). */
-export function cityLine(c: { city?: string | null; region?: string | null; postalCode?: string | null }) {
+/**
+ * "Lahore" / "Austin, TX 78701" – the city line of an address (state and postcode when the customer gave them), with
+ * the country's name when the parcel goes abroad (`home` = the store's country).
+ */
+export function cityLine(c: { city?: string | null; region?: string | null; postalCode?: string | null; country?: string | null }, home?: string) {
   const tail = [c.region, c.postalCode].map((v) => (v ?? "").trim()).filter(Boolean).join(" ");
-  return [c.city?.trim(), tail].filter(Boolean).join(", ");
+  const abroad = c.country && home && c.country !== home ? countryName(c.country) : "";
+  return [c.city?.trim(), tail, abroad].filter(Boolean).join(", ");
 }

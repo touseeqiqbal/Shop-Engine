@@ -1,6 +1,6 @@
 "use client";
 import { useField } from "@payloadcms/ui";
-import { countryInText, countryName } from "../../lib/locale";
+import { countryInText } from "../../lib/locale";
 import { gatewaysFor, LOCAL_METHOD_IDEAS } from "../../lib/payments/catalog";
 import { useAdminLocale } from "./ui/store-context";
 
@@ -12,7 +12,7 @@ export function PaymentIdeas() {
   const gateways = gatewaysFor(country, currency);
   return (
     <div className="field-type" style={{ margin: "8px 0 16px", padding: "12px 14px", borderRadius: 8, background: "var(--theme-elevation-50)", fontSize: 13, lineHeight: 1.5 }}>
-      <strong>Payments in {countryName(country)}</strong>
+      <strong>Payments in {countryInText(country)}</strong>
       <p style={{ margin: "4px 0 0" }}>
         {ideas.length ? (
           <>

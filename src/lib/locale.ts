@@ -91,6 +91,8 @@ export function countryName(code: string, displayLocale = "en"): string {
   }
 }
 
+// short names people type
+const ALIASES: Record<string, string> = { UK: "GB", USA: "US", UAE: "AE", KSA: "SA", "GREAT BRITAIN": "GB", ENGLAND: "GB", HOLLAND: "NL" };
 let byName: Map<string, string> | null = null;
 /** Country code from a code or an English name ("Pakistan" → "PK"); null when unknown. */
 export function toCountryCode(value: string | null | undefined): string | null {
@@ -98,6 +100,7 @@ export function toCountryCode(value: string | null | undefined): string | null {
   if (!v) return null;
   const upper = v.toUpperCase();
   if (C[upper]) return upper;
+  if (ALIASES[upper]) return ALIASES[upper];
   byName ??= new Map(COUNTRY_CODES.map((c) => [countryName(c).toLowerCase(), c]));
   return byName.get(v.toLowerCase()) ?? null;
 }

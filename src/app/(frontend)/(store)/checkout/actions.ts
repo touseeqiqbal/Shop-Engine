@@ -7,9 +7,9 @@ import { z } from "zod";
 import { priceCart } from "@/lib/cart-pricing";
 import { resolveDiscounts } from "@/lib/coupons";
 import { orderTotals } from "@/lib/order-totals";
-import { PAKISTAN_CITIES, shippingZoneFor } from "@/lib/cities";
+import { PAKISTAN_CITIES, shippingZoneFor, shipsTo } from "@/lib/cities";
 import { findCheckoutMethod } from "@/lib/payments/methods";
-import { storeLocale, type StoreLocale } from "@/lib/locale";
+import { countryName, storeLocale, toCountryCode, type StoreLocale } from "@/lib/locale";
 import { moneyFormatter } from "@/lib/money";
 import { normalizePhone, phonePlaceholder } from "@/lib/phone";
 import { advanceReason, getProtectionSettings, isBlockedPhone, needsConfirmation, newConfirmation, riskFor } from "@/lib/protection";
@@ -142,9 +142,12 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   const storeId = store?.id ?? null;
   // the store's country, currency and time zone: address form, phone numbers and amounts follow them
   const loc = storeLocale(store);
+  // where the parcel goes (a store that delivers abroad shows a country picker; checked against its list below)
+  const shipCountry = toCountryCode(str(fd, "country")) ?? loc.country;
   const money = moneyFormatter(loc);
 
-  const parsed = checkoutSchema(loc).safeParse({
+  // phone, city and address rules of the address's country
+  const parsed = checkoutSchema({ ...loc, country: shipCountry }).safeParse({
     name: str(fd, "name"),
     phone: str(fd, "phone"),
     email: str(fd, "email").trim(),
@@ -191,6 +194,8 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   if (priced.problems.length || priced.items.length === 0)
     return { ok: false, message: priced.problems[0] ?? "Your cart is empty.", fieldErrors: { items: priced.problems.join(" ") || "Your cart is empty" }, ts };
   // the method must be one this store offers right now (built-in, the store's own, or its connected card provider)
+  if (!shipsTo(settings, shipCountry))
+    return { ok: false, message: `Sorry – we don't deliver to ${countryName(shipCountry)}.`, fieldErrors: { city: "Choose a country we deliver to" }, ts };
   const method = findCheckoutMethod(data.paymentMethod, settings);
   if (!method)
     return { ok: false, message: "This payment method isn't available right now – please choose another.", fieldErrors: { paymentMethod: "Please choose another payment method" }, ts };
@@ -206,7 +211,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   const couponCode = discounts.code ?? (discounts.applied.length === 1 ? discounts.applied[0].code : null);
 
   // COD handling fee (/cms → Settings → Payments) is recorded as part of the delivery charge
-  const totals = orderTotals({ subtotal, discount, city: data.city, postalCode: data.postalCode, method: data.paymentMethod, settings, freeShipping: discounts.freeShipping });
+  const totals = orderTotals({ subtotal, discount, city: data.city, postalCode: data.postalCode, country: shipCountry, method: data.paymentMethod, settings, freeShipping: discounts.freeShipping });
   const delivery = (totals.delivery ?? 0) + totals.fee;
   const total = totals.total;
   const expected = Number(str(fd, "expectedTotal"));
@@ -299,7 +304,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   let confirmation: OrderConfirmation | null = null;
   if (isCmsConfigured && !card) {
     const prot = await getProtectionSettings(storeId).catch(() => null);
-    const zoneName = shippingZoneFor(data.city, settings, data.postalCode)?.name ?? null;
+    const zoneName = shippingZoneFor(data.city, settings, data.postalCode, shipCountry)?.name ?? null;
     // An uploaded advance isn't checked yet, so it can't replace the confirmation; approving it in /cms confirms the order.
     // …and only when we can actually send the customer the link/code; otherwise staff confirm by phone.
     if (prot && needsConfirmation({ paymentMethod: method.id, paymentDue: method.due, total, zoneName, advancePaid: false }, prot)) {
@@ -323,7 +328,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       ...(data.landmark ? { landmark: data.landmark } : {}),
       ...(data.region ? { region: data.region } : {}),
       ...(data.postalCode ? { postalCode: data.postalCode.toUpperCase() } : {}),
-      country: loc.country,
+      country: shipCountry,
     },
     items: priced.items,
     subtotal,
@@ -471,7 +476,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       if (!dup)
         await updateUserProfile(order.userId, {
           addresses: [
-            { id: randomUUID(), label: existing.length ? `Address ${existing.length + 1}` : "Home", name: data.name, phone: data.phone, city: data.city, address: data.address, landmark: data.landmark || undefined, region: data.region || undefined, postalCode: data.postalCode || undefined },
+            { id: randomUUID(), label: existing.length ? `Address ${existing.length + 1}` : "Home", name: data.name, phone: data.phone, city: data.city, address: data.address, landmark: data.landmark || undefined, region: data.region || undefined, postalCode: data.postalCode || undefined, ...(shipCountry !== loc.country ? { country: shipCountry } : {}) },
             ...existing,
           ],
           ...(profile?.phone ? {} : { phone: data.phone }),

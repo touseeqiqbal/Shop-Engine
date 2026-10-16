@@ -51,14 +51,18 @@ export function toStoreSettingsCollection(global: GlobalConfig): CollectionConfi
     labels: { singular: label, plural: label },
     admin: {
       group: "Store settings",
+      // the page shows the store's name, not "ID: 8"
+      useAsTitle: "storeName",
       description: typeof global.admin?.description === "string" ? global.admin.description : undefined,
-      // reached from the admin menu (/cms/settings/<page>), which opens the store's own document
-      hidden: true,
+      // reached from the admin menu (/cms/settings/<page>), which opens the store's own document. NOT `hidden`: Payload
+      // answers "not found" for every page of a hidden collection, the document itself included – the menu (UrkoNav)
+      // only shows the links it names, so these never appear in it anyway
+      hidden: false,
     },
     access: { read: readFor(min), readVersions: readFor(min), create: createFor(min), update: writeFor(min), delete: platformAdmins },
     versions,
     hooks: { beforeValidate: [assignStore()], afterChange },
-    fields: [storeField({ unique: true }), ...global.fields],
+    fields: [storeField({ unique: true }), { name: "storeName", type: "text", virtual: "store.name", admin: { hidden: true } }, ...global.fields],
   };
 }
 

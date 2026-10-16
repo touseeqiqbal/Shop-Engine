@@ -15,11 +15,14 @@ type CityProps = {
   id?: string;
   className?: string;
   placeholder?: string;
+  /** the address's country (ISO); default the store's own */
+  country?: string;
 };
 
-/** The city field: Pakistani stores pick from the city list; stores elsewhere let the shopper type their city. */
-export function CityCombobox(props: CityProps) {
-  return useStoreLocale().country === "PK" ? <PakistanCityCombobox {...props} /> : <CityInput {...props} />;
+/** The city field: addresses in Pakistan pick from the city list; anywhere else the shopper types their city. */
+export function CityCombobox({ country, ...props }: CityProps) {
+  const storeCountry = useStoreLocale().country;
+  return (country ?? storeCountry) === "PK" ? <PakistanCityCombobox {...props} /> : <CityInput {...props} />;
 }
 
 /** A plain city / town field (stores outside Pakistan). */

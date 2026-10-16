@@ -19,7 +19,7 @@ type Order = {
   orderNumber: string;
   status: string;
   placedAt?: string;
-  customer?: { name?: string; phone?: string; email?: string; city?: string; address?: string; landmark?: string; region?: string; postalCode?: string };
+  customer?: { name?: string; phone?: string; email?: string; city?: string; address?: string; landmark?: string; region?: string; postalCode?: string; country?: string };
   items?: { title?: string; qty?: number; unitPrice?: number; serials?: string }[];
   subtotal?: number;
   discount?: number;
@@ -434,7 +434,7 @@ export function OrderPanel() {
           <p className="urko-opanel__strong">{o.customer?.name}</p>
           <p>
             {o.customer?.address}
-            {o.customer?.landmark ? ` (near ${o.customer.landmark})` : ""}, {cityLine(o.customer ?? {})}
+            {o.customer?.landmark ? ` (near ${o.customer.landmark})` : ""}, {cityLine(o.customer ?? {}, loc.country)}
           </p>
           <p>{phone}</p>
           {o.customer?.email && <p>{o.customer.email}</p>}

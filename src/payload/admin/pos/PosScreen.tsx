@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAdminDates, useAdminLocale, useAdminMoney, useStoreRole } from "../ui/store-context";
 import { toast } from "../ui/toast";
-import { currencyDigits, type Money } from "../../../lib/money";
+import { currencyDigits, moneyFormatter, type Money } from "../../../lib/money";
 import { dayIn, dayStart } from "../../../lib/time";
 
 /**
@@ -16,7 +16,7 @@ type Product = { id: number; title: string; sku: string; price: number; stock: n
 /** priceText: the price as typed (currencies with cents: "12." on the way to "12.50") */
 type Line = { key: string; product: Product; unit?: Unit; qty: number; unitPrice: number; priceText?: string };
 type Payment = { method: string; amount: string };
-type Sale = { id: number; receiptNumber: string; total: number; subtotal: number; discount: number; createdAt: string; status: string; items: { title: string; serial?: string; qty: number; unitPrice: number }[]; payments: { method: string; amount: number }[]; cashReceived?: number; change?: number; customerName?: string; voidReason?: string };
+type Sale = { id: number; receiptNumber: string; currency?: string | null; total: number; subtotal: number; discount: number; createdAt: string; status: string; items: { title: string; serial?: string; qty: number; unitPrice: number }[]; payments: { method: string; amount: number }[]; cashReceived?: number; change?: number; customerName?: string; voidReason?: string };
 
 const METHODS = [
   { value: "cash", label: "Cash" },
@@ -273,7 +273,7 @@ function Sell({ storeName, isManager }: { storeName: string; isManager: boolean 
                   </small>
                 </span>
                 <span className="urko-pos__recent-actions">
-                  <strong>{money(s.total)}</strong>
+                  <strong>{saleMoney(s, money)(s.total)}</strong>
                   <button type="button" className="urko-btn urko-btn--sm" onClick={() => printReceipt(s, storeName, money, date)}>
                     Receipt
                   </button>
@@ -457,7 +457,11 @@ function Sell({ storeName, isManager }: { storeName: string; isManager: boolean 
   );
 }
 
-function printReceipt(s: Sale, storeName: string, money: Money, date: ReturnType<typeof useAdminDates>) {
+/** A sale's amounts in the currency it was made in (older sales without one: the store's). */
+const saleMoney = (s: Pick<Sale, "currency">, storeMoney: Money): Money => (s.currency && s.currency !== storeMoney.currency ? moneyFormatter({ currency: s.currency, locale: storeMoney.locale }) : storeMoney);
+
+function printReceipt(s: Sale, storeName: string, storeMoney: Money, date: ReturnType<typeof useAdminDates>) {
+  const money = saleMoney(s, storeMoney);
   const esc = (v: unknown) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
   const w = window.open("", "_blank", "width=380,height=640");
   if (!w) return toast("Allow pop-ups to print receipts", "error");

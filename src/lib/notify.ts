@@ -256,7 +256,7 @@ function button(href: string, label: string) {
 
 function addressBlock(o: Order) {
   const c = o.customer;
-  return `<p style="margin:0;font-size:14px;color:#111827;line-height:1.6"><strong>${esc(c.name)}</strong> · ${esc(c.phone)}<br>${esc(c.address)}${c.landmark ? `<br>Near ${esc(c.landmark)}` : ""}<br>${esc(cityLine(c))}</p>`;
+  return `<p style="margin:0;font-size:14px;color:#111827;line-height:1.6"><strong>${esc(c.name)}</strong> · ${esc(c.phone)}<br>${esc(c.address)}${c.landmark ? `<br>Near ${esc(c.landmark)}` : ""}<br>${esc(cityLine(c, ctx().locale.country))}</p>`;
 }
 
 function section(title: string, body: string) {
@@ -264,7 +264,7 @@ function section(title: string, body: string) {
 }
 
 function customerOrderEmail(o: Order, s: StoreSettings) {
-  const eta = deliveryEstimate(o.customer.city, s, o.customer.postalCode ?? "").label;
+  const eta = deliveryEstimate(o.customer.city, s, o.customer.postalCode ?? "", o.customer.country).label;
   const inner = `
     <h1 style="margin:0;font-size:22px;color:#111827">Thank you, ${esc(o.customer.name.split(" ")[0])}! 🎉</h1>
     <p style="margin:8px 0 0;font-size:14px;color:#4b5563">We've received your order <strong style="color:#111827">${esc(o.orderNumber)}</strong>. ${

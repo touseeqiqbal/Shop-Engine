@@ -39,10 +39,21 @@ The cart, checkout, shipping-policy page and the fee tester all use the same rul
 5. **Always add a "Rest of the country" zone** – so every address gets a sensible fee.
 6. **Save**. The **Shipping policy** page updates itself.
 
+### Delivering to other countries
+1. In **Also deliver to (countries)** type each country you ship to and press Enter – a name or a code works
+   (`United Kingdom`, `UK`, `AE`). They are saved as codes; an unknown name is refused.
+2. Add a zone for them: tick **Rest of the country** and list the countries under **Countries** (e.g. `GB, IE`) – it
+   then covers every address in those countries. A zone with Countries and Cities / postcodes covers only those places
+   there. A zone **without** Countries is always for your own country.
+3. Shoppers now see a **Country** choice at checkout. Their phone number, city, state and postcode are checked for that
+   country, and the delivery charge and time come from its zone (no zone → **Charge when no zone matches**). Prices
+   stay in your store's currency.
+4. The shipping-policy page lists the countries you deliver to.
+
 ## 3. Test the fees (fee tester)
 
 1. Scroll to the bottom of **Delivery & payments → Delivery charges**.
-2. Pick a **City** (outside Pakistan also a **Postcode**) and type a **Cart total**.
+2. Pick a **City** (outside Pakistan also a **Postcode**; a **Country** when you deliver abroad) and type a **Cart total**.
 3. It shows the **fee**, the **zone** it matched, and the **delivery time** – using what's on screen, even before you save.
 4. Try at least: Karachi below and above the free amount, a major city, a small town, and a city you didn't list.
 5. The tester does **not** add the COD handling fee – remember to add it in your head for COD orders.

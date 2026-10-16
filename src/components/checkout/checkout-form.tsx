@@ -25,10 +25,10 @@ import { placeOrder, type CheckoutField, type PlaceOrderState } from "@/app/(fro
 import { trackEvent } from "@/components/analytics";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { readLocalAddresses, writeLocalAddresses } from "@/lib/addresses";
-import { deliveryEstimate, freeDeliveryAbove } from "@/lib/cities";
+import { deliveryEstimate, freeDeliveryAbove, shipToCountries } from "@/lib/cities";
 import { orderTotals } from "@/lib/order-totals";
 import { checkoutMethods, type CheckoutMethod, type PaymentIcon } from "@/lib/payments/methods";
-import { deliveryArea } from "@/lib/locale";
+import { countryInText, countryName, deliveryArea } from "@/lib/locale";
 import { normalizePhone, phonePlaceholder } from "@/lib/phone";
 import type { PaymentMethod, SavedAddress, StoreSettings } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -92,6 +92,10 @@ export function CheckoutForm({
   const loc = useStoreLocale();
   const money = useMoney();
   const pk = loc.country === "PK";
+  // where the parcel goes: the store's country, or one it also delivers to (Settings → Delivery → Also deliver to)
+  const countries = useMemo(() => shipToCountries(settings), [settings]);
+  const [shipTo, setShipTo] = useState(loc.country);
+  const pkAddr = shipTo === "PK";
 
   const [f, setF] = useState({
     name: prefill?.name ?? "",
@@ -105,9 +109,9 @@ export function CheckoutForm({
     notes: "",
   });
   // Started checkout with a phone or email → remember the cart for a reminder if they leave (abandoned cart)
-  const draftKey = `${f.name}|${normalizePhone(f.phone, loc.country) ?? ""}|${f.email.trim()}|${lines.map((l) => `${l.productId}x${l.qty}`).join(",")}`;
+  const draftKey = `${f.name}|${normalizePhone(f.phone, shipTo) ?? ""}|${f.email.trim()}|${lines.map((l) => `${l.productId}x${l.qty}`).join(",")}`;
   useEffect(() => {
-    if (!lines.length || (!normalizePhone(f.phone, loc.country) && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim()))) return;
+    if (!lines.length || (!normalizePhone(f.phone, shipTo) && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim()))) return;
     const t = setTimeout(() => {
       void saveDraft({
         name: f.name,
@@ -141,7 +145,7 @@ export function CheckoutForm({
   const began = useRef(false);
 
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const v = k === "phone" ? formatPhoneInput(e.target.value, loc.country) : e.target.value;
+    const v = k === "phone" ? formatPhoneInput(e.target.value, shipTo) : e.target.value;
     setF((s) => ({ ...s, [k]: v }));
     if (errors[k as CheckoutField]) setErrors((er) => ({ ...er, [k]: undefined }));
   };
@@ -186,7 +190,7 @@ export function CheckoutForm({
         const dup = list.some((a) => a.address.trim().toLowerCase() === f.address.trim().toLowerCase() && a.city === f.city);
         if (!dup)
           writeLocalAddresses([
-            { id: crypto.randomUUID(), label: list.length ? `Address ${list.length + 1}` : "Home", name: f.name, phone: f.phone, city: f.city, address: f.address, landmark: f.landmark || undefined, region: f.region || undefined, postalCode: f.postalCode || undefined },
+            { id: crypto.randomUUID(), label: list.length ? `Address ${list.length + 1}` : "Home", name: f.name, phone: f.phone, city: f.city, address: f.address, landmark: f.landmark || undefined, region: f.region || undefined, postalCode: f.postalCode || undefined, ...(shipTo !== loc.country ? { country: shipTo } : {}) },
             ...list,
           ]);
       }
@@ -208,9 +212,9 @@ export function CheckoutForm({
 
   const subtotal = cartSubtotal(lines);
   // the same arithmetic the server uses (lib/order-totals.ts) – the server's total is the one that counts
-  const totals = orderTotals({ subtotal, discount: coupon.discount, city: f.city, postalCode: f.postalCode, method, settings, freeShipping: coupon.freeShipping });
+  const totals = orderTotals({ subtotal, discount: coupon.discount, city: f.city, postalCode: f.postalCode, country: shipTo, method, settings, freeShipping: coupon.freeShipping });
   const { discount, delivery, fee, total } = totals;
-  const eta = f.city ? deliveryEstimate(f.city, settings, f.postalCode) : null;
+  const eta = f.city ? deliveryEstimate(f.city, settings, f.postalCode, shipTo) : null;
   const codMax = settings.payments?.cod.maxOrder ?? null;
   const onDelivery = current?.due === "on-delivery";
   const advanceEligible = onDelivery && settings.advanceAmount > 0 && (total >= settings.advanceThreshold || advanceRequired);
@@ -240,12 +244,12 @@ export function CheckoutForm({
   const validate = (): Errors => {
     const e: Errors = {};
     if (f.name.trim().length < 3) e.name = "Please enter your full name";
-    if (!normalizePhone(f.phone, loc.country)) e.phone = pk ? "Enter a valid mobile number, e.g. 0300-1234567" : `Enter a valid phone number, e.g. ${phonePlaceholder(loc.country)}`;
+    if (!normalizePhone(f.phone, shipTo)) e.phone = pkAddr ? "Enter a valid mobile number, e.g. 0300-1234567" : `Enter a valid phone number, e.g. ${phonePlaceholder(shipTo)}`;
     if (f.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim())) e.email = "Enter a valid email address";
     else if (emailNeeded && !f.email.trim()) e.email = "Enter your email address";
-    if (pk ? !f.city : f.city.trim().length < 2) e.city = pk ? "Please choose your city from the list" : "Please enter your city";
+    if (pkAddr ? !f.city : f.city.trim().length < 2) e.city = pkAddr ? "Please choose your city from the list" : "Please enter your city";
     if (f.postalCode.trim() && !/^[A-Za-z0-9][A-Za-z0-9 -]{1,11}$/.test(f.postalCode.trim())) e.postalCode = "Enter a valid postcode";
-    if (f.address.trim().length < (pk ? 10 : 5)) e.address = "Please enter your complete address (house, street, area)";
+    if (f.address.trim().length < (pkAddr ? 10 : 5)) e.address = "Please enter your complete address (house, street, area)";
     if (!current) e.paymentMethod = "Please choose a payment method";
     else if (method === "cod" && codMax && total > codMax) e.paymentMethod = `Cash on Delivery is available for orders up to ${money(codMax)} – please pay online`;
     if (needsProof && !file) e.screenshot = "Upload a screenshot of your payment (JPG, PNG or WebP)";
@@ -274,6 +278,7 @@ export function CheckoutForm({
     fd.set("items", JSON.stringify(toRequestLines(lines)));
     fd.set("couponCode", coupon.code && coupon.status !== "error" ? coupon.code : "");
     fd.set("paymentMethod", method);
+    fd.set("country", shipTo);
     if (!attemptId.current) attemptId.current = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
     fd.set("attemptId", attemptId.current);
     fd.set("expectedTotal", String(acceptedTotal.current ?? total));
@@ -325,6 +330,7 @@ export function CheckoutForm({
       eta={eta?.label ?? null}
       city={f.city}
       postalCode={f.postalCode}
+      country={shipTo}
     />
   );
 
@@ -396,12 +402,12 @@ export function CheckoutForm({
                 {...fieldAria(fid("phone"), errors.phone, "hint")}
                 name="phone"
                 type="tel"
-                inputMode={pk ? "numeric" : "tel"}
-                autoComplete={pk ? "tel-national" : "tel"}
-                placeholder={phonePlaceholder(loc.country)}
+                inputMode={pkAddr ? "numeric" : "tel"}
+                autoComplete={pkAddr ? "tel-national" : "tel"}
+                placeholder={phonePlaceholder(shipTo)}
                 value={f.phone}
                 onChange={set("phone")}
-                maxLength={pk ? 12 : 20}
+                maxLength={pkAddr ? 12 : 20}
                 required
               />
             </Field>
@@ -411,7 +417,7 @@ export function CheckoutForm({
           </div>
         </Section>
 
-        <Section step={2} title="Delivery address" subtitle={pk ? "We deliver all over Pakistan via TCS, Leopards, M&P, Trax, PostEx & Call Courier" : `We deliver ${deliveryArea(loc.country)}`}>
+        <Section step={2} title="Delivery address" subtitle={countries.length > 1 ? `We deliver to ${countries.map((c) => countryInText(c)).join(", ").replace(/, ([^,]*)$/, " and $1")}` : pk ? "We deliver all over Pakistan via TCS, Leopards, M&P, Trax, PostEx & Call Courier" : `We deliver ${deliveryArea(loc.country)}`}>
           {addresses.length > 0 && (
             <div className="mb-5">
               <p className="label">Saved addresses</p>
@@ -421,7 +427,9 @@ export function CheckoutForm({
                     key={a.id}
                     type="button"
                     onClick={() => {
-                      setF((s) => ({ ...s, name: a.name || s.name, phone: a.phone ? formatPhoneInput(a.phone, loc.country) : s.phone, city: a.city, region: a.region ?? "", postalCode: a.postalCode ?? "", address: a.address, landmark: a.landmark ?? "" }));
+                      const to = a.country && countries.includes(a.country) ? a.country : loc.country;
+                      setShipTo(to);
+                      setF((s) => ({ ...s, name: a.name || s.name, phone: a.phone ? formatPhoneInput(a.phone, to) : s.phone, city: a.city, region: a.region ?? "", postalCode: a.postalCode ?? "", address: a.address, landmark: a.landmark ?? "" }));
                       setErrors({});
                     }}
                     className={cn(
@@ -441,8 +449,32 @@ export function CheckoutForm({
             </div>
           )}
           <div className="grid gap-4 sm:grid-cols-2">
-            {pk ? (
+            {countries.length > 1 && (
+              <Field id={fid("country")} label="Country" required className="sm:col-span-2">
+                <select
+                  {...fieldAria(fid("country"))}
+                  name="country"
+                  autoComplete="country"
+                  value={shipTo}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    // the Pakistani city list and a typed city don't carry over
+                    if ((next === "PK") !== pkAddr) setF((s) => ({ ...s, city: "" }));
+                    setShipTo(next);
+                    setErrors((er) => ({ ...er, city: undefined, phone: undefined }));
+                  }}
+                >
+                  {countries.map((c) => (
+                    <option key={c} value={c}>
+                      {countryName(c)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            {pkAddr ? (
               <CityCombobox
+                country="PK"
                 id={fid("city")}
                 value={f.city}
                 onChange={(city) => {
@@ -487,7 +519,7 @@ export function CheckoutForm({
               />
             </Field>
             <Field id={fid("landmark")} label="Nearest landmark" optional error={errors.landmark}>
-              <input {...fieldAria(fid("landmark"), errors.landmark)} name="landmark" placeholder={pk ? "e.g. near Imtiaz Supermarket" : "e.g. opposite the park entrance"} value={f.landmark} onChange={set("landmark")} maxLength={120} />
+              <input {...fieldAria(fid("landmark"), errors.landmark)} name="landmark" placeholder={pkAddr ? "e.g. near Imtiaz Supermarket" : "e.g. opposite the park entrance"} value={f.landmark} onChange={set("landmark")} maxLength={120} />
             </Field>
             <Field id={fid("notes")} label="Order notes" optional error={errors.notes}>
               <input {...fieldAria(fid("notes"), errors.notes)} name="notes" placeholder="Preferred delivery time, etc." value={f.notes} onChange={set("notes")} maxLength={500} />
@@ -806,6 +838,7 @@ function OrderSummary({
   eta,
   city,
   postalCode,
+  country,
 }: {
   settings: StoreSettings;
   coupon: ReturnType<typeof useCartCoupon>;
@@ -819,10 +852,11 @@ function OrderSummary({
   eta: string | null;
   city: string;
   postalCode: string;
+  country: string;
 }) {
   const lines = useCart((s) => s.lines);
   const money = useMoney();
-  const freeAbove = freeDeliveryAbove(city, settings, postalCode);
+  const freeAbove = freeDeliveryAbove(city, settings, postalCode, country);
   // free delivery is judged on the items after any discount (same as the server)
   const remaining = coupon.freeShipping || freeAbove <= 0 ? 0 : Math.max(0, freeAbove - (subtotal - discount));
   return (

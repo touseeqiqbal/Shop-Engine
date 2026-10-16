@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 type Order = {
   orderNumber: string;
   placedAt?: string;
-  customer?: { name?: string; phone?: string; email?: string; city?: string; address?: string; landmark?: string; region?: string; postalCode?: string };
+  customer?: { name?: string; phone?: string; email?: string; city?: string; address?: string; landmark?: string; region?: string; postalCode?: string; country?: string };
   items?: { title?: string; qty?: number; unitPrice?: number; product?: number | { id: number } | null }[];
   subtotal?: number;
   discount?: number;
@@ -92,7 +92,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px 6px;
 <div class="bar"><button onclick="window.print()">Print</button></div>
 <header><div><h1>${esc(site?.name ?? "")}</h1><div class="muted">${esc(site?.address.full ?? "")}</div><div class="muted">${esc(site?.phones?.[0]?.display ?? "")} ${esc(site?.email ?? "")}</div></div>
 <div style="text-align:right"><h1>${slip ? "Packing slip" : "Invoice"}</h1><div><strong>${esc(o.orderNumber)}</strong></div><div class="muted">${esc(date)}</div></div></header>
-<div class="cols"><div><h2>Deliver to</h2><strong>${esc(c.name)}</strong><br>${esc(c.address)}${c.landmark ? ` (near ${esc(c.landmark)})` : ""}<br>${esc(cityLine(c))}<br>${esc(c.phone)}</div>
+<div class="cols"><div><h2>Deliver to</h2><strong>${esc(c.name)}</strong><br>${esc(c.address)}${c.landmark ? ` (near ${esc(c.landmark)})` : ""}<br>${esc(cityLine(c, loc.country))}<br>${esc(c.phone)}</div>
 <div><h2>Payment</h2>${esc(paymentLabel(o.paymentMethod, o.paymentMethodLabel))}${o.courier ? `<h2 style="margin-top:12px">Courier</h2>${esc(o.courier)} ${esc(o.trackingNumber ?? "")}` : ""}</div></div>
 <table><thead><tr><th>Item</th><th class="n">Qty</th>${slip ? '<th class="n">Packed</th>' : '<th class="n">Price</th><th class="n">Amount</th>'}</tr></thead><tbody>${rows}</tbody></table>
 ${money}

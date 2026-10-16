@@ -170,6 +170,8 @@ export const PosSales: CollectionConfig = {
       { name: "discount", type: "number", defaultValue: 0, label: "Discount", admin: { width: "33%", readOnly: true } },
       { name: "total", type: "number", required: true, label: "Total", admin: { width: "34%", readOnly: true } },
     ] },
+    // the store's currency when the sale was made (a later change of currency doesn't relabel old receipts)
+    { name: "currency", type: "text", admin: { readOnly: true, position: "sidebar" } },
     {
       name: "payments",
       type: "array",

@@ -6,7 +6,8 @@ import { intlDigits, normalizePhone, phoneKey } from "@/lib/phone";
 import { checkoutMethods, findCheckoutMethod, manualMethodId, paymentLabel } from "@/lib/payments/methods";
 import { gatewayInfo, gatewaySupports, gatewaysFor } from "@/lib/payments/catalog";
 import { paidOnDelivery, paymentBlocksShipping } from "@/lib/order-money";
-import { deliveryCharge, deliveryEstimate, shippingZoneFor } from "@/lib/cities";
+import { deliveryCharge, deliveryEstimate, freeDeliveryAbove, shippingZoneFor, shipsTo, shipToCountries } from "@/lib/cities";
+import { cityLine } from "@/lib/order-display";
 import { orderTotals } from "@/lib/order-totals";
 import type { StoreSettings } from "@/lib/types";
 
@@ -179,5 +180,49 @@ describe("shipping and totals outside Pakistan", () => {
   it("totals keep cents", () => {
     const t = orderTotals({ subtotal: 19.99 * 3, discount: 0, city: "Leeds", method: "bank", settings: { ...zones, tax: { enabled: true, rate: 20, inclusive: false, label: "VAT", taxDelivery: false } } });
     expect(t).toMatchObject({ subtotal: 59.97, delivery: 5.99, tax: 11.99, total: 77.95 });
+  });
+});
+
+describe("delivering abroad", () => {
+  const s = settings({
+    country: "GB",
+    currency: "GBP",
+    defaultDeliveryCharge: 9.99,
+    freeDeliveryThreshold: 50,
+    shipTo: ["IE", "FR"],
+    zones: [
+      { name: "London", cities: [], places: ["London"], charge: 3.5, rest: false },
+      { name: "Rest of UK", cities: [], charge: 5.99, rest: true },
+      { name: "Dublin", cities: [], places: ["Dublin"], countries: ["IE"], charge: 8, rest: false },
+      { name: "Europe", cities: [], countries: ["IE", "FR"], charge: 15, freeAbove: 0, estimate: "4–6 working days", rest: true },
+    ],
+  });
+  it("the store's own country first, then the others; nowhere else", () => {
+    expect(shipToCountries(s)).toEqual(["GB", "IE", "FR"]);
+    expect(shipsTo(s, "FR")).toBe(true);
+    expect(shipsTo(s, "US")).toBe(false);
+    expect(shipToCountries(settings({ country: "PK" }))).toEqual(["PK"]);
+  });
+  it("zones without countries are for the store's country; zones abroad only for theirs", () => {
+    expect(shippingZoneFor("London", s)?.name).toBe("London");
+    expect(shippingZoneFor("Leeds", s)?.name).toBe("Rest of UK");
+    expect(shippingZoneFor("Dublin", s, "", "IE")?.name).toBe("Dublin");
+    expect(shippingZoneFor("Cork", s, "", "IE")?.name).toBe("Europe");
+    expect(shippingZoneFor("Paris", s, "", "FR")?.name).toBe("Europe");
+    // a city with the same name abroad doesn't use the home zone
+    expect(shippingZoneFor("London", s, "", "FR")?.name).toBe("Europe");
+  });
+  it("charges, free delivery and estimates follow the address's country", () => {
+    expect(deliveryCharge("Leeds", 60, s)).toBe(0);
+    expect(deliveryCharge("Paris", 60, s, "", "FR")).toBe(15);
+    expect(freeDeliveryAbove("Paris", s, "", "FR")).toBe(0);
+    expect(deliveryEstimate("Paris", s, "", "FR").label).toBe("4–6 working days");
+    expect(deliveryEstimate("Lyon", settings({ country: "GB", shipTo: ["FR"] }), "", "FR").label).toBe("5–10 working days");
+    expect(orderTotals({ subtotal: 40, discount: 0, city: "Paris", country: "FR", method: "bank", settings: s }).total).toBe(55);
+  });
+  it("an address abroad names its country", () => {
+    expect(cityLine({ city: "Paris", postalCode: "75001", country: "FR" }, "GB")).toBe("Paris, 75001, France");
+    expect(cityLine({ city: "Leeds", country: "GB" }, "GB")).toBe("Leeds");
+    expect(cityLine({ city: "Lahore" })).toBe("Lahore");
   });
 });

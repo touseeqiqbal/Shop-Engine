@@ -1,6 +1,6 @@
 # 12 · Feature checklist after remediation (Shopify-like comparison)
 
-State: **working tree after remediation (14 Oct 2026, international work 15 Oct 2026)**. Same 295 features, same scoring rules and evidence standard as report 01 (which stays as the audit baseline of commit
+State: **working tree after remediation (14 Oct 2026, international work 15–16 Oct 2026)**. Same 295 features, same scoring rules and evidence standard as report 01 (which stays as the audit baseline of commit
 `aab6879`). Rows that changed carry their new evidence; tests named in "Evidence" / "Notes" were actually run (see report 11 §4).
 Status legend: **Complete** = works end to end in code · **Partial** = some requirements unmet · **Missing** = not built ·
 **Broken** = implemented with an evident defect · **Not Verified** = could not be confirmed · **N/A** = out of scope.
@@ -89,7 +89,7 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Onboarding | 3. Email verification before store creation | Complete | `src/lib/store-tenant.ts createStoreForUser` | P1 | Confirmed email required; Turnstile; 3/day; MAX_STORES_PER_USER. |
 | Onboarding | 4. Create store | Complete | `src/lib/store-tenant.ts; migration 20261013_233003_multi_tenancy` | P0 | Draft store + owner membership + settings docs (not run in a browser). |
 | Onboarding | 5. Unique slug / subdomain | Complete | `src/payload/collections/Stores.ts (unique slug/subdomain, reserved names)` | P1 |  |
-| Onboarding | 6. Country & currency | Complete | `src/lib/locale.ts; payload/admin/RegionFields.tsx; components/account/store-onboarding.tsx` | P1 | Country picker fills currency + time zone (editable); ISO codes validated; used by storefront, admin, messages, invoices, card charges (scripts/tests/international.ts (26/26 ✓, in CI)). |
+| Onboarding | 6. Country & currency | Complete | `src/lib/locale.ts; payload/admin/RegionFields.tsx; components/account/store-onboarding.tsx` | P1 | Country picker fills currency + time zone (editable); ISO codes validated; used by storefront, admin, messages, invoices, card charges (scripts/tests/international.ts (29/29 ✓, in CI)). |
 | Onboarding | 7. Default settings initialized | Complete | `src/payload/store-settings.ts ensureStoreSettings` | P1 | Store info + SEO seeded with the store's own name. |
 | Onboarding | 8. Plan / trial selection | Complete | `src/lib/billing.ts choosePlan` | P1 | Active plans only; one trial per store; paid plans via provider checkout. |
 | Onboarding | 9. Configure payment providers | Complete | `src/lib/payments/index.ts paymentsOnboardingLink; per-store Settings → Payments` | P0 | Connect onboarding needs STRIPE_SECRET_KEY (not exercised against Stripe). |
@@ -206,7 +206,7 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Cart & checkout | Abandoned checkout tracking | Complete | `src/lib/cms/engagement.ts; cart/restore/[token]/page.tsx` | P2 | Upgrades kept, owner cookie, POST-only stop. |
 | Cart & checkout | Order attributed to a store | Complete | `src/app/(frontend)/(store)/checkout/actions.ts` | P0 | Verified in a browser checkout (store_id set). |
 | Payments | Online payment provider | Complete | `src/lib/payments/gateways.ts (provider plugins), stripe-gateway.ts, webhook.ts; docs/PAYMENT-PLUGINS.md` | P0 | Provider plugin interface + registry, Stripe first; one webhook route per provider; scripts/tests/payment-webhooks.mjs (17/17 ✓, running server). |
-| Payments | Manual methods (COD, bank, wallets with proof) | Complete | `src/lib/payments/methods.ts checkoutMethods; payload/globals/commerce.ts manualMethods` | P1 | Built-ins by country (JazzCash/EasyPaisa in PK only) + each store's own methods (paid before shipping with receipt, or on delivery) (scripts/tests/international.ts (26/26 ✓, in CI)). |
+| Payments | Manual methods (COD, bank, wallets with proof) | Complete | `src/lib/payments/methods.ts checkoutMethods; payload/globals/commerce.ts manualMethods` | P1 | Built-ins by country (JazzCash/EasyPaisa in PK only) + each store's own methods (paid before shipping with receipt, or on delivery) (scripts/tests/international.ts (29/29 ✓, in CI)). |
 | Payments | Merchant payment account onboarding | Complete | `src/lib/payments/index.ts paymentsOnboardingLink / refreshPaymentsAccount` | P0 | Not exercised against Stripe. |
 | Payments | Hosted secure collection | Complete | `Stripe Checkout (hosted)` | P0 | Card data never touches ShopEngine. |
 | Payments | Authorization / capture | Partial | `Checkout Sessions capture immediately` | P1 | No separate authorize/capture. |
@@ -246,9 +246,9 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Orders | Filtering & search | Complete | `src/payload/collections/content.ts:380-401` | P1 |  |
 | Orders | Notifications | Complete | `src/lib/notify.ts` | P1 | Not durable (see Jobs). |
 | Orders | Tenant scoping of orders | Complete | `content.ts storeField + readFor/writeFor` | P0 | scripts/tests/tenant-isolation.ts (18/18 ✓, real DB) |
-| Shipping & fulfillment | Shipping zones | Complete | `src/payload/globals/commerce.ts` | P1 | Single-tenant. |
+| Shipping & fulfillment | Shipping zones | Complete | `src/payload/globals/commerce.ts; src/lib/cities.ts shippingZoneFor` | P1 | Per store; Pakistani city list or typed cities / postcode starts; zones per country and "Also deliver to" countries with a country picker at checkout (scripts/tests/international.ts (29/29 ✓, in CI); browser: US store → Canada). |
 | Shipping & fulfillment | Shipping methods | Partial | `src/lib/cities.ts:90-102` | P2 | One rate per zone + COD fee. |
-| Shipping & fulfillment | Shipping rates | Complete | `src/lib/cities.ts:90-102` | P1 |  |
+| Shipping & fulfillment | Shipping rates | Complete | `src/lib/cities.ts deliveryCharge; src/lib/order-totals.ts` | P1 | In the store's currency with cents; per address country. |
 | Shipping & fulfillment | Free shipping rules | Complete | `src/lib/cities.ts:95,99` | P2 | See checkout bug. |
 | Shipping & fulfillment | Location-based fulfillment | Missing | `—` | P3 |  |
 | Shipping & fulfillment | Fulfillment creation | Complete | `POST /cms-api/order-tools/ship` | P1 | A shipment per parcel with its items, courier and tracking. |
@@ -263,7 +263,7 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Customers | Store-scoped customer records | Complete | `users.customerOf + usersRead (store's own customers only)` | P0 | scripts/tests/tenant-isolation.ts (18/18 ✓, real DB) |
 | Customers | Guest customers | Complete | `src/payload/collections/Users.ts:169-178` | P1 |  |
 | Customers | Registered customers & profiles | Complete | `src/payload/collections/Users.ts` | P1 |  |
-| Customers | Addresses | Complete | `src/lib/phone.ts; app/(frontend)/(store)/account/actions.ts; components/checkout/city-combobox.tsx` | P2 | Phones and cities for the store's country; state / postcode outside Pakistan (scripts/tests/international.ts (26/26 ✓, in CI)). |
+| Customers | Addresses | Complete | `src/lib/phone.ts; app/(frontend)/(store)/account/actions.ts; components/checkout/city-combobox.tsx` | P2 | Phones and cities for the store's country; state / postcode outside Pakistan (scripts/tests/international.ts (29/29 ✓, in CI)). |
 | Customers | Order history | Complete | `src/app/(frontend)/(store)/account/orders/load.ts` | P1 |  |
 | Customers | Customer search | Complete | `src/payload/collections/Users.ts:23` | P2 |  |
 | Customers | Tags & notes | Complete | `src/payload/collections/Users.ts:244-246` | P2 |  |
@@ -334,7 +334,7 @@ denominator of *confirmed* coverage. N/A rows are excluded entirely.
 | Jobs & integrations | Reservation cleanup | Complete | `COD auto-cancel + expired card checkouts` | P1 |  |
 | Production readiness | Application boots (Payload config valid) | Complete | `inventory.ts duplicate field removed` | P0 | Dev server boots; storefront and API answer (checked). |
 | Production readiness | Database migrations match config | Complete | `src/migrations/20261013_233003_multi_tenancy.ts` | P0 | Generated from the config; up → down → up verified with legacy rows; additive per CI rule. |
-| Production readiness | Unit tests | Complete | `tests/unit/*` | P1 | 97/97 pass; assert the secure behaviour and the international rules. |
+| Production readiness | Unit tests | Complete | `tests/unit/*` | P1 | 101/101 pass; assert the secure behaviour and the international rules. |
 | Production readiness | Integration / API tests | Complete | `.github/workflows/ci.yml; scripts/tests/*` | P1 | Tenant isolation, plan lifecycle, partial shipments, stores in other countries and order lifecycle run against CI's Postgres; payment webhooks and store webhooks need a running server / an existing order (run locally). |
 | Production readiness | End-to-end tests | Missing | `—` | P1 |  |
 | Production readiness | Tenant-isolation tests | Complete | `scripts/tests/tenant-isolation.ts (in CI)` | P0 | 18 checks against a real database. |

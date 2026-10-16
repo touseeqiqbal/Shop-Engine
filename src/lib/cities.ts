@@ -79,16 +79,35 @@ function placeMatches(place: string, city: string, postalCode: string) {
   return norm(p) === norm(city) || (Boolean(postalCode) && postcode(p) === postcode(postalCode));
 }
 
-/** The configured shipping zone for a city (named zone first, then the "rest of the country" zone). */
-export function shippingZoneFor(city: string, settings: Pick<StoreSettings, "zones">, postalCode = "") {
-  const zones = settings.zones ?? [];
+/** The countries a store delivers to: its own, then the ones in Settings → Delivery → "Also deliver to". */
+export function shipToCountries(settings: Pick<StoreSettings, "country" | "shipTo">): string[] {
+  const home = settings.country || "PK";
+  return [home, ...(settings.shipTo ?? []).filter((c) => c && c !== home)];
+}
+
+/** Does the store deliver to this country? */
+export const shipsTo = (settings: Pick<StoreSettings, "country" | "shipTo">, country: string | null | undefined) => !country || shipToCountries(settings).includes(country);
+
+/** A zone without countries is for the store's own country; one with countries covers only those. */
+const zoneCovers = (z: { countries?: string[] }, country: string, home: string) => (z.countries?.length ? z.countries.includes(country) : country === home);
+
+/**
+ * The configured shipping zone for an address (named zone first, then the "rest of the country" zone) – among the
+ * zones for the address's country (`country`: ISO code, default the store's own).
+ */
+export function shippingZoneFor(city: string, settings: Pick<StoreSettings, "zones" | "country">, postalCode = "", country?: string | null) {
+  const home = settings.country || "PK";
+  const where = country || home;
+  const zones = (settings.zones ?? []).filter((z) => zoneCovers(z, where, home));
   const c = norm(city);
   return zones.find((z) => !z.rest && (z.cities.some((x) => norm(x) === c) || (z.places ?? []).some((p) => placeMatches(p, city, postalCode)))) ?? zones.find((z) => z.rest) ?? null;
 }
 
-export function deliveryEstimate(city: string, settings?: Pick<StoreSettings, "zones" | "country">, postalCode = "") {
-  const custom = settings ? shippingZoneFor(city, settings, postalCode)?.estimate?.trim() : "";
+export function deliveryEstimate(city: string, settings?: Pick<StoreSettings, "zones" | "country">, postalCode = "", country?: string | null) {
+  const custom = settings ? shippingZoneFor(city, settings, postalCode, country)?.estimate?.trim() : "";
   if (custom) return { label: custom, days: custom };
+  // abroad, without an estimate of its own
+  if (settings && country && country !== (settings.country || "PK")) return { label: "5–10 working days", days: "5–10 days" };
   // the built-in estimates know Pakistan's cities only
   if (settings?.country && settings.country !== "PK") return { label: "2–5 working days", days: "2–5 days" };
   switch (deliveryZone(city)) {
@@ -101,10 +120,10 @@ export function deliveryEstimate(city: string, settings?: Pick<StoreSettings, "z
   }
 }
 
-export function deliveryCharge(city: string, subtotal: number, settings: StoreSettings, postalCode = "") {
+export function deliveryCharge(city: string, subtotal: number, settings: StoreSettings, postalCode = "", country?: string | null) {
   if (settings.zones?.length) {
     // Zones from /cms → Settings → Shipping
-    const zone = city ? shippingZoneFor(city, settings, postalCode) : null;
+    const zone = city ? shippingZoneFor(city, settings, postalCode, country) : null;
     const freeAbove = zone?.freeAbove ?? settings.freeDeliveryThreshold;
     if (freeAbove > 0 && subtotal >= freeAbove) return 0;
     return zone ? zone.charge : settings.defaultDeliveryCharge;
@@ -112,13 +131,15 @@ export function deliveryCharge(city: string, subtotal: number, settings: StoreSe
   // 0 = no free delivery (same rule as the zones above)
   if (settings.freeDeliveryThreshold > 0 && subtotal >= settings.freeDeliveryThreshold) return 0;
   if (!city) return settings.defaultDeliveryCharge;
+  // the old per-city charges are for the store's own country
+  if (country && country !== (settings.country || "PK")) return settings.defaultDeliveryCharge;
   return settings.cityCharges[city] ?? settings.defaultDeliveryCharge;
 }
 
 /** Cart total above which delivery is free for this city (0 = never free). */
-export function freeDeliveryAbove(city: string, settings: Pick<StoreSettings, "zones" | "freeDeliveryThreshold">, postalCode = "") {
+export function freeDeliveryAbove(city: string, settings: Pick<StoreSettings, "zones" | "freeDeliveryThreshold" | "country">, postalCode = "", country?: string | null) {
   if (!settings.zones?.length) return settings.freeDeliveryThreshold;
-  return (city ? shippingZoneFor(city, settings, postalCode)?.freeAbove : null) ?? settings.freeDeliveryThreshold;
+  return (city ? shippingZoneFor(city, settings, postalCode, country)?.freeAbove : null) ?? settings.freeDeliveryThreshold;
 }
 
 /** localStorage key of the delivery city picked on a product page */

@@ -8,6 +8,7 @@ import { getResolvedPageContent } from "@/lib/repo/site-content";
 import { moneyFormatter } from "@/lib/money";
 import { getStoreLocale } from "@/lib/store-locale";
 import { deliveryCharge, deliveryEstimate } from "@/lib/cities";
+import { countryName } from "@/lib/locale";
 
 export const revalidate = 300;
 
@@ -26,11 +27,19 @@ export default async function ShippingPolicyPage() {
   const restAreas = `All other cities, towns and areas served by our courier partners${pk ? ", including AJK and Gilgit-Baltistan" : ""}`;
 
   // Zones from /cms → Delivery & payments → Delivery charges (the same ones checkout uses); old defaults otherwise
+  // a zone abroad names its countries
+  const names = (codes: string[]) => codes.map((c) => countryName(c)).join(", ");
   const rows = s.zones?.length
     ? s.zones.map((z) => ({
         zone: z.name,
-        areas: z.rest ? restAreas : z.cities.join(", "),
-        time: z.estimate?.trim() || (z.rest ? "3–5 working days" : deliveryEstimate(z.cities[0] ?? "", s).label),
+        areas: z.countries?.length
+          ? z.rest
+            ? `All of ${names(z.countries)}`
+            : `${names(z.countries)}: ${[...z.cities, ...(z.places ?? [])].join(", ")}`
+          : z.rest
+            ? restAreas
+            : [...z.cities, ...(z.places ?? [])].join(", "),
+        time: z.estimate?.trim() || (z.countries?.length ? deliveryEstimate("", s, "", z.countries[0]).label : z.rest ? (pk ? "3–5 working days" : deliveryEstimate("", s).label) : deliveryEstimate(z.cities[0] ?? z.places?.[0] ?? "", s).label),
         fee: `${money(z.charge)}${z.freeAbove != null && z.freeAbove !== s.freeDeliveryThreshold ? (z.freeAbove > 0 ? ` (free over ${money(z.freeAbove)})` : " (never free)") : ""}`,
       }))
     : pk
@@ -91,6 +100,11 @@ export default async function ShippingPolicyPage() {
         <p className="mt-3 text-sm text-muted">
           Orders of <strong className="text-fg">{free}</strong> or more ship free. Working days are Monday to Saturday, excluding public holidays.
         </p>
+        {(s.shipTo ?? []).filter((c) => c !== loc.country).length > 0 && (
+          <p className="mt-2 text-sm text-muted">
+            We also deliver to <strong className="text-fg">{names((s.shipTo ?? []).filter((c) => c !== loc.country))}</strong> – choose your country at checkout.
+          </p>
+        )}
       </section>
 
       <section aria-labelledby="couriers-heading">

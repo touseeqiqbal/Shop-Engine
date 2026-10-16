@@ -4,6 +4,14 @@ import { dbName } from "../fields";
 import { revalidate } from "../revalidate";
 import { PAKISTAN_CITIES } from "../../lib/cities";
 import { manualMethodId } from "../../lib/payments/methods";
+import { toCountryCode } from "../../lib/locale";
+
+/** Country lists typed as names or codes ("UK, United States, ae") are kept as ISO codes. */
+const asCountryCodes = ({ value }: { value?: unknown }) => (Array.isArray(value) ? [...new Set(value.map((v) => toCountryCode(String(v)) ?? String(v).trim()))] : value);
+const knownCountries = (value: unknown) => {
+  const bad = (Array.isArray(value) ? value : []).filter((v) => !toCountryCode(String(v)));
+  return bad.length ? `Unknown country: ${bad.join(", ")} – use names or ISO codes such as GB, AE, US.` : true;
+};
 
 /*
  * Settings → Shipping and Settings → Payments (like Shopify's "Shipping and delivery" and "Payments").
@@ -31,6 +39,8 @@ export const ShippingSettings: GlobalConfig = {
         { name: "defaultCharge", type: "number", min: 0, defaultValue: 350, label: "Charge when no zone matches", admin: { width: "50%" } },
       ],
     },
+    // deliveries abroad: shoppers then pick their country at checkout
+    { name: "shipTo", type: "text", hasMany: true, label: "Also deliver to (countries)", validate: knownCountries, hooks: { beforeChange: [asCountryCodes] }, admin: { description: "Other countries you ship to – names or codes, e.g. United Kingdom, AE. Empty = only your store's country. Give them zones below (a zone's Countries)." } },
     {
       name: "zones",
       type: "array",
@@ -43,6 +53,7 @@ export const ShippingSettings: GlobalConfig = {
         ] },
         // Pakistani stores pick from the city list; every store can type cities, areas or postcodes
         { name: "cities", type: "select", hasMany: true, options: CITY_OPTIONS, admin: { condition: (_, s) => !s?.rest, components: { Field: "/payload/admin/CountryOnly#PakistanOnlySelect" } } },
+        { name: "countries", type: "text", hasMany: true, label: "Countries", validate: knownCountries, hooks: { beforeChange: [asCountryCodes] }, admin: { description: "Empty = your store's own country. A zone for deliveries abroad lists its countries, e.g. GB, IE (with “Rest of the country” it covers all of them)." } },
         { name: "places", type: "text", hasMany: true, label: "Cities, areas or postcodes", admin: { condition: (_, s) => !s?.rest, description: "Type one and press Enter. A postcode start ends with * (e.g. SW1* or 100*)." } },
         { type: "row", fields: [
           { name: "charge", type: "number", required: true, min: 0, label: "Delivery charge", admin: { width: "33%" } },

@@ -26,11 +26,13 @@ export async function loadCommerceSettings(storeId: number | null): Promise<Part
   if (ship.updatedAt) {
     out.freeDeliveryThreshold = num(ship.freeDeliveryThreshold);
     out.defaultDeliveryCharge = num(ship.defaultCharge);
+    out.shipTo = Array.isArray(ship.shipTo) ? (ship.shipTo as unknown[]).map(str).filter(Boolean) : [];
     out.zones = (Array.isArray(ship.zones) ? (ship.zones as Doc[]) : []).map(
       (z): ShippingZone => ({
         name: str(z.name),
         cities: Array.isArray(z.cities) ? (z.cities as string[]) : [],
         places: Array.isArray(z.places) ? (z.places as unknown[]).map(str).filter(Boolean) : [],
+        countries: Array.isArray(z.countries) ? (z.countries as unknown[]).map(str).filter(Boolean) : [],
         rest: Boolean(z.rest),
         charge: num(z.charge),
         freeAbove: numOrNull(z.freeAbove),

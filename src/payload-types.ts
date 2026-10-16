@@ -1623,6 +1623,7 @@ export interface PosSale {
   subtotal: number;
   discount?: number | null;
   total: number;
+  currency?: string | null;
   payments?:
     | {
         method: 'cash' | 'card' | 'bank' | 'jazzcash' | 'easypaisa' | 'other';
@@ -2432,6 +2433,7 @@ export interface StoreThemeSetting {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   /**
    * Leave empty to use the built-in logo (the store's name).
    */
@@ -2475,6 +2477,7 @@ export interface StoreAnnouncementBar {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   enabled?: boolean | null;
   /**
    * e.g. “Free delivery on orders above …”. Leave empty to show the store tagline.
@@ -2518,6 +2521,7 @@ export interface StoreHeader {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   /**
    * Desktop navigation + mobile menu. Items marked “mega menu” open a large dropdown.
    */
@@ -2543,6 +2547,7 @@ export interface StoreFooter {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   about?: string | null;
   /**
    * Link columns. Pick a menu for each column (Online store → Menus).
@@ -2580,6 +2585,7 @@ export interface StoreWhatsappButton {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   enabled?: boolean | null;
   /**
    * Leave empty to use the phone numbers from Store info. One number = opens chat directly; several = shopper chooses.
@@ -2618,11 +2624,16 @@ export interface StoreShipping {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   /**
    * Store-wide, in your store's currency. 0 = no free delivery. A zone can override it.
    */
   freeDeliveryThreshold?: number | null;
   defaultCharge?: number | null;
+  /**
+   * Other countries you ship to – names or codes, e.g. United Kingdom, AE. Empty = only your store's country. Give them zones below (a zone's Countries).
+   */
+  shipTo?: string[] | null;
   /**
    * An address uses the first zone that lists its city (or postcode); every other address uses the “rest of the country” zone.
    */
@@ -2787,6 +2798,10 @@ export interface StoreShipping {
             )[]
           | null;
         /**
+         * Empty = your store's own country. A zone for deliveries abroad lists its countries, e.g. GB, IE (with “Rest of the country” it covers all of them).
+         */
+        countries?: string[] | null;
+        /**
          * Type one and press Enter. A postcode start ends with * (e.g. SW1* or 100*).
          */
         places?: string[] | null;
@@ -2817,6 +2832,7 @@ export interface StorePayment {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   cod?: {
     enabled?: boolean | null;
     /**
@@ -2934,6 +2950,7 @@ export interface StoreNotification {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   /**
    * Email addresses. Empty = the store email (Store info).
    */
@@ -2961,6 +2978,7 @@ export interface StoreStoreInfo {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   name: string;
   shortName?: string | null;
   tagline?: string | null;
@@ -3048,6 +3066,7 @@ export interface StoreSeoSetting {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   /**
    * %s = page title. Empty = “%s | <store name>”.
    */
@@ -3116,6 +3135,7 @@ export interface StorePageText {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   pages?:
     | {
         page:
@@ -3162,6 +3182,7 @@ export interface StoreTestimonial {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   items?:
     | {
         name: string;
@@ -3190,6 +3211,7 @@ export interface StoreFaq {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   items?:
     | {
         q: string;
@@ -3213,6 +3235,7 @@ export interface StoreOrderProtection {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   confirmEnabled?: boolean | null;
   /**
    * 0 = every COD order.
@@ -3256,6 +3279,7 @@ export interface StoreReturnsPolicy {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   returnDays?: number | null;
   restockingFeePercent?: number | null;
   requirePhotos?: boolean | null;
@@ -3293,6 +3317,7 @@ export interface StoreCookieNotice {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   enabled?: boolean | null;
   message?: string | null;
   acceptLabel?: string | null;
@@ -3313,6 +3338,7 @@ export interface StoreSalesChannel {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   google?: boolean | null;
   meta?: boolean | null;
   tiktok?: boolean | null;
@@ -3338,6 +3364,7 @@ export interface StoreConversion {
    * The store this belongs to (set automatically).
    */
   store?: (number | null) | Store;
+  storeName?: string | null;
   emiEnabled?: boolean | null;
   emiMinPrice?: number | null;
   emiHeading?: string | null;
@@ -4815,6 +4842,7 @@ export interface PosSalesSelect<T extends boolean = true> {
   subtotal?: T;
   discount?: T;
   total?: T;
+  currency?: T;
   payments?:
     | T
     | {
@@ -5383,6 +5411,7 @@ export interface StockCountsSelect<T extends boolean = true> {
  */
 export interface StoreThemeSettingsSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   logoDark?: T;
   logoLight?: T;
   favicon?: T;
@@ -5408,6 +5437,7 @@ export interface StoreThemeSettingsSelect<T extends boolean = true> {
  */
 export interface StoreAnnouncementBarSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   enabled?: T;
   text?: T;
   linkUrl?: T;
@@ -5426,6 +5456,7 @@ export interface StoreAnnouncementBarSelect<T extends boolean = true> {
  */
 export interface StoreHeaderSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   mainMenu?: T;
   mobileMenu?: T;
   sticky?: T;
@@ -5441,6 +5472,7 @@ export interface StoreHeaderSelect<T extends boolean = true> {
  */
 export interface StoreFooterSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   about?: T;
   columns?:
     | T
@@ -5463,6 +5495,7 @@ export interface StoreFooterSelect<T extends boolean = true> {
  */
 export interface StoreWhatsappButtonSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   enabled?: T;
   contacts?:
     | T
@@ -5483,14 +5516,17 @@ export interface StoreWhatsappButtonSelect<T extends boolean = true> {
  */
 export interface StoreShippingSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   freeDeliveryThreshold?: T;
   defaultCharge?: T;
+  shipTo?: T;
   zones?:
     | T
     | {
         name?: T;
         rest?: T;
         cities?: T;
+        countries?: T;
         places?: T;
         charge?: T;
         freeAbove?: T;
@@ -5506,6 +5542,7 @@ export interface StoreShippingSelect<T extends boolean = true> {
  */
 export interface StorePaymentsSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   cod?:
     | T
     | {
@@ -5584,6 +5621,7 @@ export interface StorePaymentsSelect<T extends boolean = true> {
  */
 export interface StoreNotificationsSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   staffEmails?: T;
   alertNewOrder?: T;
   alertWholesale?: T;
@@ -5602,6 +5640,7 @@ export interface StoreNotificationsSelect<T extends boolean = true> {
  */
 export interface StoreStoreInfoSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   name?: T;
   shortName?: T;
   tagline?: T;
@@ -5668,6 +5707,7 @@ export interface StoreStoreInfoSelect<T extends boolean = true> {
  */
 export interface StoreSeoSettingsSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   titleTemplate?: T;
   defaultTitle?: T;
   defaultDescription?: T;
@@ -5698,6 +5738,7 @@ export interface StoreSeoSettingsSelect<T extends boolean = true> {
  */
 export interface StorePageTextsSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   pages?:
     | T
     | {
@@ -5720,6 +5761,7 @@ export interface StorePageTextsSelect<T extends boolean = true> {
  */
 export interface StoreTestimonialsSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   items?:
     | T
     | {
@@ -5739,6 +5781,7 @@ export interface StoreTestimonialsSelect<T extends boolean = true> {
  */
 export interface StoreFaqsSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   items?:
     | T
     | {
@@ -5756,6 +5799,7 @@ export interface StoreFaqsSelect<T extends boolean = true> {
  */
 export interface StoreOrderProtectionSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   confirmEnabled?: T;
   confirmAbove?: T;
   autoCancelHours?: T;
@@ -5778,6 +5822,7 @@ export interface StoreOrderProtectionSelect<T extends boolean = true> {
  */
 export interface StoreReturnsPolicySelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   returnDays?: T;
   restockingFeePercent?: T;
   requirePhotos?: T;
@@ -5809,6 +5854,7 @@ export interface StoreReturnsPolicySelect<T extends boolean = true> {
  */
 export interface StoreCookieNoticeSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   enabled?: T;
   message?: T;
   acceptLabel?: T;
@@ -5823,6 +5869,7 @@ export interface StoreCookieNoticeSelect<T extends boolean = true> {
  */
 export interface StoreSalesChannelsSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   google?: T;
   meta?: T;
   tiktok?: T;
@@ -5839,6 +5886,7 @@ export interface StoreSalesChannelsSelect<T extends boolean = true> {
  */
 export interface StoreConversionSelect<T extends boolean = true> {
   store?: T;
+  storeName?: T;
   emiEnabled?: T;
   emiMinPrice?: T;
   emiHeading?: T;
@@ -6326,6 +6374,10 @@ export interface Shipping {
   freeDeliveryThreshold?: number | null;
   defaultCharge?: number | null;
   /**
+   * Other countries you ship to – names or codes, e.g. United Kingdom, AE. Empty = only your store's country. Give them zones below (a zone's Countries).
+   */
+  shipTo?: string[] | null;
+  /**
    * An address uses the first zone that lists its city (or postcode); every other address uses the “rest of the country” zone.
    */
   zones?:
@@ -6488,6 +6540,10 @@ export interface Shipping {
               | 'Ziarat'
             )[]
           | null;
+        /**
+         * Empty = your store's own country. A zone for deliveries abroad lists its countries, e.g. GB, IE (with “Rest of the country” it covers all of them).
+         */
+        countries?: string[] | null;
         /**
          * Type one and press Enter. A postcode start ends with * (e.g. SW1* or 100*).
          */
@@ -7146,12 +7202,14 @@ export interface WhatsappButtonSelect<T extends boolean = true> {
 export interface ShippingSelect<T extends boolean = true> {
   freeDeliveryThreshold?: T;
   defaultCharge?: T;
+  shipTo?: T;
   zones?:
     | T
     | {
         name?: T;
         rest?: T;
         cities?: T;
+        countries?: T;
         places?: T;
         charge?: T;
         freeAbove?: T;

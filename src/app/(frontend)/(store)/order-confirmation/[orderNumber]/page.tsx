@@ -71,7 +71,7 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
   const [settings, site, loc] = await Promise.all([getStoreSettings(), getSiteInfo(), getStoreLocale()]);
   // amounts and times in the store's currency and time zone
   const money = moneyFormatter(loc);
-  const eta = deliveryEstimate(order.customer.city, settings, order.customer.postalCode ?? "");
+  const eta = deliveryEstimate(order.customer.city, settings, order.customer.postalCode ?? "", order.customer.country);
   const accountLines = paymentAccountLines(order.paymentMethod, settings);
   // the store's own steps for its own methods ("use your order number as the reference")
   const instructions = findCheckoutMethod(order.paymentMethod, settings)?.instructions;
@@ -202,7 +202,7 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
                 </>
               )}
               <br />
-              {cityLine(order.customer)}
+              {cityLine(order.customer, loc.country)}
             </p>
             <p className="flex items-center gap-2 rounded-xl bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">
               <CalendarClock className="size-4 shrink-0" aria-hidden="true" /> Estimated: {eta.label}

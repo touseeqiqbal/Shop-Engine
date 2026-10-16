@@ -32,6 +32,7 @@ import * as migration_20261012_122952_product_variants from './20261012_122952_p
 import * as migration_20261013_233003_multi_tenancy from './20261013_233003_multi_tenancy';
 import * as migration_20261014_003019_store_extras from './20261014_003019_store_extras';
 import * as migration_20261015_114028_international from './20261015_114028_international';
+import * as migration_20261016_000546_pos_currency from './20261016_000546_pos_currency';
 
 export const migrations = [
   {
@@ -202,6 +203,11 @@ export const migrations = [
   {
     up: migration_20261015_114028_international.up,
     down: migration_20261015_114028_international.down,
-    name: '20261015_114028_international'
+    name: '20261015_114028_international',
+  },
+  {
+    up: migration_20261016_000546_pos_currency.up,
+    down: migration_20261016_000546_pos_currency.down,
+    name: '20261016_000546_pos_currency'
   },
 ];

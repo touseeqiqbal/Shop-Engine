@@ -129,7 +129,7 @@ export async function buildInvoicePdf(order: Order, site: SiteInfo, locale: Stor
   text("BILL TO / DELIVER TO", M, 8, bold, MUTED);
   y -= 14;
   const c = order.customer;
-  for (const l of [c.name, c.phone, c.email ?? "", ...wrap([c.address, c.landmark ? `(near ${c.landmark})` : "", cityLine(c)].filter(Boolean).join(", "), font, 10, 300)].filter(Boolean)) {
+  for (const l of [c.name, c.phone, c.email ?? "", ...wrap([c.address, c.landmark ? `(near ${c.landmark})` : "", cityLine(c, locale.country)].filter(Boolean).join(", "), font, 10, 300)].filter(Boolean)) {
     text(l, M, 10);
     y -= 13;
   }

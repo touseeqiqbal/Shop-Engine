@@ -28,8 +28,8 @@ Stripe, an email/WhatsApp provider, GitHub Actions or production.
 | Verified-only coverage | 44.8 % | **88.1 %** |
 | Critical security issues (SEC-01…03) | 3 open | 0 open |
 | App boots / migrations match the config | No / No | Yes / Yes (run) |
-| Unit tests | 40 pass (asserting insecure behaviour) | **97 / 97 pass** (secure behaviour; 20 for currencies, time zones, phones, payment methods) |
-| Database / server tests | none | **7 scripts, 96 checks, all pass** (§5) – 5 of them run in CI |
+| Unit tests | 40 pass (asserting insecure behaviour) | **101 / 101 pass** (secure behaviour; 24 for currencies, time zones, phones, payment methods, delivering abroad) |
+| Database / server tests | none | **7 scripts, 99 checks, all pass** (§5) – 5 of them run in CI |
 
 | Module | Audit | Now | Module | Audit | Now |
 |---|---|---|---|---|---|
@@ -224,6 +224,11 @@ Row-by-row evidence is in **`12-feature-checklist-after.md`**. Report 01 stays a
 | `/cms-api/stores/mine` collided with Payload's `/stores/:id` (500 for everyone in `/cms`) | admin opened in a browser | endpoints moved to `/cms-api/platform/my-stores` and `/platform/switch-store` |
 | Notifications lost when building a message failed | order lifecycle test log | build errors now retry via the outbox |
 | Saved cart not restored after signing in (client-side navigation) | two-device browser test | re-check when leaving the sign-in page |
+| **Every store's settings pages (Delivery, Payments, Theme, Store details …) answered "Nothing found" for owners and managers** | owner of a second store opened Settings → Payments in a browser (15 Oct) | the per-store settings collections were marked `admin.hidden`, and Payload 404s every page of a hidden collection; now not hidden (the custom menu only shows its own links) – `src/payload/store-settings.ts` |
+| Admin orders rounded to whole units (`59.97` → `60`) | US-store database test (15 Oct) | totals rounded to the order currency's smallest unit |
+| A new store created without a country got no country / currency / time zone; a country change didn't move the time zone when the admin sent every field | US-store database test (15 Oct) | Stores hook uses `operation`, and "changed" means "different from before" |
+| Store webhook test counted deliveries left over from an interrupted earlier run | test run (15 Oct) | the test first removes stale test endpoints |
+| Shipping fee tester started with "Lahore" / 12000 on a store abroad | admin opened in a browser (15 Oct) | untouched fields follow the store's country once it has loaded |
 
 ### 2.12 Stores in every country (15 October 2026)
 
@@ -268,9 +273,17 @@ JazzCash / EasyPaisa) – checked by comparing old and new output.
   original shop only), courier suggestions and tracking links (DHL, FedEx, UPS, USPS, Aramex, Royal Mail added), the
   shop counter ("Wallet / other" instead of JazzCash / EasyPaisa elsewhere), platform revenue (totals per currency –
   never added across currencies), the abandoned-cart text, and "(Rs)" labels in `/cms`.
-- **Migration** `20261015_114028_international` – additive apart from two enum → text changes (marked
-  `allow-destructive` with the reason: every value is kept). Backfills stores to ISO codes and every existing order's
-  currency, payment name and due time. Run up → down → up on the local database.
+- **Delivering abroad (16 Oct)** – Settings → Delivery → "Also deliver to" (names or codes, kept as ISO codes, unknown
+  ones refused) and a **Countries** list per zone (a zone without countries is for the store's own country). Checkout
+  then shows a country picker; phone, city list / typed city, state and postcode follow the chosen country; delivery
+  charge, free-delivery limit and estimate come from that country's zones; the server refuses a country the store
+  doesn't deliver to. Addresses abroad name their country on order pages, emails, invoices and packing slips; the
+  shipping-policy page lists the countries; the fee tester has a country choice.
+- **Shop counter** – each sale records its currency (receipts keep it if the store's currency changes later).
+- **Migrations** `20261015_114028_international` – additive apart from two enum → text changes (marked
+  `allow-destructive` with the reason: every value is kept); backfills stores to ISO codes and every existing order's
+  currency, payment name and due time. `20261016_000546_pos_currency` – one new column, backfilled with each store's
+  currency. Both run up → down → up on the local database.
 
 ## 3. Branding
 The platform is **ShopEngine** (admin, login, emails to merchants and staff, 2-step issuer, admin icon). The original shop is the
@@ -301,15 +314,19 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
 | Check | Result |
 |---|---|
 | `tsc --noEmit` · `eslint . --max-warnings=0` | clean · clean |
-| `vitest run` | **97 / 97** (access rules, routing, availability, Stripe signatures, totals/tax, discounts, plans, outbox; currencies and rounding, store-local days incl. daylight saving, phone numbers from any country, payment methods by country, postcode zones) |
+| `vitest run` | **101 / 101** (access rules, routing, availability, Stripe signatures, totals/tax, discounts, plans, outbox; currencies and rounding, store-local days incl. daylight saving, phone numbers from any country, payment methods by country, postcode zones, zones per country and addresses abroad) |
 | `npm run test:tenants` (real DB, in CI) | **18 / 18**: own-store reads only; no cross-store writes or creates; no self-promotion or joining other teams; another store's payment settings unreadable and unwritable; same discount code in two stores without interference; merchants can't see other stores' people or delete accounts |
 | `npm run test:orders` (real DB, in CI) | **13 / 13**: placed through the checkout's transaction; stock and coupon taken; "order received" queued; status messages once per change; cancel gives stock and coupon back exactly once; repeated cancel changes nothing; re-open takes them again |
 | `npm run test:billing` (real DB, in CI) | **7 / 7**: trial end → past due + grace; grace over → expired and offline; default store untouched |
 | `npm run test:shipments` (real DB, in CI) | **8 / 8**: can't over-ship; other store can't ship; partly shipped + parcel message; rest → dispatched; parcels delivered → delivered |
 | `npm run test:webhooks` (running server, locally signed events) | **17 / 17**: paid only on exact match; replay ignored (also through the provider-plugin address `/api/webhooks/payments/stripe`); unknown provider 404; wrong amount or account never pays; bad or old signature 400; expiry cancels; SaaS invoice failed → past due → paid → active; subscription cancelled |
 | `npm run test:store-webhooks` (real DB + local receiver) | **7 / 7**: delivered once and signed; other store gets nothing; failing endpoint retried; private addresses recognised (the test now first removes test endpoints an interrupted earlier run left behind) |
-| `npm run test:international` (real DB, in CI) | **26 / 26**: a country name becomes its code and brings currency + time zone; a store without a country is in Pakistan; unknown country / currency / time zone refused; money with cents, the original shop still "Rs"; own payment methods get stable unique ids; checkout offers no Pakistani wallets elsewhere; postcode zones; a dollar order keeps cents, currency, method name, due time and the full address; order numbers use the store's date; "paid before shipping" holds the order, "on delivery" doesn't; admin orders keep cents and get the store's currency |
-| Running dev server, a US demo store and the original shop (curl) | the US store's pages show `$`, `en_US`; its shipping page shows its zones in dollars; the original shop still shows `Rs`, `en_PK` and `PKR` |
+| `npm run test:international` (real DB, in CI) | **29 / 29**: delivery countries typed as names are kept as codes, unknown ones refused; an address abroad uses its country's zone (else the default charge), never a home zone; a country name becomes its code and brings currency + time zone; a store without a country is in Pakistan; unknown country / currency / time zone refused; money with cents, the original shop still "Rs"; own payment methods get stable unique ids; checkout offers no Pakistani wallets elsewhere; postcode zones; a dollar order keeps cents, currency, method name, due time and the full address; order numbers use the store's date; "paid before shipping" holds the order, "on delivery" doesn't; admin orders keep cents and get the store's currency |
+| Running dev server, a US demo store and the original shop (curl) | the US store's pages show `$`, `en_US`, `USD` and "Price in the United States"; its shipping page shows its zones in dollars; 25 of its pages scanned – no Pakistan, Karachi, JazzCash, courier or rupee wording left; the original shop still shows `Rs`, `en_PK`, `PKR` and its "all over Pakistan" wording |
+| Browser (headless Chrome) – `/cms` as the US demo store's owner (2-step sign-in) | Stores → Region: United States / USD – US Dollar / America/New_York pickers; Settings → Payments: no JazzCash / EasyPaisa, "Popular ways to pay: Zelle, Venmo, Cash App", Stripe offered, own methods "Zelle · before shipping" and "Card on delivery · on delivery"; Settings → Delivery: typed places (`New York`, `100*` …), no Pakistani city picker, zone row "New York City · $4.99 · 4 places", fee tester with Postcode and `$`; Orders list `$84.98 · Card on delivery · +12125550199`; order page: address "Brooklyn, NY 11201", money in `$`, "Rider collects $84.98", method / due / currency fields (USD), timeline in New York time; dashboard in `$`; no console errors |
+| Browser (headless Chrome) – delivering abroad (16 Oct) | the US store's owner added "Canada" through the admin API (kept as `CA`) with a Canada zone; checkout showed "We deliver to the United States and Canada" and a country picker; Toronto M5V 2T6 → Canada zone $14.50, 4–7 working days, total $74.49; confirmation "Toronto, ON M5V 2T6, Canada"; a country slipped into the form that the store doesn't deliver to (France) was refused by the server |
+| Shop counter API as the US store's owner (16 Oct) | a sale with a 25¢ discount → total $149.25, currency USD, "Wallet / other" payment; a cash sale of $149.50 for $150 → change $0.50; receipt numbered by the New York date; both voided |
+| Browser (headless Chrome) – checkout of the US demo store | phone hint `+1 …`, typed city + State + Postcode, payment options Bank Transfer / Zelle / Card on delivery (no JazzCash), Zelle shows its account and the store's memo instruction, Brooklyn 11201 matched the NYC zone ($4.99, next day), total $84.98; order `BKG-…` placed with Card on delivery; confirmation shows "Brooklyn, NY 11201", "Card on delivery · Unpaid", "Please keep $84.98 ready when your order arrives"; no console errors |
 | Migrations on a DB with legacy-shaped rows | up → down → up; zero rows without a store; team, customers, coupons, fulfilment backfilled |
 | Running dev server, two stores (curl) | each store shows only its own categories, products and search; product URLs 404 on the other store; per-store canonical, sitemap, robots, titles and icons; draft store "Opening soon" and disallow; unknown sub-domain 404 |
 | Browser – storefront checkout (default store) | coupon applied, free-delivery hint after discount, totals right; order saved with store, coupon counted, stock down, notification sent through the outbox |
@@ -329,9 +346,8 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
   - platform-admin and owner screens (2-step login wasn't automated), apart from the access rules tested through Payload's API;
   - merchant onboarding (Account → Stores).
 - **Not re-measured:** mobile layout and page speed (still Not Verified).
-- **International work (15 Oct) not seen in a browser:** the browser tool couldn't connect, so the new checkout form,
-  the Region / Payments admin pickers and the order screens were checked by type checks, unit / database tests and the
-  server's HTML (curl), not by clicking through them.
+- **Payload's own date fields** ("Placed", "Last modified") show the viewer's computer time, not the store's time zone
+  (the order panel's timeline and all reports, numbers and messages do use the store's).
 
 ## 7. Remaining gaps (12 Missing, 45 Partial – see report 12)
 
@@ -344,8 +360,7 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
 - **Testing:** an automated browser end-to-end suite in CI.
 
 **Notable partials:**
-- One currency per store (no conversion or multi-currency prices); a store ships within its own country (the order
-  records the country, but checkout has no country picker for shipping abroad).
+- One currency per store (no conversion or prices in several currencies); shoppers abroad pay in the store's currency.
 - A store's language sets number / date formats and the page language; storefront text is English (plus the existing
   Urdu toggle).
 - Only Stripe exists as a card provider plugin; stores in countries Stripe doesn't serve (e.g. Pakistan) use their own
@@ -357,7 +372,7 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
 - The storefront session lasts 30 days.
 
 ## 8. Deploying this
-1. **Back up the database**, then deploy. The three migrations run on start and backfill existing data
+1. **Back up the database**, then deploy. The four migrations run on start and backfill existing data
    (`international` turns two enums into text – every value kept).
    - Optional: `DEFAULT_STORE_NAME`, `DEFAULT_STORE_SLUG`, `DEFAULT_STORE_ORDER_PREFIX`.
    - Existing orders keep `UTS-`.

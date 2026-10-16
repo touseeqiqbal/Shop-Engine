@@ -90,13 +90,16 @@ try {
   check(JSON.stringify(rows) === JSON.stringify(["zelle", "card-on-delivery", "zelle-2", "bank-own"]), `each own method gets a stable, unique id that never clashes with a built-in one (${rows.join(", ")})`);
   const renamed = (await payload.update({ collection: "store-payments" as never, id: Number(pay.id), data: { manualMethods: (pay.manualMethods as Doc[]).map((m, i) => (i === 0 ? { ...m, name: "Zelle (instant)" } : m)) } as never, ...sys })) as unknown as Doc;
   check((renamed.manualMethods as Doc[])[0].methodId === "zelle", "renaming a method keeps its id (old orders still point at it)");
-  await make("store-shipping", { store: storeId, freeDeliveryThreshold: 0, defaultCharge: 9.99, zones: [{ name: "NYC", places: ["New York", "100*"], charge: 4.5 }, { name: "Rest", rest: true, charge: 7.25 }] }, { storeId });
+  check(await refused(() => make("store-shipping", { store: storeId, shipTo: ["Atlantis"] }, { storeId })), "an unknown delivery country is refused");
+  const ship = await make<Doc>("store-shipping", { store: storeId, freeDeliveryThreshold: 0, defaultCharge: 9.99, shipTo: ["Canada", "uk"], zones: [{ name: "NYC", places: ["New York", "100*"], charge: 4.5 }, { name: "Rest", rest: true, charge: 7.25 }, { name: "Canada", countries: ["canada"], rest: true, charge: 19.5 }] }, { storeId });
+  check(JSON.stringify(ship.shipTo) === JSON.stringify(["CA", "GB"]) && JSON.stringify((ship.zones as Doc[])[2].countries) === JSON.stringify(["CA"]), `delivery countries typed as names are kept as codes (${JSON.stringify(ship.shipTo)})`);
 
   const settings = { freeDeliveryThreshold: 0, defaultDeliveryCharge: 0, cityCharges: {}, advanceThreshold: 0, advanceAmount: 0, bank: { bankName: "", accountTitle: "", accountNumber: "", iban: "" }, jazzcash: { title: "", number: "" }, easypaisa: { title: "", number: "" }, ...(await loadCommerceSettings(storeId)) } as StoreSettings;
   check(settings.country === "US" && settings.currency === "USD", "checkout settings carry the store's country and currency");
   const offered = checkoutMethods(settings).map((m) => m.id);
   check(JSON.stringify(offered) === JSON.stringify(["cod", "bank", "zelle", "card-on-delivery", "zelle-2", "bank-own"]), `checkout offers COD, bank and the store's own methods – no JazzCash outside Pakistan (${offered.join(", ")})`);
   check(deliveryCharge("Brooklyn", 30, settings, "10001") === 4.5 && deliveryCharge("New York", 30, settings) === 4.5 && deliveryCharge("Austin", 30, settings, "78701") === 7.25, "zones match typed cities and postcode starts; cents kept");
+  check(deliveryCharge("Toronto", 30, settings, "M5V", "CA") === 19.5 && deliveryCharge("Manchester", 30, settings, "", "GB") === 9.99 && deliveryCharge("Rochester", 30, settings, "", "US") === 7.25, "an address abroad uses its country's zone (else the default charge), never a home zone");
 
   // ── orders keep cents and their currency ──
   const inStore = { ...sys, context: { ...sys.context, storeId } };

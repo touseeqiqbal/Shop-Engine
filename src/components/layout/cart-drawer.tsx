@@ -115,7 +115,11 @@ export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
                         className="flex gap-3 py-4"
                       >
                         <Link href={l.url} onClick={closeDrawer} className="relative size-20 shrink-0 overflow-hidden rounded-2xl bg-surface">
-                          <Image src={l.image} alt={l.name} fill sizes="80px" className="object-contain p-1.5" />
+                          {l.image ? (
+                            <Image src={l.image} alt={l.name} fill sizes="80px" className="object-contain p-1.5" />
+                          ) : (
+                            <ShoppingBag className="absolute inset-0 m-auto size-7 text-subtle" aria-hidden="true" />
+                          )}
                         </Link>
                         <div className="min-w-0 flex-1">
                           <Link href={l.url} onClick={closeDrawer} className="line-clamp-2 text-sm font-medium hover:underline">

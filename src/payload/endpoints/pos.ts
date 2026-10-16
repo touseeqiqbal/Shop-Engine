@@ -178,6 +178,7 @@ const sale: Endpoint = {
           subtotal,
           discount,
           total,
+          currency: money.currency,
           payments: kept,
           cashReceived: cashPart || null,
           change: change || null,

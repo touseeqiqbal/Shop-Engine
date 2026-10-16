@@ -179,7 +179,7 @@ export default async function OrderDetailPage({ params }: Props) {
             <p className="text-muted">{order.customer.phone}</p>
             <p className="text-muted">
               {order.customer.address}
-              {order.customer.landmark ? ` (near ${order.customer.landmark})` : ""}, {cityLine(order.customer)}
+              {order.customer.landmark ? ` (near ${order.customer.landmark})` : ""}, {cityLine(order.customer, loc.country)}
             </p>
             {order.trackingNumber ? (
               <p className="flex items-center gap-2 pt-1">
