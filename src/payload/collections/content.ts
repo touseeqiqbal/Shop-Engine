@@ -52,7 +52,7 @@ export const Posts: CollectionConfig = {
 };
 
 const ORDER_STATUSES = [
-  { label: "Waiting for card payment", value: "awaiting-payment" },
+  { label: "Waiting for online payment", value: "awaiting-payment" },
   { label: "Waiting for customer to confirm", value: "awaiting-confirmation" },
   { label: "To confirm", value: "pending" },
   { label: "To ship (confirmed)", value: "confirmed" },
@@ -70,7 +70,7 @@ const RELEASED = new Set(["cancelled", "refused", "returned"]);
  * The moves staff may make with an order (forward through the normal flow, or cancel before it ships).
  * Anything else – taking a delivered order back, re-opening a cancelled one, skipping steps – needs a manager.
  */
-const STAFF_MOVES: Record<string, string[]> = {
+export const STAFF_MOVES: Record<string, string[]> = {
   // a card order moves on by itself when the payment provider confirms it; staff may only cancel it
   "awaiting-payment": ["cancelled"],
   "awaiting-confirmation": ["pending", "confirmed", "cancelled"],
@@ -179,7 +179,24 @@ const orderGuards: CollectionBeforeChangeHook = async ({ data, originalDoc, oper
 };
 
 /** A shipment of (part of) an order – see /cms-api/order-tools/ship. */
-export type ShipmentRow = { id?: string; items?: { line?: number; qty?: number; title?: string }[]; courier?: string | null; trackingNumber?: string | null; status?: string; shippedAt?: string; deliveredAt?: string | null };
+export type ShipmentRow = {
+  id?: string;
+  items?: { line?: number; qty?: number; title?: string }[];
+  courier?: string | null;
+  trackingNumber?: string | null;
+  status?: string;
+  shippedAt?: string;
+  deliveredAt?: string | null;
+  provider?: string | null;
+  courierStatus?: string | null;
+  lastTrackedAt?: string | null;
+  labelUrl?: string | null;
+  courierRef?: string | null;
+  codAmount?: number | null;
+  codStatus?: string | null;
+  codRemittedAt?: string | null;
+  codRemittanceRef?: string | null;
+};
 
 /** How many of each order line (by index) are on their way or delivered. */
 export function shippedPerLine(shipments: ShipmentRow[]): Map<number, number> {
@@ -686,11 +703,27 @@ export const Orders: CollectionConfig = {
         { type: "row", fields: [
           { name: "courier", type: "text", admin: { width: "34%" } },
           { name: "trackingNumber", type: "text", admin: { width: "33%" } },
-          { name: "status", type: "select", defaultValue: "shipped", options: [{ label: "On the way", value: "shipped" }, { label: "Delivered", value: "delivered" }, { label: "Cancelled", value: "cancelled" }], admin: { width: "33%" } },
+          { name: "status", type: "select", defaultValue: "shipped", options: [{ label: "On the way", value: "shipped" }, { label: "Delivered", value: "delivered" }, { label: "Returned", value: "returned" }, { label: "Cancelled", value: "cancelled" }], admin: { width: "33%" } },
         ] },
         { type: "row", fields: [
           { name: "shippedAt", type: "date", admin: { width: "50%" } },
           { name: "deliveredAt", type: "date", admin: { width: "50%" } },
+        ] },
+        // booked through a courier integration (/cms → Integrations): its status, label and cash collected
+        { type: "row", fields: [
+          { name: "provider", type: "text", admin: { width: "25%", description: "Courier integration it was booked with." } },
+          { name: "courierStatus", type: "text", admin: { width: "45%" } },
+          { name: "lastTrackedAt", type: "date", admin: { width: "30%" } },
+        ] },
+        { type: "row", fields: [
+          { name: "labelUrl", type: "text", admin: { width: "60%" } },
+          { name: "courierRef", type: "text", admin: { width: "40%", description: "The courier's own id for this parcel." } },
+        ] },
+        { type: "row", fields: [
+          { name: "codAmount", type: "number", min: 0, admin: { width: "25%", description: "Cash the courier collects." } },
+          { name: "codStatus", type: "select", options: [{ label: "Not collected yet", value: "pending" }, { label: "Paid to you", value: "remitted" }], admin: { width: "25%" } },
+          { name: "codRemittedAt", type: "date", admin: { width: "25%" } },
+          { name: "codRemittanceRef", type: "text", admin: { width: "25%" } },
         ] },
       ],
     },

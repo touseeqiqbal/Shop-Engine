@@ -22,7 +22,11 @@ const forOrder: Endpoint = {
     const res = await req.payload.find({ collection: "payment-transactions", where: { order: { equals: id } }, sort: "createdAt", limit: 50, depth: 0, overrideAccess: true });
     const rows = (res.docs as unknown as Doc[]).map((p) => ({ id: p.id, kind: p.kind, status: p.status, amount: p.amount, refundedAmount: p.refundedAmount ?? 0, currency: p.currency, provider: p.provider, at: p.createdAt, failureReason: p.failureReason ?? null }));
     const charge = rows.find((r) => r.kind === "charge" && (r.status === "succeeded" || r.status === "partially_refunded"));
-    return Response.json({ payments: rows, refundable: charge ? Number(charge.amount) - Number(charge.refundedAmount) : 0 });
+    // a store-connected provider without a refund API: refunded in the provider's own dashboard
+    const { integrationInfo } = await import("../../lib/integrations/catalog");
+    const info = charge ? integrationInfo(String(charge.provider)) : null;
+    const refundsHere = !info || Boolean(info.payment?.refunds);
+    return Response.json({ payments: rows, refundable: charge && refundsHere ? Number(charge.amount) - Number(charge.refundedAmount) : 0, refundElsewhere: charge && !refundsHere ? info?.name : null });
   },
 };
 

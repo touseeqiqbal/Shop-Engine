@@ -39,6 +39,7 @@
     "test:store-webhooks": "node --conditions=react-server node_modules/payload/bin.js run scripts/tests/store-webhooks.ts",
     "test:shipments": "node --conditions=react-server node_modules/payload/bin.js run scripts/tests/shipments.ts",
     "test:international": "node --conditions=react-server node_modules/payload/bin.js run scripts/tests/international.ts",
+    "test:integration-payments": "node --conditions=react-server node_modules/payload/bin.js run scripts/tests/integration-payments.ts",
     "test:load": "node scripts/load-test.mjs",
     "test:security": "node scripts/tests/security-sweep.mjs",
     "test:crawl": "node scripts/tests/crawl.mjs",

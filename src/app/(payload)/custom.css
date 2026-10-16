@@ -917,3 +917,63 @@ a.urko-ocell:hover strong { color: var(--urko-accent); }
 /* Yes / No in lists (Payload shows true / false in code style) */
 .bool-cell { background: none; padding: 0; font: inherit; color: inherit; }
 .bool-cell span { text-transform: capitalize; }
+
+/* ───────────── Integrations (/cms/integrations) ───────────── */
+.urko-int__head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.urko-int__head .urko-tip { margin: 6px 0 0; max-width: 640px; }
+.urko-int__search { min-height: 40px; min-width: 240px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--theme-elevation-150); background: var(--theme-elevation-50); color: var(--theme-text); font: inherit; }
+.urko-int__group { margin: 28px 0 8px; }
+.urko-int__group .urko-h2 { margin: 0; }
+.urko-int__groupnote { margin: 4px 0 14px; }
+.urko-int__grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+.urko-int__card { display: flex; flex-direction: column; gap: 10px; text-align: left; cursor: pointer; font: inherit; color: inherit; transition: border-color 0.15s ease, transform 0.15s ease; }
+.urko-int__card:hover { border-color: var(--theme-elevation-300); transform: translateY(-1px); }
+.urko-int__card:focus-visible { outline: 2px solid var(--urko-accent); outline-offset: 2px; }
+.urko-int__cardhead { display: flex; align-items: center; gap: 10px; }
+.urko-int__logo { display: grid; place-items: center; flex-shrink: 0; width: 38px; height: 38px; border-radius: 10px; color: #fff; font-weight: 800; font-size: 14px; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35); }
+.urko-int__name { font-weight: 700; font-size: 15px; }
+.urko-int__summary { font-size: 13px; line-height: 1.5; color: var(--theme-elevation-700); flex: 1; }
+.urko-int__badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.urko-int__connect { font-size: 13px; font-weight: 700; color: var(--urko-accent); }
+.urko-int__dialog { max-width: 620px; max-height: 84vh; display: flex; flex-direction: column; }
+.urko-int__dhead { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--theme-elevation-150); }
+.urko-int__dbody { padding: 18px 20px 20px; overflow-y: auto; }
+.urko-int__note { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: var(--urko-blue-bg); color: var(--theme-text); font-size: 13px; }
+.urko-int__note--warn { background: var(--urko-yellow-bg); }
+.urko-int__steps { margin: 0 0 16px; padding-left: 20px; font-size: 13px; line-height: 1.6; color: var(--theme-elevation-800); }
+.urko-int__steps li + li { margin-top: 4px; }
+.urko-int__form { display: grid; gap: 12px; }
+.urko-int__field { display: grid; gap: 6px; }
+.urko-int__field label { font-weight: 600; font-size: 13px; }
+.urko-int__field input, .urko-int__field select, .urko-int__field textarea { min-height: 40px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--theme-elevation-200); background: var(--theme-input-bg, var(--theme-elevation-0)); color: var(--theme-text); font: inherit; }
+.urko-int__copy { display: flex; gap: 8px; }
+.urko-int__copy input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; }
+.urko-int__check { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.urko-int__mode { display: flex; gap: 16px; border: 0; padding: 0; margin: 0; }
+.urko-int__mode legend { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.urko-int__mode label { display: flex; gap: 6px; align-items: center; }
+.urko-int__actions, .urko-int__footer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.urko-int__footer { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--theme-elevation-150); }
+.urko-int__checked { margin-left: auto; font-size: 12px; }
+.urko-int__result { margin: 14px 0 0; padding: 10px 12px; border-radius: 10px; font-size: 13px; }
+.urko-int__result.is-ok { background: var(--urko-green-bg); color: var(--urko-green); }
+.urko-int__result.is-error { background: var(--urko-red-bg); color: var(--urko-red); }
+.urko-int__oauth { display: grid; gap: 10px; justify-items: start; margin-bottom: 14px; }
+.urko-int__docs { margin: 14px 0 0; font-size: 13px; }
+/* Integrations → Store API */
+.urko-int__api { display: grid; gap: 14px; }
+.urko-int__apicard { display: grid; gap: 12px; }
+.urko-int__apicard .urko-h2 { margin: 0; }
+.urko-int__table { display: grid; border-top: 1px solid var(--theme-elevation-150); }
+.urko-int__row { display: grid; grid-template-columns: minmax(160px, 1.2fr) minmax(180px, 1.5fr) minmax(170px, 1.2fr) auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--theme-elevation-150); }
+.urko-int__mono { font-family: ui-monospace, monospace; font-size: 12px; }
+.urko-int__small { font-size: 13px; line-height: 1.55; }
+.urko-int__apiform { padding-top: 4px; }
+.urko-int__scopes { flex-wrap: wrap; }
+.urko-int__endpoints { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; font-size: 13px; }
+.urko-int__endpoints code, .urko-int__small code { font-family: ui-monospace, monospace; font-size: 12px; padding: 1px 6px; border-radius: 6px; background: var(--theme-elevation-100); }
+.urko-int__verb { display: inline-block; min-width: 52px; padding: 1px 6px; border-radius: 6px; font: 700 11px/1.6 ui-monospace, monospace; text-align: center; background: var(--urko-blue-bg); color: var(--theme-text); }
+.urko-int__verb--patch, .urko-int__verb--post { background: var(--urko-yellow-bg); }
+@media (max-width: 760px) {
+  .urko-int__row { grid-template-columns: 1fr; gap: 8px; }
+}

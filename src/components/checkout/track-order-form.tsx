@@ -96,7 +96,7 @@ function TrackButton() {
 }
 
 const STEP_HINT: Record<OrderStatus, string> = {
-  "awaiting-payment": "Waiting for your card payment",
+  "awaiting-payment": "Waiting for your online payment",
   "awaiting-confirmation": "Waiting for you to confirm – check your WhatsApp / SMS",
   pending: "Order received – awaiting confirmation",
   confirmed: "Confirmed and being packed",

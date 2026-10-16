@@ -8,6 +8,8 @@ import { runBillingLifecycle } from "@/lib/billing";
 
 let lastCleanup = 0;
 let lastBilling = 0;
+let lastCouriers = 0;
+let lastIntegrationSync = 0;
 
 /**
  * Background chores, run every few minutes by the server (instrumentation.ts) and on demand via /api/cron.
@@ -92,6 +94,28 @@ async function chores(reason: string): Promise<Record<string, unknown>> {
       if (r.paid || r.cancelled) report.cardPayments = { ...(report.cardPayments as object | undefined), [gateway.id]: r };
     } catch (e) {
       log.error("housekeeping.card_reconcile", e, { provider: gateway.id });
+    }
+  }
+  // courier parcels still on their way (and cash the couriers collected) – every 15 minutes, a batch at a time
+  if (Date.now() - lastCouriers > 15 * 60e3) {
+    lastCouriers = Date.now();
+    try {
+      const { syncCourierTracking } = await import("@/lib/integrations/couriers");
+      const r = await syncCourierTracking(payload);
+      if (r.delivered || r.returned || r.remitted) report.couriers = r;
+    } catch (e) {
+      log.error("housekeeping.couriers", e);
+    }
+  }
+  // integrations with periodic work of their own (marketplace stock, accounting tokens …) – every 30 minutes
+  if (Date.now() - lastIntegrationSync > 30 * 60e3) {
+    lastIntegrationSync = Date.now();
+    try {
+      const { runIntegrationSyncs } = await import("@/lib/integrations/sync");
+      const r = await runIntegrationSyncs(payload);
+      if (r.length) report.integrations = r;
+    } catch (e) {
+      log.error("housekeeping.integrations", e);
     }
   }
   if (Date.now() - lastBilling > 3600e3) {

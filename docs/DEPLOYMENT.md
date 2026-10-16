@@ -72,6 +72,36 @@ If `DATABASE_URL`, `PAYLOAD_SECRET`, `AUTH_SECRET` or the `S3_*` bucket variable
 
 After setting up Stripe, open `/cms` → Plans and enter each paid plan's Stripe price ids; check the starter plans' prices.
 
+### Integrations signed in with the provider's page
+Stores connect most integrations (couriers, their own payment gateways, WhatsApp, SMS, email, pixels) with their own
+keys in `/cms` → Integrations – nothing to set here. Four use ShopEngine's own app with the provider instead; each
+store then signs in with its own account. Register the redirect URL
+`https://<admin address>/cms-api/integration-tools/oauth/callback` with every app. Details: `docs/INTEGRATIONS.md`.
+
+| Name | What it is for |
+|---|---|
+| `QUICKBOOKS_CLIENT_ID`, `QUICKBOOKS_CLIENT_SECRET` | QuickBooks Online app (developer.intuit.com). `QUICKBOOKS_SANDBOX=true` while using its development keys. |
+| `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET` | Xero app (developer.xero.com, granular scopes). Xero charges apps per connected organisation – check its pricing. |
+| `DARAZ_APP_KEY`, `DARAZ_APP_SECRET` | Daraz Open Platform app ("ERP System" category so any seller can authorise). |
+| `AMAZON_SPAPI_APP_ID`, `AMAZON_LWA_CLIENT_ID`, `AMAZON_LWA_CLIENT_SECRET` | Amazon Selling Partner API – needs a **public developer** registration (Amazon's review takes weeks). `AMAZON_SPAPI_DRAFT=true` while the app is a draft. |
+| `INTEGRATIONS_OAUTH_BASE_URL` | Optional: the address registered as the apps' redirect, if it isn't the admin's own address. |
+
+Payment gateways a store connects itself send shoppers back to `https://<store address>/api/integrations/<provider>/<key>/return`
+– the store's own domain must be reachable over HTTPS (JazzCash also needs that address registered on the store's account).
+
+### ShopEngine's marketing website
+| Name | What it is for |
+|---|---|
+| `MARKETING_HOSTS` | Comma-separated addresses that show ShopEngine's own website instead of a store, e.g. `shopengine.app,www.shopengine.app`. On these addresses `/`, `/features`, `/pricing` … are the marketing pages, and `/account/*` (merchant sign-up, sign-in, “Your stores”), `/cms` and the APIs keep working under ShopEngine's name. Unset = no marketing site (every address resolves its store as before). Never list the original shop's own domain here. |
+| `MARKETING_SITE_URL` | Optional. The one address used in canonical links, the sitemap and structured data, e.g. `https://shopengine.app` (default: `https://` + the first of `MARKETING_HOSTS`). |
+| `PLATFORM_CONTACT_EMAIL` | Optional. Where messages from the marketing site's contact form are emailed (they are always saved in `/cms` → Contact messages, with no store – visible to platform admins with no single store selected). Needs an email provider (SMTP or Resend). |
+
+DNS: point the marketing address (apex and/or `www`) at the site like the platform domain. With `PLATFORM_ROOT_DOMAIN=shopengine.app`,
+`shopengine.app` can be the marketing site while `myshop.shopengine.app` stays a store. Pages: `src/app/(marketing)/shopengine/*`;
+copy: `src/lib/marketing/content.ts`; prices come from the active plans in `/cms` → Plans (refreshed every 5 minutes).
+The marketing pages are pre-rendered when the site is built, so set `MARKETING_HOSTS` / `MARKETING_SITE_URL` for the **build**
+too (Railway passes service variables to builds), or canonical links will point at the wrong address until the next deploy.
+
 ### Staging only
 | Name | What it is for |
 |---|---|

@@ -11,15 +11,24 @@ import { log } from "@/lib/log";
  *   deliverWebhook()  the outbox worker's POST: signed, 10 s timeout, no redirects, never to a private address
  */
 
-export type StoreEventType = "order.created" | "order.updated" | "order.paid" | "refund.created";
+export type StoreEventType = "order.created" | "order.updated" | "order.paid" | "refund.created" | "checkout.started";
 
+/**
+ * Queues a store event for the store's webhook endpoints that want it, and for its connected integrations that use it
+ * (email marketing, ad conversions, accounting … – lib/integrations/catalog `events`).
+ */
 export async function emitStoreEvent(payload: Payload, storeId: number | null | undefined, type: StoreEventType, data: Record<string, unknown>, req?: PayloadRequest): Promise<void> {
   if (storeId == null) return;
-  const endpoints = (await payload.find({ collection: "webhook-endpoints", where: { and: [{ store: { equals: storeId } }, { active: { equals: true } }, { events: { contains: type } }] }, limit: 20, depth: 0, overrideAccess: true, ...(req ? { req } : {}) }).catch(() => ({ docs: [] }))).docs as unknown as { id: number }[];
-  if (!endpoints.length) return;
+  const endpoints = type === "checkout.started" ? [] : ((await payload.find({ collection: "webhook-endpoints", where: { and: [{ store: { equals: storeId } }, { active: { equals: true } }, { events: { contains: type } }] }, limit: 20, depth: 0, overrideAccess: true, ...(req ? { req } : {}) }).catch(() => ({ docs: [] }))).docs as unknown as { id: number }[]);
+  const { connectionsOf } = await import("@/lib/integrations/server");
+  const { integrationInfo } = await import("@/lib/integrations/catalog");
+  const listeners = (await connectionsOf(payload, storeId).catch(() => [])).filter((c) => c.status === "connected" && integrationInfo(c.provider)?.events?.includes(type));
+  if (!endpoints.length && !listeners.length) return;
   const { enqueue, kickOutbox } = await import("@/lib/outbox");
   const id = `evt_${randomUUID().replace(/-/g, "")}`;
-  for (const e of endpoints) await enqueue(payload, { type: "webhook.deliver", storeId, data: { endpointId: e.id, event: { id, type, created: new Date().toISOString(), store: storeId, data } }, dedupeKey: `wh:${e.id}:${id}` }, req);
+  const created = new Date().toISOString();
+  for (const e of endpoints) await enqueue(payload, { type: "webhook.deliver", storeId, data: { endpointId: e.id, event: { id, type, created, store: storeId, data } }, dedupeKey: `wh:${e.id}:${id}` }, req);
+  for (const c of listeners) await enqueue(payload, { type: "integration.event", storeId, data: { connectionId: c.id, provider: c.provider, event: { id, type, at: created, data } }, dedupeKey: `ie:${c.id}:${id}` }, req);
   kickOutbox(payload);
 }
 

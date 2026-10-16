@@ -105,6 +105,7 @@ import { StockCountView as StockCountView_113950c8ba2e4d64ee293bb9fa41119e } fro
 import { HelpView as HelpView_4f90d8d3c4262fe282fa729b5f35030f } from '../../../payload/admin/help/HelpView'
 import { StoreSettingsView as StoreSettingsView_c8dcc2c8795c3f1ae3ada3572fbd07f3 } from '../../../payload/admin/settings/StoreSettingsView'
 import { PlatformView as PlatformView_a30e078e5cc505c64747cb147c1a868a } from '../../../payload/admin/platform/PlatformView'
+import { IntegrationsView as IntegrationsView_4a496c8814bd9985d7560cb1cf4e0d81 } from '../../../payload/admin/integrations/IntegrationsView'
 import { CollectionCards as CollectionCards_f9c02e79a4aed9a3924487c0cd4cafb1 } from '@payloadcms/next/rsc'
 import { S3ClientUploadHandler as S3ClientUploadHandler_f97aa6c64367fa259c5bc0567239ef24 } from '@payloadcms/storage-s3/client'
 
@@ -217,6 +218,7 @@ export const importMap = {
   "/payload/admin/help/HelpView#HelpView": HelpView_4f90d8d3c4262fe282fa729b5f35030f,
   "/payload/admin/settings/StoreSettingsView#StoreSettingsView": StoreSettingsView_c8dcc2c8795c3f1ae3ada3572fbd07f3,
   "/payload/admin/platform/PlatformView#PlatformView": PlatformView_a30e078e5cc505c64747cb147c1a868a,
+  "/payload/admin/integrations/IntegrationsView#IntegrationsView": IntegrationsView_4a496c8814bd9985d7560cb1cf4e0d81,
   "@payloadcms/next/rsc#CollectionCards": CollectionCards_f9c02e79a4aed9a3924487c0cd4cafb1,
   "@payloadcms/storage-s3/client#S3ClientUploadHandler": S3ClientUploadHandler_f97aa6c64367fa259c5bc0567239ef24
 }

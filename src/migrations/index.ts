@@ -33,6 +33,8 @@ import * as migration_20261013_233003_multi_tenancy from './20261013_233003_mult
 import * as migration_20261014_003019_store_extras from './20261014_003019_store_extras';
 import * as migration_20261015_114028_international from './20261015_114028_international';
 import * as migration_20261016_000546_pos_currency from './20261016_000546_pos_currency';
+import * as migration_20261016_031120_integrations from './20261016_031120_integrations';
+import * as migration_20261016_035623_store_api_shipments from './20261016_035623_store_api_shipments';
 
 export const migrations = [
   {
@@ -208,6 +210,16 @@ export const migrations = [
   {
     up: migration_20261016_000546_pos_currency.up,
     down: migration_20261016_000546_pos_currency.down,
-    name: '20261016_000546_pos_currency'
+    name: '20261016_000546_pos_currency',
+  },
+  {
+    up: migration_20261016_031120_integrations.up,
+    down: migration_20261016_031120_integrations.down,
+    name: '20261016_031120_integrations',
+  },
+  {
+    up: migration_20261016_035623_store_api_shipments.up,
+    down: migration_20261016_035623_store_api_shipments.down,
+    name: '20261016_035623_store_api_shipments',
   },
 ];

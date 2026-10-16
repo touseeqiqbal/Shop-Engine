@@ -81,5 +81,8 @@ export async function loadCommerceSettings(storeId: number | null): Promise<Part
   const loc = storeLocale(store as { country?: string; currency?: string } | null);
   out.currency = loc.currency;
   out.country = loc.country;
+  // the store's own payment provider accounts (Integrations → Online payments)
+  const { storeOnlineGateways } = await import("@/lib/integrations/payments");
+  out.onlineGateways = await storeOnlineGateways(payload, storeId, loc.country, loc.currency);
   return out;
 }

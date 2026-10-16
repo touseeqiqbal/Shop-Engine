@@ -2,7 +2,6 @@ import type { Endpoint } from "payload";
 import { sameStoreAs, storeGate } from "./guard";
 import { getStoreSettings } from "../store-settings";
 import { storeIdOf } from "../tenancy";
-import { shippedPerLine, type ShipmentRow } from "../collections/content";
 import { storeLocaleOf } from "../store-locale";
 import { addDays, dayIn, dayStart } from "../../lib/time";
 
@@ -35,12 +34,11 @@ const resend: Endpoint = {
   },
 };
 
-const SHIPPABLE = new Set(["confirmed", "dispatched", "out-for-delivery"]);
-
 /**
  * POST /cms-api/order-tools/ship { orderId, lines: [{ line, qty }], courier, trackingNumber }
  * Sends some (or all remaining) items: a shipment with its own courier / tracking. When everything is shipped the order
  * moves to "Dispatched"; until then it shows "Partly shipped" and the customer gets a message for each parcel.
+ * (Booking with a connected courier: /cms-api/integration-tools/courier/book – same rules, src/payload/shipments.ts.)
  */
 const ship: Endpoint = {
   path: "/order-tools/ship",
@@ -51,48 +49,17 @@ const ship: Endpoint = {
     const body = (await req.json?.().catch(() => null)) as { orderId?: number; lines?: { line?: number; qty?: number }[]; courier?: string; trackingNumber?: string } | null;
     const d = (await req.payload.findByID({ collection: "orders", id: num(body?.orderId), depth: 0, overrideAccess: true }).catch(() => null)) as unknown as Doc | null;
     if (!d || !sameStoreAs(gate, d)) return Response.json({ error: "Order not found" }, { status: 404 });
-    if (!SHIPPABLE.has(str(d.status))) return Response.json({ error: "Confirm the order before shipping it." }, { status: 400 });
-    const { paymentBlocksShipping } = await import("../../lib/order-money");
-    if (paymentBlocksShipping({ paymentMethod: str(d.paymentMethod), paymentStatus: str(d.paymentStatus) })) return Response.json({ error: "Approve the online payment before shipping." }, { status: 400 });
-    const items = (Array.isArray(d.items) ? d.items : []) as Doc[];
-    const shipments = (Array.isArray(d.shipments) ? d.shipments : []) as ShipmentRow[];
-    const shipped = shippedPerLine(shipments);
-    const want = new Map<number, number>();
-    for (const l of body?.lines ?? []) {
-      const line = Number(l.line);
-      const qty = Math.floor(Number(l.qty));
-      if (!Number.isInteger(line) || !items[line] || !(qty > 0)) return Response.json({ error: "Choose the items and how many to send." }, { status: 400 });
-      want.set(line, (want.get(line) ?? 0) + qty);
-    }
-    if (!want.size) return Response.json({ error: "Choose the items to send." }, { status: 400 });
-    for (const [line, qty] of want) {
-      const left = num(items[line].qty) - (shipped.get(line) ?? 0);
-      if (qty > left) return Response.json({ error: `Only ${left} of “${str(items[line].title)}” left to send.` }, { status: 400 });
-    }
+    const { checkShippable, recordShipment } = await import("../shipments");
+    const check = await checkShippable(d, body?.lines);
+    if (!check.ok) return Response.json({ error: check.error }, { status: check.status });
     const courier = str(body?.courier).trim().slice(0, 60) || null;
     const trackingNumber = str(body?.trackingNumber).trim().slice(0, 80) || null;
-    const shipment: ShipmentRow = { items: [...want].map(([line, qty]) => ({ line, qty, title: str(items[line].title) })), courier, trackingNumber, status: "shipped", shippedAt: new Date().toISOString(), deliveredAt: null };
-    for (const [line, qty] of want) shipped.set(line, (shipped.get(line) ?? 0) + qty);
-    const everything = items.every((it, i) => (shipped.get(i) ?? 0) >= num(it.qty));
-    const nextStatus = everything && str(d.status) === "confirmed" ? "dispatched" : str(d.status);
-    await req.payload.update({
-      collection: "orders",
-      id: Number(d.id),
-      data: { shipments: [...shipments, shipment], ...(courier ? { courier } : {}), ...(trackingNumber ? { trackingNumber } : {}), status: nextStatus } as never,
-      overrideAccess: true,
-      req,
-      context: { expectStatus: str(d.status) },
-    });
-    // a parcel of a partly shipped order: its own message (the last one is announced by "Dispatched")
-    if (nextStatus === str(d.status)) {
-      const { queueNotification } = await import("../../lib/notify");
-      await queueNotification(req.payload, "shipment", gate.store ?? storeIdOf(d.store), { orderId: d.id, shipment }, { dedupeKey: `shipment:${String(d.id)}:${shipments.length}` });
-    }
-    return Response.json({ ok: true, complete: everything });
+    const r = await recordShipment(req.payload, req, d, check.want, { courier, trackingNumber });
+    return Response.json({ ok: true, complete: r.complete });
   },
 };
 
-/** POST /cms-api/order-tools/shipment { orderId, index, status: "delivered" | "cancelled" } – a parcel arrived / was cancelled. */
+/** POST /cms-api/order-tools/shipment { orderId, index, status: "delivered" | "returned" | "cancelled" } – a parcel arrived / came back / was cancelled. */
 const shipmentStatus: Endpoint = {
   path: "/order-tools/shipment",
   method: "post",
@@ -102,19 +69,12 @@ const shipmentStatus: Endpoint = {
     const body = (await req.json?.().catch(() => null)) as { orderId?: number; index?: number; status?: string } | null;
     const d = (await req.payload.findByID({ collection: "orders", id: num(body?.orderId), depth: 0, overrideAccess: true }).catch(() => null)) as unknown as Doc | null;
     if (!d || !sameStoreAs(gate, d)) return Response.json({ error: "Order not found" }, { status: 404 });
-    const shipments = (Array.isArray(d.shipments) ? d.shipments : []) as ShipmentRow[];
-    const i = Number(body?.index);
     const status = str(body?.status);
-    if (!shipments[i] || !["delivered", "cancelled"].includes(status) || shipments[i].status !== "shipped") return Response.json({ error: "Only a parcel that is on its way can be marked delivered or cancelled." }, { status: 400 });
-    const next = shipments.map((s, k) => (k === i ? { ...s, status, deliveredAt: status === "delivered" ? new Date().toISOString() : s.deliveredAt ?? null } : s));
-    const items = (Array.isArray(d.items) ? d.items : []) as Doc[];
-    const shipped = shippedPerLine(next);
-    const allShipped = items.every((it, k) => (shipped.get(k) ?? 0) >= num(it.qty));
-    const allDelivered = allShipped && next.every((s) => s.status !== "shipped");
-    const orderStatus = str(d.status);
-    const nextStatus = allDelivered && SHIPPABLE.has(orderStatus) ? "delivered" : orderStatus;
-    await req.payload.update({ collection: "orders", id: Number(d.id), data: { shipments: next, status: nextStatus } as never, overrideAccess: true, req, context: { expectStatus: orderStatus } });
-    return Response.json({ ok: true, orderStatus: nextStatus });
+    if (status !== "delivered" && status !== "cancelled" && status !== "returned") return Response.json({ error: "Only a parcel that is on its way can be marked delivered, returned or cancelled." }, { status: 400 });
+    const { setShipmentStatus } = await import("../shipments");
+    const r = await setShipmentStatus(req.payload, req, d, Number(body?.index), status);
+    if (!r.ok) return Response.json({ error: r.error }, { status: r.status });
+    return Response.json({ ok: true, orderStatus: r.orderStatus });
   },
 };
 

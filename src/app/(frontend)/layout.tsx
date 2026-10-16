@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Montserrat, Poppins, Space_Grotesk } from "next/font/google";
 import "../globals.css";
-import { currentAvailability, currentOrigin, getCurrentStore } from "@/lib/tenant";
+import { currentAvailability, currentOrigin, getCurrentStore, isPlatformRequest } from "@/lib/tenant";
 import { getSeoSettings, getSiteInfo } from "@/lib/repo/site-content";
 import { blankSiteInfo } from "@/lib/site-info";
 import { SiteInfoProvider } from "@/components/providers/site-info";
@@ -23,6 +23,13 @@ const poppins = Poppins({ subsets: ["latin"], variable: "--font-poppins", displa
 
 /** An address no store owns (unknown sub-domain): the platform's own plain pages, never the original shop's profile. */
 const PLATFORM_NAME = "ShopEngine";
+const SHOPENGINE_ICONS: Metadata["icons"] = {
+  icon: [
+    { url: "/brand/shopengine/favicon-32.png", sizes: "32x32", type: "image/png" },
+    { url: "/brand/shopengine/favicon-16.png", sizes: "16x16", type: "image/png" },
+  ],
+  apple: "/brand/shopengine/apple-touch-icon.png",
+};
 async function isUnknownStore() {
   const { availability } = await currentAvailability();
   return !availability.open && availability.reason === "missing";
@@ -34,7 +41,7 @@ export async function generateMetadata(): Promise<Metadata> {
   // the store's own favicon (Theme settings); the original shop's icon only on the original shop
   const icon = chrome.theme.favicon || (!store || store.isDefault ? "/icon.svg" : "/brand/store-icon.svg");
   const icons = { icon, apple: chrome.theme.favicon || (!store || store.isDefault ? "/apple-icon.png" : "/brand/store-icon.svg") };
-  if (unknown) return { metadataBase: new URL(origin), title: { default: PLATFORM_NAME, template: `%s | ${PLATFORM_NAME}` }, robots: { index: false, follow: false }, icons: { icon: "/brand/store-icon.svg" } };
+  if (unknown) return { metadataBase: new URL(origin), title: { default: PLATFORM_NAME, template: `%s | ${PLATFORM_NAME}` }, robots: { index: false, follow: false }, icons: SHOPENGINE_ICONS };
   const google = seo.googleVerification || process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION || undefined;
   const bing = seo.bingVerification || process.env.NEXT_PUBLIC_BING_SITE_VERIFICATION || "";
   const fb = seo.facebookVerification || process.env.NEXT_PUBLIC_FB_DOMAIN_VERIFICATION || "";
@@ -89,7 +96,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const unknown = !availability.open && availability.reason === "missing";
   const info = unknown ? blankSiteInfo(PLATFORM_NAME, origin) : storeInfo;
   const chrome = unknown ? DEFAULT_CHROME : storeChrome;
-  const mode = chrome.theme.defaultMode;
+  // ShopEngine's own address (sign-up, sign-in, Stores) is dark like its website; an address no store owns stays light
+  const mode = unknown ? ((await isPlatformRequest()) ? "dark" : "light") : chrome.theme.defaultMode;
   // the store's currency, time zone and country for prices, dates and checkout (the original shop: PKR / Pakistan)
   const locale = store && !unknown ? storeLocale(store) : DEFAULT_LOCALE;
   return (

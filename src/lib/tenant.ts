@@ -7,6 +7,7 @@ import { unstable_cache } from "next/cache";
 import { unstable_rethrow } from "next/dist/client/components/unstable-rethrow";
 import { isCmsConfigured } from "@/lib/db/config";
 import { PREVIEW_STORE_COOKIE, matchStore, storeAvailability, storeOrigin, toDirectoryEntry, type StoreDirectoryEntry } from "./tenant-shared";
+import { isMarketingHost } from "./marketing/hosts";
 
 export { storeAvailability, storeOrigin, type StoreDirectoryEntry } from "./tenant-shared";
 
@@ -69,11 +70,45 @@ const storeOfRequest = cache(async (): Promise<StoreDirectoryEntry | null> => {
     const preview = stores.find((x) => x.id === previewId);
     if (preview) return preview;
   }
+  // ShopEngine's own address (marketing site, merchant sign-up): no store
+  if (isMarketingHost(host)) return null;
   return matchStore(stores, host);
 });
 
+/** The request's host, or "" outside a request. */
+async function requestHost(): Promise<string> {
+  try {
+    return (await headers()).get("host") ?? "";
+  } catch (e) {
+    unstable_rethrow(e);
+    return "";
+  }
+}
+
+/**
+ * Is this request on ShopEngine's own address (MARKETING_HOSTS) – the marketing site and the merchant account pages
+ * (sign-up, sign-in, Stores), shown under ShopEngine's name instead of a store's? Jobs (runInStore) never are.
+ */
+export async function isPlatformRequest(): Promise<boolean> {
+  if (explicit.getStore() !== undefined) return false;
+  return isMarketingHost(await requestHost());
+}
+
+/** ShopEngine's own address as the visitor uses it, e.g. "https://shopengine.app" (links in sign-up emails). */
+export async function platformOrigin(): Promise<string> {
+  const host = await requestHost();
+  let proto = "https";
+  try {
+    proto = (await headers()).get("x-forwarded-proto")?.split(",")[0]?.trim() || (process.env.NODE_ENV === "production" ? "https" : "http");
+  } catch (e) {
+    unstable_rethrow(e);
+  }
+  return host ? `${proto}://${host}` : (process.env.NEXT_PUBLIC_SITE_URL || "").replace(/\/+$/, "");
+}
+
 /** The current store's public address (verified custom domain, its sub-domain, else the main site) – no trailing slash. */
 export async function currentOrigin(): Promise<string> {
+  if (await isPlatformRequest()) return platformOrigin();
   const store = await getCurrentStore();
   const main = (process.env.NEXT_PUBLIC_SITE_URL || "https://urkotechstore.com").replace(/\/+$/, "");
   return store ? storeOrigin(store, main) || main : main;

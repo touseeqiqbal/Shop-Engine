@@ -1,7 +1,10 @@
 import { gatewayInfo, gatewaySupports } from "./catalog";
 import { storeLocale } from "../locale";
-import type { PaymentGateway } from "./gateway-types";
+import { GatewayError, type PaymentGateway } from "./gateway-types";
 import { stripeGateway } from "./stripe-gateway";
+import { openCheckoutUrl } from "./index";
+import { INTEGRATIONS } from "../integrations/catalog";
+import type { IntegrationInfo } from "../integrations/catalog-types";
 
 export { GatewayError, type PaymentGateway, type StartPaymentInput, type WebhookEvent, type WebhookResult } from "./gateway-types";
 
@@ -33,13 +36,16 @@ export function allGateways(): PaymentGateway[] {
   return [...registry.values()];
 }
 
-/** The provider a store has connected (Stores → Online payments), else the first one that works in its country. */
+/** ShopEngine's own platform providers (Stripe Connect) – connected per store from Stores → Online payments. */
+const platformGateways = () => allGateways().filter((g) => gatewayInfo(g.id));
+
+/** The platform provider a store has connected (Stores → Online payments), else the first one that works in its country. */
 export function storeGateway(store: Doc | null | undefined): PaymentGateway | null {
   if (!store) return null;
   const chosen = getGateway(String(store.paymentsProvider || ""));
-  if (chosen) return chosen;
+  if (chosen && gatewayInfo(chosen.id)) return chosen;
   const loc = storeLocale(store as { country?: string; currency?: string });
-  return allGateways().find((g) => gatewaySupports(g, loc.country, loc.currency)) ?? null;
+  return platformGateways().find((g) => gatewaySupports(g, loc.country, loc.currency)) ?? null;
 }
 
 /** Can this store take payments through this provider right now (keys set, account ready, its country and currency)? */
@@ -50,5 +56,33 @@ export function gatewayReady(id: string, store: Doc | null | undefined): boolean
   return gatewaySupports(g, loc.country, loc.currency);
 }
 
+/**
+ * A provider connected with the store's OWN account (Integrations → Online payments: PayPal, JazzCash …). Its
+ * updates come to /api/integrations/<provider>/<key>, not /api/webhooks/payments – see lib/integrations/payments.ts.
+ */
+function integrationGateway(info: IntegrationInfo): PaymentGateway {
+  const engine = () => import("../integrations/payments");
+  return {
+    id: info.id,
+    label: info.name,
+    methods: [info.id],
+    countries: info.countries,
+    currencies: info.payment?.currencies,
+    description: info.summary,
+    configured: () => true,
+    // per store: offered at checkout only while connected and switched on (lib/cms/commerce.ts)
+    ready: () => true,
+    start: async (payload, input) => (await engine()).startPayment(payload, info.id, input),
+    resumeUrl: (payload, orderId) => openCheckoutUrl(payload, orderId),
+    verifyWebhook() {
+      throw new GatewayError("Updates for this provider go to the store's own integration address.", 404);
+    },
+    handleWebhook: async () => ({ status: "ignored", summary: { reason: "not used" } }),
+    refund: async (payload, req, input) => (await engine()).refundPayment(payload, req, info.id, input),
+    reconcile: async (payload, limit) => (await engine()).reconcilePayments(payload, info.id, limit),
+  };
+}
+
 // the built-in providers
 registerGateway(stripeGateway);
+for (const info of INTEGRATIONS) if (info.category === "payments" && info.payment) registry.set(info.id, integrationGateway(info));

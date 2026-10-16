@@ -1,0 +1,39 @@
+import { apiError, authenticate, orderOut } from "@/lib/store-api";
+
+export const dynamic = "force-dynamic";
+
+/**
+ * POST /api/v1/orders/{order number}/status   (orders:write)
+ * { "status": "dispatched", "courier": "TCS", "trackingNumber": "779412326902", "note": "…" }
+ * The same moves a member of staff may make in /cms (confirm, ship, out for delivery, deliver, refused, returned,
+ * cancel before shipping); anything else needs a manager in /cms. The customer gets the usual message.
+ */
+export async function POST(req: Request, ctx: { params: Promise<{ orderNumber: string }> }) {
+  const caller = await authenticate(req, "orders:write");
+  if (caller instanceof Response) return caller;
+  const orderNumber = decodeURIComponent((await ctx.params).orderNumber);
+  const { payload, storeId } = caller;
+  const o = (await payload.find({ collection: "orders", where: { and: [{ orderNumber: { equals: orderNumber } }, { store: { equals: storeId } }] }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Record<string, unknown> | undefined;
+  if (!o) return apiError(404, "No such order in this store.");
+  const body = (await req.json().catch(() => null)) as { status?: string; courier?: string; trackingNumber?: string; note?: string } | null;
+  const next = String(body?.status ?? "");
+  const current = String(o.status);
+  const { STAFF_MOVES } = await import("@/payload/collections/content");
+  if (!(STAFF_MOVES[current] ?? []).includes(next)) return apiError(409, `An order that is “${current}” can't become “${next || "?"}” through the API.`, { allowed: STAFF_MOVES[current] ?? [] });
+  const courier = String(body?.courier ?? "").trim().slice(0, 60);
+  const trackingNumber = String(body?.trackingNumber ?? "").trim().slice(0, 80);
+  const note = String(body?.note ?? "").trim().slice(0, 300);
+  try {
+    const saved = await payload.update({
+      collection: "orders",
+      id: Number(o.id),
+      data: { status: next, ...(courier ? { courier } : {}), ...(trackingNumber ? { trackingNumber } : {}), history: [{ status: next, at: new Date().toISOString(), note: `Store API (${caller.keyName})${note ? ` – ${note}` : ""}` }] } as never,
+      overrideAccess: true,
+      context: { expectStatus: current },
+    });
+    return Response.json({ data: orderOut(saved as unknown as Record<string, unknown>) }, { headers: { "cache-control": "no-store" } });
+  } catch (e) {
+    const status = (e as { status?: number }).status;
+    return apiError(status && status < 500 ? status : 400, (e as Error).message || "Couldn’t update the order.");
+  }
+}

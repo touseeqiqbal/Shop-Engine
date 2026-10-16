@@ -50,7 +50,7 @@ export async function sendStockAndPriceAlerts(): Promise<number> {
     const due = a.kind === "stock" ? num(p.stock) > 0 : num(a.priceAtSignup) > 0 && price <= num(a.priceAtSignup) * (1 - s.priceDropPercent / 100);
     if (!due) continue;
     // keep waiting until there's a way to reach them (email / WhatsApp not set up yet)
-    if (!canReach(str(a.contact), a.kind === "price" ? "WHATSAPP_TEMPLATE_PRICE_DROP" : "WHATSAPP_TEMPLATE_BACK_IN_STOCK")) continue;
+    if (!(await canReach(str(a.contact), a.kind === "price" ? "WHATSAPP_TEMPLATE_PRICE_DROP" : "WHATSAPP_TEMPLATE_BACK_IN_STOCK", storeId))) continue;
     const cat = p.category as Doc | null;
     const url = cat?.slug ? `/${str(cat.slug)}/${str(p.slug)}` : "/";
     try {
@@ -98,7 +98,7 @@ export async function sendCartReminders(): Promise<number> {
     const count = num(c.remindersSent);
     const idleH = (now - Date.parse(str(c.lastActivityAt))) / 3600e3;
     const due = (count === 0 && idleH >= s.cartFirstHours) || (count === 1 && s.cartSecondHours > 0 && idleH >= s.cartSecondHours);
-    if (!due || !canReach(str(c.contact), "WHATSAPP_TEMPLATE_CART")) continue;
+    if (!due || !(await canReach(str(c.contact), "WHATSAPP_TEMPLATE_CART", storeId))) continue;
     const items = (Array.isArray(c.items) ? c.items : []) as { name?: string; qty?: number }[];
     try {
       await queueNotification(

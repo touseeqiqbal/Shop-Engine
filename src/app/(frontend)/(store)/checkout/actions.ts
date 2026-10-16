@@ -201,6 +201,9 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     return { ok: false, message: "This payment method isn't available right now – please choose another.", fieldErrors: { paymentMethod: "Please choose another payment method" }, ts };
   const card = method.kind === "gateway";
   const payOnDelivery = method.due === "on-delivery";
+  // some payment providers (Paystack, Flutterwave, Tap) need the shopper's email
+  if (method.needsEmail && !data.email)
+    return { ok: false, message: `Please enter your email – ${method.label} needs it for your payment receipt.`, fieldErrors: { email: "Enter your email address" }, ts };
 
   const subtotal = priced.subtotal;
   // the typed code and/or the best automatic discount (never place the order at a higher total than the customer saw)
@@ -308,7 +311,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     // An uploaded advance isn't checked yet, so it can't replace the confirmation; approving it in /cms confirms the order.
     // …and only when we can actually send the customer the link/code; otherwise staff confirm by phone.
     if (prot && needsConfirmation({ paymentMethod: method.id, paymentDue: method.due, total, zoneName, advancePaid: false }, prot)) {
-      if (canAskForConfirmation(data.email)) confirmation = newConfirmation(prot);
+      if (await canAskForConfirmation(data.email, storeId)) confirmation = newConfirmation(prot);
       else log.warn("checkout.confirmation_unreachable", { phone: data.phone.slice(-4) });
     }
   }

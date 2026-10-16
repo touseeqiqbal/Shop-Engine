@@ -21,6 +21,7 @@ import { getNotifySettings } from "@/lib/cms/notify-settings";
 import { deliverEmail, isEmailConfigured } from "@/lib/mailer";
 import { amountToCollect, paidOnDelivery } from "@/lib/order-money";
 import { log } from "@/lib/log";
+import { NO_CHANNELS, storeChannels, storeTemplate, type StoreChannels } from "@/lib/integrations/channels";
 
 /**
  * Order notifications (email + WhatsApp/SMS). Integration-ready: each channel is a no-op until its env vars are set.
@@ -41,10 +42,21 @@ import { log } from "@/lib/log";
  * on its own. `notifyNow()` sends straight away (scripts only).
  */
 
-type Ctx = { site: SiteInfo; origin: string; storeId: number | null; isDefault: boolean; locale: StoreLocale };
+type Ctx = { site: SiteInfo; origin: string; storeId: number | null; isDefault: boolean; locale: StoreLocale; channels: StoreChannels };
 const ctxStore = new AsyncLocalStorage<Ctx>();
 /** The store this message is for (set by withStore); the original shop when nothing is set. */
-const ctx = (): Ctx => ctxStore.getStore() ?? { site: DEFAULT_SITE_INFO, origin: mainSiteUrl("").replace(/\/$/, ""), storeId: null, isDefault: true, locale: DEFAULT_LOCALE };
+const ctx = (): Ctx => ctxStore.getStore() ?? { site: DEFAULT_SITE_INFO, origin: mainSiteUrl("").replace(/\/$/, ""), storeId: null, isDefault: true, locale: DEFAULT_LOCALE, channels: NO_CHANNELS };
+
+/**
+ * The approved WhatsApp template for a kind of message: the store's own (its WhatsApp number in /cms → Integrations),
+ * else ShopEngine's (WHATSAPP_TEMPLATE_<KIND>). Undefined = none – the message isn't sent on WhatsApp.
+ */
+const waTemplate = (env: string): string | undefined => {
+  const own = ctx().channels.whatsapp;
+  return own ? storeTemplate(own, env) : process.env[env] || undefined;
+};
+/** Can this store send SMS (its own provider, or ShopEngine's gateway)? */
+const smsAvailable = () => Boolean(ctx().channels.sms || process.env.SMS_WEBHOOK_URL);
 /** A link on the store's own website. */
 const absoluteUrl = (path = "/") => `${ctx().origin}${path.startsWith("/") ? path : `/${path}`}`;
 /** An amount in the store's currency ("Rs 1,200", "$1,200.00"). */
@@ -60,9 +72,9 @@ export async function withStore<T>(storeId: number | null | undefined, fn: () =>
   const id = storeId ?? null;
   return runInStore(id, async () => {
     const store = id == null ? null : ((await storeDirectory()).find((x) => x.id === id) ?? null);
-    const [info, locale] = await Promise.all([getSiteInfo(id).catch(() => DEFAULT_SITE_INFO), payload ? storeLocaleOf(payload, id) : DEFAULT_LOCALE]);
+    const [info, locale, channels] = await Promise.all([getSiteInfo(id).catch(() => DEFAULT_SITE_INFO), payload ? storeLocaleOf(payload, id) : DEFAULT_LOCALE, storeChannels(payload ?? null, id)]);
     const origin = (store ? storeOrigin(store) : mainSiteUrl("")).replace(/\/$/, "");
-    return ctxStore.run({ site: { ...info, url: origin }, origin, storeId: id, isDefault: !store || store.isDefault, locale }, fn);
+    return ctxStore.run({ site: { ...info, url: origin }, origin, storeId: id, isDefault: !store || store.isDefault, locale, channels }, fn);
   });
 }
 
@@ -114,8 +126,31 @@ async function sendSms(phone: string, message: string) {
   if (phone) push({ channel: "sms", to: phone, text: message, country: ctx().locale.country });
 }
 
-/** Actually sends one message (the outbox worker calls this; throws so the delivery is retried). */
-export async function sendMessage(m: Message): Promise<void> {
+/**
+ * Actually sends one message (the outbox worker calls this; throws so the delivery is retried): through the store's
+ * own account for that channel when it has one (/cms → Integrations), else ShopEngine's.
+ */
+export async function sendMessage(m: Message, opts: { payload?: Payload | null; storeId?: number | null } = {}): Promise<void> {
+  if (opts.payload && opts.storeId != null) {
+    const ch = await storeChannels(opts.payload, opts.storeId);
+    const own = m.channel === "email" ? ch.email : m.channel === "whatsapp" ? ch.whatsapp : ch.sms;
+    if (own) {
+      if (process.env.STAGING === "true") return skip(m.channel, "STAGING – notifications disabled");
+      const { providerImpl } = await import("@/lib/integrations/providers");
+      const { IntegrationError } = await import("@/lib/integrations/types");
+      const impl = (await providerImpl(own.provider))?.messaging;
+      const c = { payload: opts.payload, connection: own };
+      try {
+        if (m.channel === "email") return await impl?.email?.(c, { to: [m.to], subject: m.subject, html: m.html, text: m.text, replyTo: m.replyTo });
+        if (m.channel === "whatsapp") return await impl?.whatsapp?.(c, intlDigits(m.to, m.country), m.text, m.template);
+        return await impl?.sms?.(c, intlDigits(m.to, m.country), m.text);
+      } catch (e) {
+        // a message the provider will never take (e.g. WhatsApp outside the 24-hour window) isn't retried
+        if (e instanceof IntegrationError) return log.warn("notify.not_sendable", { channel: m.channel, provider: own.provider, reason: e.message });
+        throw e;
+      }
+    }
+  }
   if (m.channel === "email") {
     await deliverEmail({ to: m.to, subject: m.subject, html: m.html, text: m.text, replyTo: m.replyTo });
     return;
@@ -329,10 +364,18 @@ const STATUS_COPY: Partial<Record<OrderStatus, (o: Order) => string>> = {
  * new customer: the approved WhatsApp confirm template, an SMS gateway, or email (if they gave one).
  * Checkout only asks for confirmation when this is true – otherwise staff confirm by phone instead.
  */
-export function canAskForConfirmation(email?: string | null): boolean {
+export async function canAskForConfirmation(email?: string | null, storeId?: number | null): Promise<boolean> {
   if (process.env.STAGING === "true") return true; // nothing is sent on staging anyway; keep the flow testable
-  const whatsapp = Boolean(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_TEMPLATE_CONFIRM);
-  return whatsapp || Boolean(process.env.SMS_WEBHOOK_URL) || Boolean(email && isEmailConfigured());
+  const ch = await channelsOf(storeId);
+  const whatsapp = ch.whatsapp ? Boolean(storeTemplate(ch.whatsapp, "WHATSAPP_TEMPLATE_CONFIRM")) : Boolean(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_TEMPLATE_CONFIRM);
+  return whatsapp || Boolean(ch.sms || process.env.SMS_WEBHOOK_URL) || Boolean(email && (ch.email || isEmailConfigured()));
+}
+
+/** A store's own messaging accounts (for the checks below, which run outside a notification). */
+async function channelsOf(storeId: number | null | undefined): Promise<StoreChannels> {
+  if (!isCmsConfigured || storeId == null) return NO_CHANNELS;
+  const { payloadClient } = await import("@/lib/cms/catalog-source");
+  return storeChannels(await payloadClient(), storeId).catch(() => NO_CHANNELS);
 }
 
 /** Customer confirmation (email + WhatsApp/SMS) and admin alert for a newly placed order. */
@@ -353,12 +396,12 @@ export async function notifyNewOrder(order: Order): Promise<void> {
     if (waiting) {
       // Always ask for the confirmation – with the link and the code – whatever the "order received" switches say.
       // WhatsApp only delivers business-started messages through an approved template (WHATSAPP_TEMPLATE_CONFIRM).
-      if (process.env.WHATSAPP_TEMPLATE_CONFIRM)
-        tasks.push(sendWhatsApp(order.customer.phone, confirmText(order), { name: process.env.WHATSAPP_TEMPLATE_CONFIRM, params: [order.customer.name, order.orderNumber, confirmUrl(order)] }));
+      if (waTemplate("WHATSAPP_TEMPLATE_CONFIRM"))
+        tasks.push(sendWhatsApp(order.customer.phone, confirmText(order), { name: waTemplate("WHATSAPP_TEMPLATE_CONFIRM"), params: [order.customer.name, order.orderNumber, confirmUrl(order)] }));
       tasks.push(sendSms(order.customer.phone, confirmText(order)));
     } else if (ns.orderConfirmation) {
       if (ns.customerWhatsApp)
-        tasks.push(sendWhatsApp(order.customer.phone, text, { name: process.env.WHATSAPP_TEMPLATE_ORDER, params: [order.customer.name, order.orderNumber, moneyOf(order)(order.total)] }));
+        tasks.push(sendWhatsApp(order.customer.phone, text, { name: waTemplate("WHATSAPP_TEMPLATE_ORDER"), params: [order.customer.name, order.orderNumber, moneyOf(order)(order.total)] }));
       if (ns.customerSms) tasks.push(sendSms(order.customer.phone, `${ctx().site.shortName}: order ${order.orderNumber} received, total ${moneyOf(order)(order.total)}. Track: ${trackUrl(order)}`));
     }
     await settle(`new order ${order.orderNumber}`, tasks);
@@ -393,7 +436,7 @@ export async function notifyOrderStatusChange(order: Order): Promise<void> {
     if (ns.customerWhatsApp)
       tasks.push(
         sendWhatsApp(order.customer.phone, text, {
-          name: process.env.WHATSAPP_TEMPLATE_STATUS,
+          name: waTemplate("WHATSAPP_TEMPLATE_STATUS"),
           params: [order.customer.name, order.orderNumber, statusLabel],
         })
       );
@@ -478,7 +521,7 @@ export async function notifyConfirmationReminder(order: Order): Promise<void> {
   try {
     const msg = confirmText(order);
     await settle(`confirm reminder ${order.orderNumber}`, [
-      sendWhatsApp(order.customer.phone, msg, { name: process.env.WHATSAPP_TEMPLATE_CONFIRM, params: [order.customer.name, order.orderNumber, confirmUrl(order)] }),
+      sendWhatsApp(order.customer.phone, msg, { name: waTemplate("WHATSAPP_TEMPLATE_CONFIRM"), params: [order.customer.name, order.orderNumber, confirmUrl(order)] }),
       sendSms(order.customer.phone, msg),
       ...(order.customer.email ? [sendEmail(order.customer.email, `Please confirm order ${order.orderNumber} – ${ctx().site.name}`, layout(`Confirm order ${order.orderNumber}`, msg, `<p style="margin:0;font-size:14px;color:#4b5563">${esc(msg)}</p>${button(confirmUrl(order), "Confirm my order")}`), msg)] : []),
     ]);
@@ -542,9 +585,11 @@ export async function notifyStoreInvite(i: { email: string; storeName: string; r
 const isEmail = (s: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s);
 
 /** Can we actually message this contact right now? (email needs SMTP or Resend; a phone needs WhatsApp + an approved template) */
-export function canReach(contact: string, whatsappTemplateEnv: string): boolean {
+export async function canReach(contact: string, whatsappTemplateEnv: string, storeId?: number | null): Promise<boolean> {
   if (process.env.STAGING === "true") return false;
-  if (isEmail(contact)) return isEmailConfigured();
+  const ch = await channelsOf(storeId);
+  if (isEmail(contact)) return Boolean(ch.email) || isEmailConfigured();
+  if (ch.whatsapp) return Boolean(storeTemplate(ch.whatsapp, whatsappTemplateEnv));
   return Boolean(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID && process.env[whatsappTemplateEnv]);
 }
 
@@ -554,7 +599,7 @@ async function reach(contact: string, subject: string, message: string, link: { 
     const inner = `<h1 style="margin:0;font-size:20px;color:#111827">${esc(subject)}</h1><p style="margin:8px 0 0;font-size:14px;color:#4b5563">${esc(message)}</p>${button(link.href, link.label)}`;
     return sendEmail(contact, subject, layout(subject, message, inner), `${message}\n${link.href}`);
   }
-  const name = whatsappTemplate ? process.env[whatsappTemplate.env] : undefined;
+  const name = whatsappTemplate ? waTemplate(whatsappTemplate.env) : undefined;
   if (name) return sendWhatsApp(contact, `${message}\n${link.href}`, { name, params: whatsappTemplate!.params });
   return skip("whatsapp", `${whatsappTemplate?.env ?? "template"} not set – phone-only contact not messaged`);
 }
@@ -566,9 +611,11 @@ async function reach(contact: string, subject: string, message: string, link: { 
  * Can "find my orders" reach the customer? By email (to the address used on those orders), WhatsApp (approved
  * WHATSAPP_TEMPLATE_ORDER_LOOKUP) or an SMS gateway.
  */
-export function canSendOrderLookup(): boolean {
+export async function canSendOrderLookup(storeId?: number | null): Promise<boolean> {
   if (process.env.STAGING === "true") return false;
-  return isEmailConfigured() || Boolean(process.env.SMS_WEBHOOK_URL || (process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_TEMPLATE_ORDER_LOOKUP));
+  const ch = await channelsOf(storeId);
+  if (ch.email || ch.sms || (ch.whatsapp && storeTemplate(ch.whatsapp, "WHATSAPP_TEMPLATE_ORDER_LOOKUP"))) return true;
+  return isEmailConfigured() || Boolean(process.env.SMS_WEBHOOK_URL || (!ch.whatsapp && process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_TEMPLATE_ORDER_LOOKUP));
 }
 
 export async function notifyOrderLookup(phone: string, orders: { orderNumber: string; email?: string | null }[]): Promise<void> {
@@ -578,8 +625,9 @@ export async function notifyOrderLookup(phone: string, orders: { orderNumber: st
     const link = absoluteUrl("/track-order");
     const message = `${ctx().site.shortName}: your order number${numbers.length > 1 ? "s" : ""}: ${list}. Track with your phone number at ${link}`;
     const tasks: Promise<unknown>[] = [];
-    if (process.env.WHATSAPP_TEMPLATE_ORDER_LOOKUP) tasks.push(sendWhatsApp(phone, message, { name: process.env.WHATSAPP_TEMPLATE_ORDER_LOOKUP, params: [list, link] }));
-    else if (process.env.SMS_WEBHOOK_URL) tasks.push(sendSms(phone, message));
+    const lookupTemplate = waTemplate("WHATSAPP_TEMPLATE_ORDER_LOOKUP");
+    if (lookupTemplate) tasks.push(sendWhatsApp(phone, message, { name: lookupTemplate, params: [list, link] }));
+    else if (smsAvailable()) tasks.push(sendSms(phone, message));
     // Email goes only to addresses used on these orders – the people who placed them.
     const emails = [...new Set(orders.map((o) => o.email?.trim().toLowerCase()).filter((e): e is string => Boolean(e)))];
     if (emails.length) {

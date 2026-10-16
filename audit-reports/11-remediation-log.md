@@ -285,8 +285,100 @@ JazzCash / EasyPaisa) – checked by comparing old and new output.
   currency, payment name and due time. `20261016_000546_pos_currency` – one new column, backfilled with each store's
   currency. Both run up → down → up on the local database.
 
+### 2.13 ShopEngine marketing website (16 October 2026)
+
+Asked for: a premium marketing website and landing page for ShopEngine, using the brand's own logos, with no invented
+customers, metrics, ratings, prices or certifications.
+
+- **Where it shows** – only on the addresses in `MARKETING_HOSTS` (opt-in; unset = nothing changes). `src/proxy.ts`
+  serves `src/app/(marketing)/shopengine/*` at normal paths there. `/account/*`, `/cms`, the APIs and files pass through.
+  Store addresses get a 404 for `/shopengine/*`. On a marketing address, account pages run in "platform mode": ShopEngine
+  name, logo and favicons, dark theme like the website, and merchant copy on sign-up and sign-in (no shopper benefits, no phone field).
+- **Pages** –
+  - home: hero with an HTML/SVG dashboard picture labelled "Illustrative data", problem, 12 features with previews,
+    multi-store diagram, 4 steps, audiences, security, pricing, roadmap (labelled planned), FAQ, call to action;
+  - `/features`, `/pricing` (real active plans from `/cms` → Plans; without plans, names only and no prices);
+  - `/solutions/{multi-store,retail,agencies}`, `/how-it-works`, `/security`, `/about`;
+  - `/contact` (validated, honeypot, Turnstile, rate limit; saved as a store-less contact message, optionally emailed
+    to `PLATFORM_CONTACT_EMAIL`);
+  - `/blog` and 3 articles, `/faq` (searchable), `/privacy`, `/terms`, branded 404.
+- **SEO** – per-page title, description and canonical (`MARKETING_SITE_URL`), Open Graph and Twitter cards with a social
+  card built from the logo. JSON-LD: Organization, WebSite, SoftwareApplication (no offers or ratings), BreadcrumbList,
+  Article; FAQPage on `/faq` only. Marketing `/sitemap.xml` and `/robots.txt`; noindex on the 404 and on staging.
+- **Design (redesigned the same day at the owner's request: "not modern")** –
+  - dark theme lit by the logo's blue → violet, Geist type, floating glass navigation;
+  - hero with a tilting product picture and live-event cards; payment-method and currency rows that scroll on their own;
+  - figures band – every number counted from the code (12 features, 180+ countries from `COUNTRY_CODES`), checked by a test;
+  - bento feature grid with a small product picture per feature (also on `/features`); animated store → engine diagram;
+  - security rings, a monthly / yearly pricing switch (saving computed from the real plan prices), a big wordmark footer;
+  - motion: CSS only; scroll effects only where the browser supports them; none at all with "reduce motion"
+    (content always visible). Code: `marketing.css`, `components/marketing/{bento,pricing,sections,dashboard-mockup}.tsx`.
+- **Admin branding** – `/cms` logo, nav icon and favicons now use the real mark (`public/brand/shopengine/`).
+- **Copy corrected against the code while writing** – one owner per store (changed by support), so agencies are invited
+  as managers; trial length is per plan (can be 0), so "free trial on every plan" isn't claimed; plan changes and
+  cancellations happen under "Your stores".
+- **Tests** – `tests/unit/marketing.test.ts`: host matching, pass-through paths, every sitemap address has a page,
+  content integrity, no banned claims, and the store-less inbox can't be triggered by a signed-in user.
+- **Verified** – `tsc`, `eslint . --max-warnings=0`, `vitest` 111/111 and `next build` (exit 0; marketing pages
+  pre-rendered) – re-run after the redesign. Every route checked on `localtest.me:3100` with `MARKETING_HOSTS=localtest.me`, desktop and 390 px
+  phone width in headless Chrome: no console errors, no sideways scrolling, menus work with the keyboard, FAQ search
+  works, and the contact form validates, saves with no store, and the test record was deleted. Store addresses
+  (`localhost:3100`, `usdemo.localtest.me:3100`) unchanged.
+- **Not verified** – real email delivery to `PLATFORM_CONTACT_EMAIL`; Turnstile with real keys; Lighthouse scores; a
+  real domain or HTTPS. `/privacy` and `/terms` are plain-language starting texts and **need a legal review**. No
+  analytics are wired on the marketing site.
+
+### 2.14 Integrations for store owners and the Store API (16 October 2026)
+
+Asked for: the integrations store owners need – couriers, online payments, WhatsApp / SMS / email, a store API with
+webhooks, marketing tools, accounting, live chat and marketplaces – "do all these". Full guide: `docs/INTEGRATIONS.md`.
+
+- **Foundation** – `/cms` → Integrations (search, kinds, connect window with the provider's steps).
+  - Keys are AES-256-GCM encrypted; the admin only ever sees the last 4 characters.
+  - Roles: the owner for money and sending identity; managers for the rest.
+  - Rules per integration: plan feature, countries, one of each kind, a check on save.
+  - Each store and provider gets a random address for webhooks and payment returns.
+  - Store events reach integrations through the outbox, retried.
+  - Code: `src/lib/integrations/*`, collection `integrations`, migration `20261016_031120_integrations`.
+- **40 integrations:**
+  - **Couriers (9):** PostEx, Leopards, TCS, Trax, M&P, Call Courier, Shippo, EasyPost, DHL Express.
+    - From the order panel: book, label, tracking.
+    - Tracking is followed automatically; COD payouts are checked; parcels can be marked returned.
+    - Migration `20261016_035623_store_api_shipments` adds the shipment columns and the "returned" value.
+  - **Payment gateways with the store's own account (11):** Safepay, JazzCash, Easypaisa, PayFast (PK), PayPal, Razorpay, Paystack, Flutterwave, Mercado Pago, Tap, PayTabs.
+    - They are checkout methods with the same rules as Stripe: paid only when ShopEngine asks the provider with the store's keys for its own reference and the amount and currency match.
+    - A failure or an abandoned page cancels the order (stock back). Refunds go through the provider where it has an API.
+    - Providers opened with a form POST go through a page of ours whose CSP allows only that provider.
+    - The thank-you page, tracking label and order panel now say "online payment".
+  - **Messaging (8):** WhatsApp Cloud API (the store's number and templates); Twilio, Africa's Talking, branded SMS (PK) and any HTTP SMS gateway; Resend, Brevo and SMTP.
+  - **Ads (4):** Google Tag Manager, Google Ads, Meta Conversions API, TikTok.
+  - **Email marketing (2):** Mailchimp, Klaviyo. Klaviyo also gets "Started Checkout" from abandoned carts with an email.
+  - **Live chat (2):** tawk.to, Crisp.
+  - **Accounting (2), signed in with ShopEngine's app:** QuickBooks Online (a sales receipt per sale) and Xero (an invoice plus its payment). A sale is booked when paid online or delivered, never twice.
+  - **Marketplaces (2), signed in with ShopEngine's app:** Daraz and Amazon (merchant-fulfilled stock only).
+    - Every 30 minutes, marketplace orders come off the store's stock (cancelled ones go back).
+    - Then the store's stock (and prices) is sent, matched by SKU.
+- **Store API** (`/api/v1`, `docs/STORE-API.md`) – keys are made by the owner in Integrations → Store API.
+  - A key is shown once and only its SHA-256 hash is kept.
+  - Four permissions; 120 requests a minute per key; refused while the store is read-only.
+  - Endpoints: products (list / one / update stock and price, written to Stock history) and orders (list / one / status with the staff rules).
+  - Collection `api-keys`; same migration as above.
+- **CSP** – the shop's policy now allows the scripts and connections of Google Ads, TikTok, tawk.to and Crisp. `/api/integrations/*` has its own stricter policy.
+- **Verified:**
+  - `tsc` and `eslint src tests scripts/tests next.config.ts`: clean.
+  - `vitest`: **146 / 146**, including 35 integration tests with the providers' published test vectors (JazzCash, Razorpay and Daraz signatures) and computed examples (Easypaisa, PayFast).
+  - `npm run test:integration-payments`: **passed, 22 checks**, on the real database with providers simulated – PayPal pay → capture → paid → refund; a wrong amount never pays; JazzCash's form page; a failed payment cancels; a forged Paystack update refused, a signed one pays; another store's address can't settle; an abandoned page cancelled by housekeeping.
+  - Re-run after the changes: `test:orders`, `test:shipments`, `test:tenants`, `test:international`, `test:billing`, `test:store-webhooks` – all passed.
+  - Store API against the dev server: 30 checks passed – keys, scopes, other store's product / order → 404, stock and price changes written to history, wrong order moves → 409, revoke.
+  - Headless Chrome: the Integrations page with its Online payments and Store API tabs (desktop and 390 px); PayPal offered at a US store's checkout once switched on.
+  - **`next build`: exit 0** (compiled; 69 pages generated; `/api/v1/*` and `/api/integrations/*` in the route list).
+- **Not verified:** no integration has been run against the provider's real sandbox or live API (no accounts). All show "New" and ask owners to test first.
+  - **Unconfirmed in the providers' documentation** (each listed in `docs/INTEGRATIONS.md`): Daraz quantity format and token lifetimes; Amazon's Orders v0 deprecation date and marketplace references; PayFast's status service for hosted merchants; JazzCash and Easypaisa notification formats; Safepay's signed webhook bytes.
+  - **Not built:** BlueEx (its API host does not resolve).
+- **Test data note:** `npm run test:stock` still passes both stock checks, but its clean-up fails. Product #1 in the local test database is published without photos, and an existing rule refuses to save it. This is unrelated to this work, and its stock was left as it was.
+
 ## 3. Branding
-The platform is **ShopEngine** (admin, login, emails to merchants and staff, 2-step issuer, admin icon). The original shop is the
+The platform is **ShopEngine** (admin, login, emails to merchants and staff, 2-step issuer, admin logo and icon – the brand's own artwork in `public/brand/shopengine/` since 16 October). The original shop is the
 **default store** and keeps its own name, texts, icons and city pages.
 
 Every other store shows only its own name and details:
@@ -337,9 +429,9 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
 - **Not run against third parties:**
   - Stripe's API: checkout creation, Connect onboarding, refunds, subscription checkout. Only the webhook side was run, with locally signed events.
   - Email, WhatsApp and SMS delivery: no provider is configured locally, so messages were built and queued but not sent.
+  - None of the 40 store integrations (§2.14) against its provider's real API.
 - **Not run here:**
   - GitHub Actions (the workflow wasn't run on GitHub);
-  - `next build`;
   - the backup image build;
   - DNS TXT verification on a real domain.
 - **Not exercised in a browser:**
@@ -350,6 +442,8 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
   (the order panel's timeline and all reports, numbers and messages do use the store's).
 
 ## 7. Remaining gaps (12 Missing, 45 Partial – see report 12)
+
+> Report 12's counts were made before §2.14. Three of its "Missing" items now have built (provider-unverified) code: platform integrations, carrier APIs and accounting / marketplace links. The counts were **not re-scored**.
 
 **Missing:**
 - **Access and permissions:** custom permissions / a granular role builder; platform integrations.
@@ -363,10 +457,12 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
 - One currency per store (no conversion or prices in several currencies); shoppers abroad pay in the store's currency.
 - A store's language sets number / date formats and the page language; storefront text is English (plus the existing
   Urdu toggle).
-- Only Stripe exists as a card provider plugin; stores in countries Stripe doesn't serve (e.g. Pakistan) use their own
-  methods, bank transfer and COD until another plugin is added.
+- Stripe is the only provider on ShopEngine's own platform account. Since §2.14, stores can also connect their own gateway
+  accounts (Safepay, JazzCash, Easypaisa, PayFast in Pakistan; PayPal, Razorpay, Paystack, Flutterwave, Mercado Pago,
+  Tap, PayTabs elsewhere). None has been tried against a live provider yet.
 - Card payments capture immediately (no separate authorise/capture step).
-- COD remittance isn't reconciled.
+- COD remittance: the payouts of connected couriers are read and shown per parcel (§2.14), but they aren't matched
+  against bank statements.
 - Platform revenue is current figures only (no history or charts).
 - Rate limits are per server instance.
 - The storefront session lasts 30 days.
@@ -386,5 +482,11 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
    - In `/cms` → Plans, set each paid plan's Stripe price ids and **review the seeded prices**.
 4. **Email.** Set `EMAIL_FROM` explicitly (see §4).
 5. **Housekeeping.** Keep the internal timer or `/api/cron` (`CRON_SECRET`). It also delivers the outbox and reconciles payments.
-6. **After deploying,** run the five CI database tests against staging, and `npm run test:webhooks` against a staging server.
+   - It also follows courier parcels, settles store-connected payment pages that expired, and runs marketplace syncs.
+6. **Integrations (optional).** Integrations that sign in with the provider's page need ShopEngine's own app keys:
+   - QuickBooks, Xero, Daraz and Amazon (`docs/DEPLOYMENT.md`, `.env.example`). Without them, those cards say "not switched on yet".
+   - Store-connected payment gateways send shoppers back to the store's own HTTPS address.
+   - Migrations `20261016_031120_integrations` and `20261016_035623_store_api_shipments` are additive.
+7. **After deploying,** run the five CI database tests against staging, and `npm run test:webhooks` against a staging server.
+   - Also `npm run test:integration-payments`: it creates and removes its own connections and orders.
    - **Never against production:** they create and delete test records.

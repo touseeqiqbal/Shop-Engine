@@ -397,6 +397,8 @@ export interface StoreSettings {
   cardReady?: boolean;
   /** the provider that takes the store's card payments (lib/payments/catalog.ts), e.g. "stripe" */
   cardGateway?: string | null;
+  /** online payment providers connected with the store's own account (Integrations → Online payments), in order */
+  onlineGateways?: { id: string; label: string; needsEmail: boolean; icon: "card" | "wallet" }[];
   /** the store's own payment methods (any country's wallets, banks, "card on delivery" …) */
   manualMethods?: ManualMethodSettings[];
   /** ISO currency of the store's prices */

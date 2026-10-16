@@ -20,7 +20,17 @@ registerOutboxHandler("webhook.deliver", async (payload, event) => {
   await deliverWebhook(payload, Number(event.data.endpointId), event.data.event as Record<string, unknown>);
 });
 
-registerOutboxHandler("message.send", async (_payload, event) => {
+/** A store event for one connected integration (Klaviyo, Meta Conversions API, QuickBooks …) – retried on its own. */
+registerOutboxHandler("integration.event", async (payload, event) => {
+  const { getConnection } = await import("./integrations/server");
+  const { providerImpl } = await import("./integrations/providers");
+  const c = await getConnection(payload, event.store, String(event.data.provider), { fresh: true });
+  if (!c) return; // switched off or removed meanwhile
+  const impl = await providerImpl(c.provider);
+  await impl?.onEvent?.({ payload, connection: c }, event.data.event as never);
+});
+
+registerOutboxHandler("message.send", async (payload, event) => {
   const { sendMessage } = await import("./notify");
-  await sendMessage(event.data as unknown as Message);
+  await sendMessage(event.data as unknown as Message, { payload, storeId: event.store });
 });

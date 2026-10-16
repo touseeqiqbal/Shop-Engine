@@ -20,6 +20,7 @@ const PATHS = {
   external: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
   platform: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
   help: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17h.01",
+  integrations: "M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0zM12 16v5",
 } as const;
 
 export type IconName = keyof typeof PATHS;

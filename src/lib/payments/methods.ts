@@ -12,6 +12,8 @@ import { gatewayInfo, gatewaySupports } from "./catalog";
  *               says so (verified webhook) – see lib/payments/gateways
  *
  * Built in: Cash on Delivery, bank transfer and card everywhere; JazzCash and EasyPaisa for stores in Pakistan.
+ * Online payment providers the store connects with its own account (PayPal, Safepay, JazzCash online …) come from
+ * Integrations → Online payments (settings.onlineGateways).
  * Every store adds its own in /cms → Settings → Payments → "Other payment methods" (any country's wallets and banks).
  */
 
@@ -36,6 +38,8 @@ export interface CheckoutMethod {
   instructions?: string;
   /** the provider that takes it (gateway methods) */
   gateway?: string;
+  /** the provider needs the shopper's email (gateway methods) */
+  needsEmail?: boolean;
   icon: PaymentIcon;
 }
 
@@ -128,6 +132,10 @@ export function checkoutMethods(settings: StoreSettings): CheckoutMethod[] {
   const card = settings.cardGateway ? gatewayInfo(settings.cardGateway) : null;
   if (settings.cardReady && p?.card?.enabled && card && gatewaySupports(card, country, settings.currency))
     out.push(base("card", { note: p.card.note ?? "", gateway: card.id }));
+
+  // the store's own provider accounts (Integrations → Online payments): switched on there, checked when connected
+  for (const g of settings.onlineGateways ?? [])
+    out.push({ id: g.id, label: g.label, kind: "gateway", due: "upfront", note: "", proof: false, account: [], gateway: g.id, needsEmail: g.needsEmail, icon: g.icon });
 
   for (const m of settings.manualMethods ?? []) {
     if (!m.enabled || !m.name.trim()) continue;

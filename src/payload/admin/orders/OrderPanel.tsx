@@ -7,6 +7,7 @@ import { NEXT_STEP, ORDER_STATUS, PAYMENT_STATUS, intlPhone, timeAgo } from "./s
 import { cityLine, paymentLabel } from "@/lib/order-display";
 import { PROCEED_STATUSES, amountToCollect, creditedAdvance, paidOnDelivery, paymentBlocksShipping } from "@/lib/order-money";
 import { formatMoney, type Money } from "@/lib/money";
+import { integrationInfo, isPaymentIntegration } from "@/lib/integrations/catalog";
 
 /**
  * Top of the order page: what to do next (one big button), money and amount to collect, the customer with
@@ -45,7 +46,26 @@ type Order = {
   shipments?: Shipment[];
 };
 
-type Shipment = { id?: string; items?: { line?: number; qty?: number; title?: string }[]; courier?: string; trackingNumber?: string; status?: string; shippedAt?: string; deliveredAt?: string };
+type Shipment = {
+  id?: string;
+  items?: { line?: number; qty?: number; title?: string }[];
+  courier?: string;
+  trackingNumber?: string;
+  status?: string;
+  shippedAt?: string;
+  deliveredAt?: string;
+  provider?: string | null;
+  courierStatus?: string | null;
+  labelUrl?: string | null;
+  codAmount?: number | null;
+  codStatus?: string | null;
+  codRemittedAt?: string | null;
+  codRemittanceRef?: string | null;
+};
+
+/** A courier connected in /cms → Integrations, and what it asks for when booking. */
+type ConnectedCourier = { provider: string; name: string };
+type BookingField = { key: string; label: string; options: { label: string; value: string }[]; default?: string };
 
 const inHours = (iso?: string) => {
   const ms = iso ? Date.parse(iso) - Date.now() : NaN;
@@ -57,21 +77,26 @@ const inHours = (iso?: string) => {
 
 type CardPayment = { id: number; kind: string; status: string; amount: number; refundedAmount: number; currency: string; at: string; failureReason?: string | null };
 
-/** Card payments of an order (paid through the payment provider) and refunds back to the card. `money` = the order's. */
-function CardPayments({ orderId, onDone, money }: { orderId: number; onDone: () => void; money: Money }) {
+/**
+ * Online payments of an order (card through ShopEngine's provider, or the store's own PayPal, JazzCash …) and refunds
+ * through the same provider. `money` = the order's; `provider` = the store-connected provider's name, if any.
+ */
+function CardPayments({ orderId, onDone, money, provider }: { orderId: number; onDone: () => void; money: Money; provider?: string | null }) {
   // each payment in the currency it was charged in
   const paid = (p: CardPayment, n: number) => (p.currency && p.currency.toUpperCase() !== money.currency ? formatMoney(n, { currency: p.currency.toUpperCase(), locale: money.locale }) : money(n));
   const [rows, setRows] = useState<CardPayment[]>([]);
   const [refundable, setRefundable] = useState(0);
+  const [elsewhere, setElsewhere] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
     const r = await fetch(`/cms-api/payments/order/${orderId}`, { credentials: "include" });
     if (!r.ok) return;
-    const j = (await r.json()) as { payments: CardPayment[]; refundable: number };
+    const j = (await r.json()) as { payments: CardPayment[]; refundable: number; refundElsewhere?: string | null };
     setRows(j.payments);
     setRefundable(j.refundable);
+    setElsewhere(j.refundElsewhere ?? null);
   }, [orderId]);
   useEffect(() => {
     void load();
@@ -79,7 +104,7 @@ function CardPayments({ orderId, onDone, money }: { orderId: number; onDone: () 
   async function refund() {
     const value = Number(amount);
     if (!(value > 0) || value > refundable) return toast(`Enter an amount up to ${money(refundable)}.`, "error");
-    if (!window.confirm(`Refund ${money(value)} to the customer's card? This can't be undone.`)) return;
+    if (!window.confirm(`Refund ${money(value)} to the customer ${provider ? `through ${provider}` : "'s card"}? This can't be undone.`)) return;
     setBusy(true);
     try {
       const r = await fetch("/cms-api/payments/refund", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderId, amount: value, reason }) });
@@ -94,7 +119,7 @@ function CardPayments({ orderId, onDone, money }: { orderId: number; onDone: () 
       setBusy(false);
     }
   }
-  if (!rows.length) return <p className="urko-opanel__help">No card payment yet.</p>;
+  if (!rows.length) return <p className="urko-opanel__help">{provider ? `No ${provider} payment yet.` : "No card payment yet."}</p>;
   return (
     <div className="urko-opanel__verify">
       <ul>
@@ -106,12 +131,13 @@ function CardPayments({ orderId, onDone, money }: { orderId: number; onDone: () 
           </li>
         ))}
       </ul>
+      {elsewhere && <p className="urko-opanel__help">To refund, use your {elsewhere} merchant account, then record it in Orders → Returns.</p>}
       {refundable > 0 && (
         <div className="urko-opanel__contact">
           <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`Up to ${refundable}`} aria-label="Refund amount" />
           <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (optional)" aria-label="Refund reason" />
           <button type="button" className="urko-btn" disabled={busy || !amount} onClick={refund}>
-            Refund to card
+            {provider ? `Refund through ${provider}` : "Refund to card"}
           </button>
         </div>
       )}
@@ -124,8 +150,12 @@ const couriersFor = (country: string) => (country === "PK" ? ["TCS", "Leopards",
 
 const SHIPPABLE = new Set(["confirmed", "dispatched", "out-for-delivery"]);
 
-/** Parcels of this order: send some (or all remaining) items, then mark each parcel delivered – or cancel it. */
-function Shipments({ order, onDone }: { order: Order; onDone: () => void }) {
+/**
+ * Parcels of this order: send some (or all remaining) items – booked with a connected courier (tracking number and
+ * label come back, status followed automatically) or with a tracking number typed in – then each parcel is delivered,
+ * returned or cancelled.
+ */
+function Shipments({ order, onDone, money }: { order: Order; onDone: () => void; money: Money }) {
   const COURIERS = couriersFor(useAdminLocale(order.store).country);
   const items = order.items ?? [];
   const shipments = order.shipments ?? [];
@@ -137,26 +167,100 @@ function Shipments({ order, onDone }: { order: Order; onDone: () => void }) {
   const [tracking, setTracking] = useState("");
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [connected, setConnected] = useState<ConnectedCourier[]>([]);
+  // "" = typed in by hand; else the courier integration to book with
+  const [via, setVia] = useState("");
+  const [fields, setFields] = useState<BookingField[] | null>(null);
+  const [choices, setChoices] = useState<Record<string, string>>({});
+  const [parcel, setParcel] = useState({ weightKg: "", pieces: "1", codAmount: "" });
   const canShip = SHIPPABLE.has(order.status) && left.some((n) => n > 0);
+  const qtyKey = qty.join(",");
+
+  useEffect(() => {
+    if (!canShip) return;
+    let live = true;
+    void fetch("/cms-api/integration-tools/couriers", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : { couriers: [] }))
+      .then((j: { couriers?: ConnectedCourier[] }) => {
+        if (!live) return;
+        setConnected(j.couriers ?? []);
+        if (j.couriers?.length) setVia((v) => v || j.couriers![0].provider);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [canShip]);
+
+  // the booking choices (city, service, pickup address) for the chosen courier and these items
+  useEffect(() => {
+    if (!open || !via) {
+      setFields(null);
+      return;
+    }
+    const l = qtyKey.split(",").map((q, line) => ({ line, qty: Math.min(Number(q) || 0, left[line] ?? 0) })).filter((x) => x.qty > 0);
+    if (!l.length) return;
+    let live = true;
+    setFields(null);
+    void fetch(`/cms-api/integration-tools/courier/options?provider=${encodeURIComponent(via)}&orderId=${order.id}&lines=${encodeURIComponent(JSON.stringify(l))}`, { credentials: "include" })
+      .then(async (r) => ({ ok: r.ok, j: (await r.json()) as { error?: string; fields?: BookingField[]; parcel?: { weightKg: number; pieces: number; codAmount: number } } }))
+      .then(({ ok, j }) => {
+        if (!live) return;
+        if (!ok) {
+          toast(j.error ?? "Couldn't load the courier's options.", "error");
+          setFields([]);
+          return;
+        }
+        setFields(j.fields ?? []);
+        setChoices(Object.fromEntries((j.fields ?? []).map((f) => [f.key, f.default ?? ""])));
+        if (j.parcel) setParcel({ weightKg: String(j.parcel.weightKg), pieces: String(j.parcel.pieces), codAmount: String(j.parcel.codAmount) });
+      })
+      .catch(() => {
+        if (live) setFields([]);
+      });
+    return () => {
+      live = false;
+    };
+    // left is derived from the order; qtyKey stands for the parcel's items
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, via, qtyKey, order.id]);
+
   if (!shipments.length && !canShip) return null;
 
   async function post(path: string, body: unknown, done: string) {
     setBusy(true);
     try {
       const r = await fetch(path, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      const j = (await r.json().catch(() => ({}))) as { error?: string; trackingNumber?: string };
       if (!r.ok) return toast(j.error ?? "Couldn't save – please try again.", "error");
-      toast(done);
+      toast(j.trackingNumber ? `${done} – tracking ${j.trackingNumber}` : done);
       setOpen(false);
       onDone();
     } finally {
       setBusy(false);
     }
   }
+  const lines = () => qty.map((q, line) => ({ line, qty: Math.min(q, left[line]) })).filter((l) => l.qty > 0);
   const ship = () => {
-    const lines = qty.map((q, line) => ({ line, qty: Math.min(q, left[line]) })).filter((l) => l.qty > 0);
-    if (!lines.length) return toast("Choose how many of each item go in this parcel.", "error");
-    void post("/cms-api/order-tools/ship", { orderId: order.id, lines, courier, trackingNumber: tracking }, "Parcel sent");
+    const l = lines();
+    if (!l.length) return toast("Choose how many of each item go in this parcel.", "error");
+    if (via) {
+      const missing = (fields ?? []).find((f) => f.options.length && !choices[f.key]);
+      if (missing) return toast(`Choose the ${missing.label.toLowerCase()}.`, "error");
+      return void post(
+        "/cms-api/integration-tools/courier/book",
+        { orderId: order.id, provider: via, lines: l, weightKg: Number(parcel.weightKg) || undefined, pieces: Number(parcel.pieces) || 1, codAmount: parcel.codAmount === "" ? undefined : Number(parcel.codAmount), options: choices },
+        "Booked",
+      );
+    }
+    void post("/cms-api/order-tools/ship", { orderId: order.id, lines: l, courier, trackingNumber: tracking }, "Parcel sent");
+  };
+  const label = (i: number) => window.open(`/cms-api/integration-tools/courier/label?orderId=${order.id}&index=${i}`, "_blank", "noopener");
+  const viaName = connected.find((c) => c.provider === via)?.name;
+  const cancelParcel = (s: Shipment, i: number) => {
+    if (!window.confirm(s.provider ? `Cancel this booking with ${s.courier ?? "the courier"}? Its items can be sent again.` : "Cancel this parcel? Its items can be sent again.")) return;
+    if (s.provider) void post("/cms-api/integration-tools/courier/cancel", { orderId: order.id, index: i }, "Booking cancelled");
+    else void post("/cms-api/order-tools/shipment", { orderId: order.id, index: i, status: "cancelled" }, "Parcel cancelled");
   };
 
   return (
@@ -169,18 +273,47 @@ function Shipments({ order, onDone }: { order: Order; onDone: () => void }) {
               <strong>{(s.items ?? []).map((it) => `${it.title ?? "Item"} × ${it.qty}`).join(", ")}</strong>
               <br />
               <small>
-                {[s.courier, s.trackingNumber].filter(Boolean).join(" · ") || "No tracking"} · {s.status === "delivered" ? "Delivered" : s.status === "cancelled" ? "Cancelled" : "On the way"}
+                {[s.courier, s.trackingNumber].filter(Boolean).join(" · ") || "No tracking"} · {s.status === "delivered" ? "Delivered" : s.status === "cancelled" ? "Cancelled" : s.status === "returned" ? "Returned" : "On the way"}
+                {s.courierStatus && s.status === "shipped" ? ` · ${s.courierStatus}` : ""}
               </small>
-              {s.status === "shipped" && (
-                <div className="urko-opanel__contact">
-                  <button type="button" className="urko-btn" disabled={busy} onClick={() => void post("/cms-api/order-tools/shipment", { orderId: order.id, index: i, status: "delivered" }, "Marked as delivered")}>
-                    Delivered
-                  </button>
-                  <button type="button" className="urko-btn urko-btn--ghost" disabled={busy} onClick={() => window.confirm("Cancel this parcel? Its items can be sent again.") && void post("/cms-api/order-tools/shipment", { orderId: order.id, index: i, status: "cancelled" }, "Parcel cancelled")}>
-                    Cancel parcel
-                  </button>
-                </div>
+              {(s.codAmount ?? 0) > 0 && (
+                <>
+                  <br />
+                  <small>
+                    Cash to collect {money(s.codAmount ?? 0)} ·{" "}
+                    {s.codStatus === "remitted"
+                      ? `paid to you${s.codRemittedAt ? ` on ${new Date(s.codRemittedAt).toLocaleDateString()}` : ""}${s.codRemittanceRef ? ` (ref ${s.codRemittanceRef})` : ""}`
+                      : s.status === "delivered"
+                        ? "collected, not paid to you yet"
+                        : "not collected yet"}
+                  </small>
+                </>
               )}
+              <div className="urko-opanel__contact">
+                {(s.provider || s.labelUrl) && s.trackingNumber && (
+                  <button type="button" className="urko-btn urko-btn--ghost" onClick={() => label(i)}>
+                    Print label
+                  </button>
+                )}
+                {s.provider && (s.status === "shipped" || s.codStatus === "pending") && (
+                  <button type="button" className="urko-btn urko-btn--ghost" disabled={busy} onClick={() => void post("/cms-api/integration-tools/courier/track", { orderId: order.id, index: i }, "Checked with the courier")}>
+                    Check status
+                  </button>
+                )}
+                {s.status === "shipped" && (
+                  <>
+                    <button type="button" className="urko-btn" disabled={busy} onClick={() => void post("/cms-api/order-tools/shipment", { orderId: order.id, index: i, status: "delivered" }, "Marked as delivered")}>
+                      Delivered
+                    </button>
+                    <button type="button" className="urko-btn urko-btn--ghost" disabled={busy} onClick={() => window.confirm("Mark this parcel as returned to you?") && void post("/cms-api/order-tools/shipment", { orderId: order.id, index: i, status: "returned" }, "Marked as returned")}>
+                      Returned
+                    </button>
+                    <button type="button" className="urko-btn urko-btn--ghost" disabled={busy} onClick={() => cancelParcel(s, i)}>
+                      Cancel parcel
+                    </button>
+                  </>
+                )}
+              </div>
             </li>
           ))}
         </ul>
@@ -200,21 +333,72 @@ function Shipments({ order, onDone }: { order: Order; onDone: () => void }) {
               </label>
             ) : null,
           )}
-          <label>
-            Courier
-            <select value={courier} onChange={(e) => setCourier(e.target.value)}>
-              <option value="">Choose…</option>
-              {COURIERS.map((c) => (
-                <option key={c}>{c}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Tracking number
-            <input value={tracking} onChange={(e) => setTracking(e.target.value)} />
-          </label>
-          <button type="button" className="urko-btn urko-btn--primary" disabled={busy} onClick={ship}>
-            Send this parcel
+          {connected.length > 0 && (
+            <label>
+              Send with
+              <select value={via} onChange={(e) => setVia(e.target.value)}>
+                {connected.map((c) => (
+                  <option key={c.provider} value={c.provider}>
+                    {c.name} (book automatically)
+                  </option>
+                ))}
+                <option value="">Another courier – type the tracking number</option>
+              </select>
+            </label>
+          )}
+          {via ? (
+            fields === null ? (
+              <p className="urko-opanel__help">Loading {viaName}’s options…</p>
+            ) : (
+              <>
+                {fields.map((f) =>
+                  f.options.length ? (
+                    <label key={f.key}>
+                      {f.label}
+                      <select value={choices[f.key] ?? ""} onChange={(e) => setChoices({ ...choices, [f.key]: e.target.value })}>
+                        <option value="">Choose…</option>
+                        {f.options.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null,
+                )}
+                <label>
+                  Weight (kg)
+                  <input inputMode="decimal" value={parcel.weightKg} onChange={(e) => setParcel({ ...parcel, weightKg: e.target.value })} />
+                </label>
+                <label>
+                  Pieces
+                  <input type="number" min={1} value={parcel.pieces} onChange={(e) => setParcel({ ...parcel, pieces: e.target.value })} />
+                </label>
+                <label>
+                  Cash to collect ({money.currency})
+                  <input inputMode="decimal" value={parcel.codAmount} onChange={(e) => setParcel({ ...parcel, codAmount: e.target.value })} />
+                </label>
+              </>
+            )
+          ) : (
+            <>
+              <label>
+                Courier
+                <select value={courier} onChange={(e) => setCourier(e.target.value)}>
+                  <option value="">Choose…</option>
+                  {COURIERS.map((c) => (
+                    <option key={c}>{c}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Tracking number
+                <input value={tracking} onChange={(e) => setTracking(e.target.value)} />
+              </label>
+            </>
+          )}
+          <button type="button" className="urko-btn urko-btn--primary" disabled={busy || (Boolean(via) && fields === null)} onClick={ship}>
+            {busy ? "Working…" : via ? `Book with ${viaName ?? "the courier"}` : "Send this parcel"}
           </button>
         </div>
       )}
@@ -548,7 +732,7 @@ export function OrderPanel() {
               </div>
             </div>
           )}
-          {o.paymentMethod === "card" && <CardPayments orderId={o.id} onDone={() => void load()} money={money} />}
+          {(o.paymentMethod === "card" || isPaymentIntegration(o.paymentMethod)) && <CardPayments orderId={o.id} onDone={() => void load()} money={money} provider={o.paymentMethod === "card" ? null : integrationInfo(o.paymentMethod)?.name} />}
           {o.trackingNumber && (
             <p className="urko-opanel__track">
               {o.courier} · {o.trackingNumber}
@@ -556,7 +740,7 @@ export function OrderPanel() {
           )}
         </div>
 
-        <Shipments order={o} onDone={() => void load()} />
+        <Shipments order={o} onDone={() => void load()} money={money} />
 
         <div className="urko-card urko-opanel__timeline">
           <h3>Timeline</h3>

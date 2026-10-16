@@ -88,7 +88,8 @@ export function LoginForm({ next }: { next?: string }) {
   );
 }
 
-export function RegisterForm({ next }: { next?: string }) {
+/** `askPhone` false: ShopEngine's own sign-up (merchants) – no delivery number to ask for. */
+export function RegisterForm({ next, askPhone = true }: { next?: string; askPhone?: boolean }) {
   const [state, action] = useActionState<AuthFormState, FormData>(registerAction, {});
   const [phone, setPhone] = useState("");
   const { country } = useStoreLocale();
@@ -107,19 +108,21 @@ export function RegisterForm({ next }: { next?: string }) {
       <Field id="reg-email" label="Email" required error={fe.email}>
         <input {...fieldAria("reg-email", fe.email)} name="email" type="email" autoComplete="email" required />
       </Field>
-      <Field id="reg-phone" label="Mobile number" optional error={fe.phone} hint="For delivery updates">
-        <input
-          {...fieldAria("reg-phone", fe.phone, "hint")}
-          name="phone"
-          type="tel"
-          inputMode={pk ? "numeric" : "tel"}
-          placeholder={phonePlaceholder(country)}
-          autoComplete={pk ? "tel-national" : "tel"}
-          value={phone}
-          onChange={(e) => setPhone(formatPhoneInput(e.target.value, country))}
-          maxLength={pk ? 12 : 20}
-        />
-      </Field>
+      {askPhone && (
+        <Field id="reg-phone" label="Mobile number" optional error={fe.phone} hint="For delivery updates">
+          <input
+            {...fieldAria("reg-phone", fe.phone, "hint")}
+            name="phone"
+            type="tel"
+            inputMode={pk ? "numeric" : "tel"}
+            placeholder={phonePlaceholder(country)}
+            autoComplete={pk ? "tel-national" : "tel"}
+            value={phone}
+            onChange={(e) => setPhone(formatPhoneInput(e.target.value, country))}
+            maxLength={pk ? 12 : 20}
+          />
+        </Field>
+      )}
       <Field id="reg-password" label="Password" required error={fe.password} hint="At least 8 characters">
         <PasswordInput id="reg-password" error={fe.password} autoComplete="new-password" />
       </Field>

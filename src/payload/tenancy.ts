@@ -251,6 +251,11 @@ export const assignStore =
   async ({ data, originalDoc, operation, req, context }) => {
     if (!data) return data;
     if (context?.migrating) return data;
+    // ShopEngine's own inbox (the marketing site's contact form): no store – only platform admins see it
+    if (operation === "create" && context?.platformInbox && !req.user) {
+      data[field] = null;
+      return data;
+    }
     const t = req.user ? await getTenant(req) : null;
     if (operation === "create") {
       let store = storeIdOf(data[field]) ?? storeIdOf(context?.storeId);

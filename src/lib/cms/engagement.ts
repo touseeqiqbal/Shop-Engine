@@ -171,8 +171,25 @@ export async function saveCheckoutDraft(d: { name: string; phone: string | null;
     return String(existing.token);
   }
   const token = randomBytes(16).toString("base64url");
-  await payload.create({ collection: "abandoned-carts", data: { ...data, store, status: "open", remindersSent: 0, token } as never, overrideAccess: true, context: { storefront: true, storeId: store } });
+  const cart = (await payload.create({ collection: "abandoned-carts", data: { ...data, store, status: "open", remindersSent: 0, token } as never, overrideAccess: true, context: { storefront: true, storeId: store } })) as unknown as Doc;
+  // email marketing tools (Klaviyo "Started Checkout") – once per cart, only with an email to reach
+  if (d.email && store != null) await emitCheckoutStarted(payload, Number(store), cart, d, total, token).catch(() => undefined);
   return token;
+}
+
+async function emitCheckoutStarted(payload: Awaited<ReturnType<typeof payloadClient>>, store: number, cart: Doc, d: { name: string; email: string | null; items: DraftItem[] }, total: number, token: string) {
+  const [{ emitStoreEvent }, { storeDirectory, storeOrigin }, { storeLocale }] = await Promise.all([import("@/lib/webhooks"), import("@/lib/tenant"), import("@/lib/locale")]);
+  const entry = (await storeDirectory()).find((x) => x.id === store);
+  const origin = (entry ? storeOrigin(entry) : (process.env.NEXT_PUBLIC_SITE_URL ?? "")).replace(/\/+$/, "");
+  await emitStoreEvent(payload, store, "checkout.started", {
+    cartId: cart.id,
+    email: d.email,
+    name: d.name || null,
+    items: d.items.map((i) => ({ title: i.name, qty: i.qty, price: i.unitPrice })),
+    total,
+    currency: storeLocale(entry ?? null).currency,
+    restoreUrl: `${origin}/cart/restore/${token}`,
+  });
 }
 
 /** Called when an order is placed: the shopper's open cart counts as recovered (if we reminded them) or is closed. */

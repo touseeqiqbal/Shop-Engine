@@ -7,7 +7,7 @@ import { formatDate } from "../../../lib/time";
 export type Tone = "y" | "b" | "g" | "r" | "n";
 
 export const ORDER_STATUS: Record<string, { label: string; tone: Tone; help: string }> = {
-  "awaiting-payment": { label: "Waiting for card payment", tone: "y", help: "The customer is paying online. It moves on by itself once the payment provider confirms it (or is cancelled if it isn't paid)." },
+  "awaiting-payment": { label: "Waiting for online payment", tone: "y", help: "The customer is paying online. It moves on by itself once the payment provider confirms it (or is cancelled if it isn't paid)." },
   "awaiting-confirmation": { label: "Waiting for customer", tone: "y", help: "Customer has not confirmed this order yet." },
   pending: { label: "To confirm", tone: "y", help: "New order. Check it and confirm with the customer." },
   confirmed: { label: "To ship", tone: "b", help: "Confirmed. Pack it and hand it to the courier." },

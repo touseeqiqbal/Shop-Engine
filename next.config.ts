@@ -14,14 +14,18 @@ const securityHeaders = [
  * come from – a second line of defence behind the HTML cleaning of /cms text (src/lib/sanitize.ts).
  * Inline scripts stay allowed (theme switch, analytics snippets, JSON-LD); nonces would make every page dynamic.
  */
+// Integrations a store can switch on (/cms → Integrations): Google Ads, TikTok pixel, tawk.to and Crisp chat.
+const ADS = "https://www.googleadservices.com https://googleads.g.doubleclick.net https://www.google.com";
+const TIKTOK = "https://analytics.tiktok.com https://*.tiktok.com";
+const CHAT = "https://embed.tawk.to https://*.tawk.to https://client.crisp.chat https://*.crisp.chat";
 const csp = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com https://connect.facebook.net https://challenges.cloudflare.com",
-  "style-src 'self' 'unsafe-inline'",
+  `script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com https://connect.facebook.net https://challenges.cloudflare.com ${ADS} ${TIKTOK} ${CHAT}`,
+  `style-src 'self' 'unsafe-inline' ${CHAT}`,
   "img-src 'self' data: blob: https:",
-  "font-src 'self' data:",
-  "connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com https://www.facebook.com https://connect.facebook.net https://challenges.cloudflare.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io",
-  "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://www.google.com https://maps.google.com https://challenges.cloudflare.com https://www.facebook.com",
+  `font-src 'self' data: ${CHAT}`,
+  `connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com https://www.facebook.com https://connect.facebook.net https://challenges.cloudflare.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io ${ADS} ${TIKTOK} ${CHAT} wss://*.tawk.to wss://client.relay.crisp.chat wss://*.crisp.chat`,
+  `frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://www.google.com https://maps.google.com https://challenges.cloudflare.com https://www.facebook.com https://td.doubleclick.net https://www.googletagmanager.com ${CHAT}`,
   "media-src 'self' https:",
   "object-src 'none'",
   "base-uri 'self'",
@@ -54,7 +58,8 @@ const nextConfig: NextConfig = {
     return [
       { source: "/:path*", headers: securityHeaders },
       // the shop only (dev server needs eval for hot reload)
-      ...(process.env.NODE_ENV === "production" ? [{ source: "/((?!cms|cms-api|_next|media/).*)", headers: [{ key: "Content-Security-Policy", value: csp }] }] : []),
+      // (not /api/integrations: a payment provider's auto-submitting page sets its own, stricter policy)
+      ...(process.env.NODE_ENV === "production" ? [{ source: "/((?!cms|cms-api|_next|media/|api/integrations/).*)", headers: [{ key: "Content-Security-Policy", value: csp }] }] : []),
       // Staging builds (STAGING=true) are never indexed – covers pages, images and files alike.
       ...(process.env.STAGING === "true" ? [{ source: "/:path*", headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }] }] : []),
       {

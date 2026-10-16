@@ -155,6 +155,8 @@ export async function UrkoNav({ payload, permissions, user, visibleEntities }: P
       ...at(glob("shipping", "Delivery") ?? glob("payments", "Payments")),
       children: [glob("shipping", "Delivery charges"), glob("payments", "Payment methods")],
     },
+    // outside services the store connects (couriers, payment providers, WhatsApp / SMS / email, ads, accounting …)
+    isManager && store != null ? { label: "Integrations", icon: "integrations", href: `${ADMIN}/integrations`, match: `${ADMIN}/integrations` } : null,
     {
       label: "Settings",
       icon: "settings",

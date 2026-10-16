@@ -1,0 +1,224 @@
+/* ShopEngine marketing site – its own dark, brand-lit design system (the stores keep theirs in app/globals.css). */
+@import "tailwindcss" source(none);
+@source "./";
+@source "../../components/marketing";
+
+@theme {
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  /* surfaces – deep night blue, lit by the logo's blue → violet */
+  --color-night: #03051a;
+  --color-canvas: #060a22;
+  --color-paper: #0a0f2b;
+  --color-paper-2: #10163a;
+
+  /* text */
+  --color-ink: #f4f6ff;
+  --color-ink-2: #d8ddf3;
+  --color-body: #a4acca;
+  --color-faint: #7b84a6;
+
+  /* lines */
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-line-strong: rgb(255 255 255 / 0.15);
+
+  /* brand – the logo's colours, lifted for dark backgrounds */
+  --color-brand: #7466ff;
+  --color-brand-strong: #5b4bf5;
+  --color-brand-blue: #3d86ff;
+  --color-brand-violet: #a173ff;
+  --color-brand-sky: #38b6ff;
+  --color-brand-50: rgb(116 102 255 / 0.1);
+  --color-brand-100: rgb(116 102 255 / 0.2);
+  --color-brand-200: #c9c3ff;
+
+  --color-ok: #34d399;
+  --color-ok-50: rgb(52 211 153 / 0.12);
+  --color-warn: #fbbf24;
+  --color-warn-50: rgb(251 191 36 / 0.12);
+  --color-danger: #fb7185;
+  --color-danger-50: rgb(251 113 133 / 0.12);
+
+  --radius-card: 20px;
+  --shadow-card: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 20px 50px -30px rgb(0 0 0 / 0.8);
+  --shadow-float: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 30px 80px -30px rgb(0 0 0 / 0.9), 0 0 0 1px rgb(255 255 255 / 0.06);
+  --shadow-glow: 0 0 0 1px rgb(255 255 255 / 0.06), 0 30px 120px -20px rgb(91 75 245 / 0.55);
+
+  --animate-rise: rise 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-float: float 7s ease-in-out infinite;
+  --animate-float-slow: float 9s ease-in-out infinite;
+  --animate-marquee: marquee 45s linear infinite;
+  --animate-marquee-reverse: marquee 55s linear infinite reverse;
+  --animate-shine: shine 6s linear infinite;
+  --animate-pulse-soft: pulse-soft 2.4s ease-in-out infinite;
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(16px); filter: blur(4px); }
+    to { opacity: 1; transform: none; filter: none; }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @keyframes shine {
+    from { background-position: 0% 50%; }
+    to { background-position: 200% 50%; }
+  }
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.55; transform: scale(0.85); }
+  }
+}
+
+@layer base {
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; color-scheme: dark; background: var(--color-night); }
+  body { background: var(--color-night); color: var(--color-ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
+  ::selection { background: rgb(116 102 255 / 0.45); color: #fff; }
+  :focus-visible { outline: 2px solid var(--color-brand-sky); outline-offset: 3px; border-radius: 8px; }
+  h1, h2, h3 { text-wrap: balance; }
+  p { text-wrap: pretty; }
+}
+
+@layer components {
+  .mk-container { width: 100%; max-width: 1240px; margin-inline: auto; padding-inline: 1.25rem; }
+  @media (min-width: 640px) { .mk-container { padding-inline: 1.75rem; } }
+  @media (min-width: 1024px) { .mk-container { padding-inline: 2rem; } }
+
+  .mk-section { position: relative; padding-block: 5.5rem; }
+  @media (min-width: 1024px) { .mk-section { padding-block: 8rem; } }
+
+  /* small label above a heading: a glass pill with a glowing dot */
+  .mk-eyebrow {
+    display: inline-flex; align-items: center; gap: 0.5rem; border-radius: 999px; border: 1px solid var(--color-line-strong);
+    background: rgb(255 255 255 / 0.04); padding: 0.3rem 0.8rem 0.3rem 0.65rem; font-size: 0.8125rem; font-weight: 500; color: var(--color-ink-2);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  }
+  .mk-eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 999px; background: linear-gradient(135deg, #38b6ff, #a173ff); box-shadow: 0 0 10px #7466ff; }
+
+  /* headings: white fading slightly downwards – the "lit from above" look */
+  .mk-h1, .mk-h2 { background-image: linear-gradient(180deg, #ffffff 25%, rgb(255 255 255 / 0.66) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .mk-h1 { font-size: clamp(2.5rem, 6.2vw, 4.9rem); line-height: 1; font-weight: 650; letter-spacing: -0.05em; }
+  .mk-h2 { font-size: clamp(2.05rem, 4.4vw, 3.6rem); line-height: 1.04; font-weight: 650; letter-spacing: -0.045em; }
+  .mk-h3 { font-size: 1.125rem; line-height: 1.35; font-weight: 600; color: var(--color-ink); letter-spacing: -0.015em; }
+  .mk-lead { font-size: clamp(1.05rem, 1.5vw, 1.25rem); line-height: 1.65; color: var(--color-body); }
+  .mk-text { font-size: 0.975rem; line-height: 1.7; color: var(--color-body); }
+
+  .mk-gradient-text {
+    background-image: linear-gradient(90deg, #3d86ff 0%, #8b7dff 35%, #c08bff 55%, #3d86ff 100%); background-size: 200% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .mk-shine { animation: var(--animate-shine); }
+
+  /* buttons */
+  .mk-btn {
+    position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; min-height: 2.75rem; padding: 0.625rem 1.2rem;
+    border-radius: 999px; font-size: 0.9375rem; font-weight: 550; line-height: 1.2; white-space: nowrap; isolation: isolate;
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.25s ease, transform 0.2s ease, filter 0.2s ease;
+  }
+  .mk-btn:active { transform: translateY(1px) scale(0.99); }
+  .mk-btn-lg { min-height: 3.25rem; padding-inline: 1.6rem; font-size: 1rem; }
+  .mk-btn-sm { min-height: 2.35rem; padding: 0.45rem 1rem; font-size: 0.875rem; }
+  .mk-btn-primary {
+    color: #fff; background: linear-gradient(135deg, #2f6dff 0%, #5b48f6 50%, #8a4df5 100%);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.28), inset 0 -1px 0 rgb(0 0 0 / 0.2), 0 10px 30px -10px rgb(91 72 246 / 0.9), 0 0 0 1px rgb(255 255 255 / 0.08);
+  }
+  .mk-btn-primary:hover { filter: brightness(1.12); box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.3), 0 14px 40px -10px rgb(91 72 246 / 1), 0 0 0 1px rgb(255 255 255 / 0.12); }
+  .mk-btn-secondary { color: var(--color-ink); background: rgb(255 255 255 / 0.05); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14), inset 0 1px 0 rgb(255 255 255 / 0.06); }
+  .mk-btn-secondary:hover { background: rgb(255 255 255 / 0.1); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.22); }
+  .mk-btn-ghost { color: var(--color-ink-2); }
+  .mk-btn-ghost:hover { color: #fff; background: rgb(255 255 255 / 0.06); }
+  .mk-btn-light { color: #050820; background: #fff; box-shadow: 0 10px 30px -10px rgb(255 255 255 / 0.45); }
+  .mk-btn-light:hover { background: #e9ecff; }
+
+  /* glass card */
+  .mk-card {
+    position: relative; border-radius: var(--radius-card); border: 1px solid var(--color-line);
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.045) 0%, rgb(255 255 255 / 0.015) 100%), var(--color-paper);
+    box-shadow: var(--shadow-card);
+  }
+  /* a 1px gradient edge (for the highlighted card) */
+  .mk-glow-edge::before {
+    content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1px; pointer-events: none;
+    background: linear-gradient(140deg, rgb(61 134 255 / 0.9), rgb(116 102 255 / 0.5) 35%, rgb(255 255 255 / 0.06) 60%, rgb(161 115 255 / 0.8));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+  }
+  /* cursor spotlight (position from components/marketing/spotlight.tsx) */
+  .mk-spot { overflow: hidden; }
+  .mk-spot::after {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity 0.3s ease;
+    background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 0%), rgb(116 102 255 / 0.14), transparent 45%);
+  }
+  .mk-spot:hover::after { opacity: 1; }
+  .mk-spot:hover { border-color: rgb(255 255 255 / 0.14); }
+
+  .mk-chip {
+    display: inline-flex; align-items: center; gap: 0.4rem; border-radius: 999px; border: 1px solid var(--color-line); background: rgb(255 255 255 / 0.035);
+    padding: 0.3rem 0.75rem; font-size: 0.8125rem; font-weight: 500; color: var(--color-ink-2);
+  }
+  .mk-link { color: #a59cff; font-weight: 550; text-underline-offset: 4px; transition: color 0.2s ease; }
+  .mk-link:hover { color: #c9c3ff; text-decoration: underline; }
+
+  .mk-kbd { font-family: var(--font-mono); font-size: 0.75rem; }
+
+  /* backgrounds */
+  .mk-grid-bg {
+    background-image: linear-gradient(to right, rgb(255 255 255 / 0.045) 1px, transparent 1px), linear-gradient(to bottom, rgb(255 255 255 / 0.045) 1px, transparent 1px);
+    background-size: 56px 56px; mask-image: radial-gradient(ellipse 65% 55% at 50% 0%, #000 30%, transparent 100%);
+  }
+  .mk-dots-bg { background-image: radial-gradient(rgb(255 255 255 / 0.09) 1px, transparent 1px); background-size: 22px 22px; mask-image: radial-gradient(ellipse 60% 60% at 50% 50%, #000 20%, transparent 100%); }
+  .mk-aurora {
+    background:
+      radial-gradient(40% 50% at 20% 10%, rgb(61 134 255 / 0.28), transparent 70%),
+      radial-gradient(35% 45% at 80% 0%, rgb(161 115 255 / 0.26), transparent 70%),
+      radial-gradient(50% 40% at 50% 30%, rgb(91 72 246 / 0.22), transparent 70%);
+  }
+  .mk-noise::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0.06; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .mk-divider { height: 1px; background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.14), transparent); }
+
+  /* endless rows (payment methods, currencies) – edges fade out */
+  .mk-marquee { mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); }
+  .mk-marquee:hover .mk-marquee-track { animation-play-state: paused; }
+
+  /* data flowing along the diagram's lines */
+  .mk-flow { stroke-dasharray: 3 9; animation: mk-dash 1.4s linear infinite; }
+  @keyframes mk-dash { to { stroke-dashoffset: -24; } }
+
+  /* long-form text (blog, legal pages) */
+  .mk-prose { color: var(--color-body); font-size: 1.0625rem; line-height: 1.8; }
+  .mk-prose h2 { margin-top: 2.75rem; margin-bottom: 0.75rem; font-size: 1.5rem; line-height: 1.25; font-weight: 650; letter-spacing: -0.03em; color: var(--color-ink); }
+  .mk-prose p { margin-top: 1rem; }
+  .mk-prose ul { margin-top: 1rem; padding-left: 1.25rem; list-style: disc; }
+  .mk-prose li { margin-top: 0.5rem; }
+  .mk-prose li::marker { color: var(--color-brand); }
+  .mk-prose strong { color: var(--color-ink); font-weight: 600; }
+  .mk-prose a { color: #a59cff; font-weight: 550; text-decoration: underline; text-underline-offset: 4px; }
+}
+
+/* motion only for people who haven't asked for less */
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    /* sections ease in as they scroll into view */
+    .mk-reveal { animation: mk-reveal linear both; animation-timeline: view(); animation-range: entry 0% cover 22%; }
+    @keyframes mk-reveal { from { opacity: 0; transform: translateY(28px) scale(0.985); } to { opacity: 1; transform: none; } }
+    /* the hero's product picture flattens as it scrolls up (larger screens) */
+    @media (min-width: 768px) {
+      .mk-tilt { animation: mk-tilt linear both; animation-timeline: view(); animation-range: entry 0% cover 45%; transform-origin: 50% 0; }
+      @keyframes mk-tilt { from { transform: perspective(1800px) rotateX(16deg) scale(0.94); } to { transform: none; } }
+    }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, ::before, ::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  .mk-marquee-track { animation: none !important; flex-wrap: wrap; justify-content: center; width: auto !important; }
+  .mk-marquee-dup { display: none !important; }
+  .mk-marquee { mask-image: none; }
+}

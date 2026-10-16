@@ -86,10 +86,14 @@ async function inTransaction<T>(payload: Payload, work: (req: PayloadRequest) =>
   }
 }
 
-/** The provider says the checkout was paid: check it, record it, move the order on, tell the customer. */
-export async function markCheckoutPaid(payload: Payload, s: { sessionId: string; paymentIntent: string | null; amountMinor: number; currency: string; account?: string | null }): Promise<"paid" | "already" | "ignored"> {
+/**
+ * The provider says the checkout was paid: check it, record it, move the order on, tell the customer.
+ * Every provider settles through here (`provider` = its id, `via` = "card" / "PayPal" for the order's history).
+ */
+export async function markCheckoutPaid(payload: Payload, s: { sessionId: string; paymentIntent: string | null; amountMinor: number; currency: string; account?: string | null; provider?: string; via?: string }): Promise<"paid" | "already" | "ignored"> {
+  const provider = s.provider ?? "stripe";
   return inTransaction(payload, async (req) => {
-    const charge = (await payload.find({ collection: "payment-transactions", where: { and: [{ provider: { equals: "stripe" } }, { providerRef: { equals: s.sessionId } }] }, limit: 1, depth: 0, overrideAccess: true, req })).docs[0] as unknown as Doc | undefined;
+    const charge = (await payload.find({ collection: "payment-transactions", where: { and: [{ provider: { equals: provider } }, { providerRef: { equals: s.sessionId } }] }, limit: 1, depth: 0, overrideAccess: true, req })).docs[0] as unknown as Doc | undefined;
     if (!charge) return "ignored"; // not one of ours (another platform on the same account)
     if (charge.status === "succeeded") return "already";
     const orderId = relId(charge.order);
@@ -100,7 +104,7 @@ export async function markCheckoutPaid(payload: Payload, s: { sessionId: string;
     const wrongAccount = s.account && store.paymentsAccountId && s.account !== store.paymentsAccountId;
     if (s.currency.toLowerCase() !== currency || s.amountMinor !== expected || wrongAccount) {
       await payload.update({ collection: "payment-transactions", id: Number(charge.id), data: { status: "failed", failureReason: `Mismatch: got ${s.amountMinor} ${s.currency} on ${s.account ?? "?"}, expected ${expected} ${currency}` } as never, overrideAccess: true, req });
-      log.error("payments.mismatch", new Error("payment does not match order"), { order: order.orderNumber, got: s.amountMinor, expected, account: s.account });
+      log.error("payments.mismatch", new Error("payment does not match order"), { order: order.orderNumber, provider, got: s.amountMinor, expected, account: s.account });
       return "ignored";
     }
     await payload.update({ collection: "payment-transactions", id: Number(charge.id), data: { status: "succeeded", paymentIntent: s.paymentIntent } as never, overrideAccess: true, req });
@@ -111,7 +115,7 @@ export async function markCheckoutPaid(payload: Payload, s: { sessionId: string;
       data: {
         paymentStatus: "paid",
         paymentReference: s.paymentIntent ?? s.sessionId,
-        ...(was === "awaiting-payment" ? { status: "confirmed", history: [{ status: "confirmed", at: new Date().toISOString(), note: "Paid by card" }] } : {}),
+        ...(was === "awaiting-payment" ? { status: "confirmed", history: [{ status: "confirmed", at: new Date().toISOString(), note: `Paid by ${s.via ?? "card"}` }] } : {}),
       } as never,
       overrideAccess: true,
       req,
@@ -121,15 +125,18 @@ export async function markCheckoutPaid(payload: Payload, s: { sessionId: string;
     const { queueNotification } = await import("@/lib/notify");
     await queueNotification(payload, "order-placed", relId(order.store), { orderId }, { req, dedupeKey: `order-placed:${orderId}` });
     const { emitStoreEvent } = await import("@/lib/webhooks");
-    await emitStoreEvent(payload, relId(order.store), "order.paid", { id: orderId, orderNumber: order.orderNumber, total: order.total, currency: currency.toUpperCase(), paymentIntent: s.paymentIntent }, req);
+    await emitStoreEvent(payload, relId(order.store), "order.paid", { id: orderId, orderNumber: order.orderNumber, total: order.total, currency: currency.toUpperCase(), paymentIntent: s.paymentIntent, provider }, req);
+    // paid after the order was cancelled (the page was used after it expired): the money must go back – say so loudly
+    if (was === "cancelled") log.warn("payments.paid_after_cancel", { order: order.orderNumber, provider });
     return "paid";
   });
 }
 
 /** The checkout expired or the payment failed: the order is cancelled (its stock goes back) unless it was paid meanwhile. */
-export async function failCheckout(payload: Payload, sessionId: string, reason: string): Promise<"cancelled" | "ignored"> {
+export async function failCheckout(payload: Payload, sessionId: string, reason: string, opts: { provider?: string; via?: string } = {}): Promise<"cancelled" | "ignored"> {
+  const provider = opts.provider ?? "stripe";
   return inTransaction(payload, async (req) => {
-    const charge = (await payload.find({ collection: "payment-transactions", where: { and: [{ provider: { equals: "stripe" } }, { providerRef: { equals: sessionId } }] }, limit: 1, depth: 0, overrideAccess: true, req })).docs[0] as unknown as Doc | undefined;
+    const charge = (await payload.find({ collection: "payment-transactions", where: { and: [{ provider: { equals: provider } }, { providerRef: { equals: sessionId } }] }, limit: 1, depth: 0, overrideAccess: true, req })).docs[0] as unknown as Doc | undefined;
     if (!charge || charge.status !== "pending") return "ignored";
     await payload.update({ collection: "payment-transactions", id: Number(charge.id), data: { status: "cancelled", failureReason: reason } as never, overrideAccess: true, req });
     const order = (await payload.findByID({ collection: "orders", id: relId(charge.order), depth: 0, overrideAccess: true, req }).catch(() => null)) as unknown as Doc | null;
@@ -137,7 +144,7 @@ export async function failCheckout(payload: Payload, sessionId: string, reason: 
       await payload.update({
         collection: "orders",
         id: Number(order.id),
-        data: { status: "cancelled", history: [{ status: "cancelled", at: new Date().toISOString(), note: `Card payment not completed (${reason})` }] } as never,
+        data: { status: "cancelled", history: [{ status: "cancelled", at: new Date().toISOString(), note: `${opts.via ? `${opts.via} payment` : "Card payment"} not completed (${reason})` }] } as never,
         overrideAccess: true,
         req,
         context: { system: true, skipNotify: true },

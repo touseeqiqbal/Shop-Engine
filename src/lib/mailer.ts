@@ -79,7 +79,7 @@ export async function deliverEmail(mail: OutgoingEmail): Promise<boolean> {
 
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
-    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json", "User-Agent": "ShopEngine/1.0" }, // Resend refuses requests without one
     body: JSON.stringify({ from, to, subject: mail.subject, html: mail.html, text: mail.text, reply_to: mail.replyTo }),
     signal: AbortSignal.timeout(TIMEOUT),
   });

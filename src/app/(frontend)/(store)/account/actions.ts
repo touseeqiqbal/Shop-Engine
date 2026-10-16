@@ -17,6 +17,7 @@ import { PAKISTAN_CITIES } from "@/lib/cities";
 import { isDatabaseConfigured } from "@/lib/db/config";
 import { rateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { canSendOrderLookup, notifyFromStorefront } from "@/lib/notify";
+import { currentStoreId } from "@/lib/tenant";
 import { listOrdersByPhone } from "@/lib/repo/orders";
 import type { SavedAddress } from "@/lib/types";
 import { normalizePhone, phonePlaceholder } from "@/lib/phone";
@@ -225,7 +226,7 @@ export async function findOrdersByPhoneAction(_prev: FindOrdersState, fd: FormDa
   const phone = normalizePhone(String(fd.get("phone") ?? ""), country);
   if (!phone) return { status: "error", message: phoneError(country), ts };
   if (!(await rateLimit("find-orders", 8, 10 * 60_000))) return { status: "error", message: "Too many lookups – please wait a few minutes.", ts };
-  if (!canSendOrderLookup()) return { status: "sent", byMessage: false, ts };
+  if (!(await canSendOrderLookup(await currentStoreId()))) return { status: "sent", byMessage: false, ts };
   // At most 3 messages a day to one number, whoever asks.
   if (rateLimitKey(`find-orders-phone:${phone}`, 3, 24 * 60 * 60_000)) {
     after(async () => {

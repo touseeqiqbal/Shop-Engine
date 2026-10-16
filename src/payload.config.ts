@@ -54,6 +54,11 @@ import { WebhookEndpoints } from "./payload/collections/webhooks";
 import { CustomerCarts } from "./payload/collections/customer-carts";
 import { PaymentEvents, Payments } from "./payload/collections/payments";
 import { StoreInvoices, StoreSubscriptions, SubscriptionPlans } from "./payload/collections/billing";
+import { Integrations } from "./payload/collections/integrations";
+import { ApiKeys } from "./payload/collections/api-keys";
+import { integrationEndpoints } from "./payload/endpoints/integrations";
+import { courierEndpoints } from "./payload/endpoints/couriers";
+import { apiKeyEndpoints } from "./payload/endpoints/api-keys";
 
 import { dbPoolMax } from "./lib/db/config";
 
@@ -109,7 +114,7 @@ export default buildConfig({
   i18n: { translations: { en: { general: { true: "Yes", false: "No", noLabel: "—" } } } },
   admin: {
     user: Users.slug,
-    meta: { titleSuffix: " · ShopEngine", icons: [{ rel: "icon", type: "image/svg+xml", url: "/brand/shopengine-icon.svg" }] },
+    meta: { titleSuffix: " · ShopEngine", icons: [{ rel: "icon", type: "image/png", sizes: "32x32", url: "/brand/shopengine/favicon-32.png" }, { rel: "icon", type: "image/png", sizes: "16x16", url: "/brand/shopengine/favicon-16.png" }, { rel: "apple-touch-icon", url: "/brand/shopengine/apple-touch-icon.png" }] },
     components: {
       graphics: { Logo: "/payload/admin/Brand#Logo", Icon: "/payload/admin/Brand#Icon" },
       Nav: "/payload/admin/nav/UrkoNav#UrkoNav",
@@ -128,11 +133,12 @@ export default buildConfig({
         // the store's own settings page (theme, shipping, payments …): opens – or creates – the document of the store being worked in
         storeSettings: { Component: "/payload/admin/settings/StoreSettingsView#StoreSettingsView", path: "/settings/:page", meta: { title: "Store settings" } },
         platform: { Component: "/payload/admin/platform/PlatformView#PlatformView", path: "/platform", exact: true, meta: { title: "ShopEngine platform" } },
+        integrations: { Component: "/payload/admin/integrations/IntegrationsView#IntegrationsView", path: "/integrations", exact: true, meta: { title: "Integrations" } },
       },
     },
     importMap: { baseDir: path.resolve(dirname) },
   },
-  endpoints: [reportsEndpoint, salesReportEndpoint, configExportEndpoint, configImportEndpoint, ...posEndpoints, ...orderToolEndpoints, ...twoFactorEndpoints, ...privacyEndpoints, ...inventoryEndpoints, ...platformEndpoints, ...paymentEndpoints, ...marketingEndpoints],
+  endpoints: [reportsEndpoint, salesReportEndpoint, configExportEndpoint, configImportEndpoint, ...posEndpoints, ...orderToolEndpoints, ...twoFactorEndpoints, ...privacyEndpoints, ...inventoryEndpoints, ...platformEndpoints, ...paymentEndpoints, ...marketingEndpoints, ...integrationEndpoints, ...courierEndpoints, ...apiKeyEndpoints],
   // Security: GraphQL isn't used by the store – switch it off (smaller attack surface).
   graphQL: { disable: true },
   // Background jobs (scheduled publishing of pages and blog posts): run every minute; only platform admins may queue/run them by hand.
@@ -161,7 +167,7 @@ export default buildConfig({
   collections: [Stores, StoreMemberships, SubscriptionPlans, StoreSubscriptions, StoreInvoices, Users, Media, Products, ProductCollections, Categories, Brands, LaptopModels, Reviews, Posts, Orders, ReturnRequests, WarrantyClaims, PosSales, CashUps, Units, Discounts, FlashSales, WholesaleInquiries, ContactMessages, Pages, Menus, BlockedPhones, TradeIns, ProductQuestions, StockAlerts, AbandonedCarts, Suppliers, Purchases, StockCounts]
     // every settings page also exists per store (one document each) – see src/payload/store-settings.ts
     .concat(STORE_SETTINGS_GLOBALS.map(toStoreSettingsCollection))
-    .concat([OutboxEvents, Payments, PaymentEvents, WebhookEndpoints, CustomerCarts])
+    .concat([OutboxEvents, Payments, PaymentEvents, WebhookEndpoints, CustomerCarts, Integrations, ApiKeys])
     .map((c) => (isLoggedCollection(c.slug) ? withActivityLog(c) : c))
     .concat([StockMovements, ActivityLog]),
   // The original globals: ShopEngine's defaults and the default store's fallback – edited by platform admins only.

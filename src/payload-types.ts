@@ -124,6 +124,8 @@ export interface Config {
     'payment-events': PaymentEvent;
     'webhook-endpoints': WebhookEndpoint;
     'customer-carts': CustomerCart;
+    integrations: Integration;
+    'api-keys': ApiKey;
     'stock-movements': StockMovement;
     'activity-log': ActivityLog;
     exports: Export;
@@ -202,6 +204,8 @@ export interface Config {
     'payment-events': PaymentEventsSelect<false> | PaymentEventsSelect<true>;
     'webhook-endpoints': WebhookEndpointsSelect<false> | WebhookEndpointsSelect<true>;
     'customer-carts': CustomerCartsSelect<false> | CustomerCartsSelect<true>;
+    integrations: IntegrationsSelect<false> | IntegrationsSelect<true>;
+    'api-keys': ApiKeysSelect<false> | ApiKeysSelect<true>;
     'stock-movements': StockMovementsSelect<false> | StockMovementsSelect<true>;
     'activity-log': ActivityLogSelect<false> | ActivityLogSelect<true>;
     exports: ExportsSelect<false> | ExportsSelect<true>;
@@ -626,9 +630,27 @@ export interface Order {
           | null;
         courier?: string | null;
         trackingNumber?: string | null;
-        status?: ('shipped' | 'delivered' | 'cancelled') | null;
+        status?: ('shipped' | 'delivered' | 'returned' | 'cancelled') | null;
         shippedAt?: string | null;
         deliveredAt?: string | null;
+        /**
+         * Courier integration it was booked with.
+         */
+        provider?: string | null;
+        courierStatus?: string | null;
+        lastTrackedAt?: string | null;
+        labelUrl?: string | null;
+        /**
+         * The courier's own id for this parcel.
+         */
+        courierRef?: string | null;
+        /**
+         * Cash the courier collects.
+         */
+        codAmount?: number | null;
+        codStatus?: ('pending' | 'remitted') | null;
+        codRemittedAt?: string | null;
+        codRemittanceRef?: string | null;
         id?: string | null;
       }[]
     | null;
@@ -3547,6 +3569,74 @@ export interface CustomerCart {
   createdAt: string;
 }
 /**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "integrations".
+ */
+export interface Integration {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  provider: string;
+  category: string;
+  enabled?: boolean | null;
+  mode?: ('live' | 'test') | null;
+  config?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  secrets?: string | null;
+  secretHints?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  state?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  status?: ('connected' | 'error') | null;
+  lastCheckedAt?: string | null;
+  lastError?: string | null;
+  webhookKey?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "api-keys".
+ */
+export interface ApiKey {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  name: string;
+  prefix: string;
+  hash: string;
+  scopes?: ('products:read' | 'products:write' | 'orders:read' | 'orders:write')[] | null;
+  createdBy?: string | null;
+  lastUsedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * Every change of stock, newest first: why, how much, the stock after it and who. Filter by product to see one product's history.
  *
  * This interface was referenced by `Config`'s JSON-Schema
@@ -4083,6 +4173,14 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'customer-carts';
         value: number | CustomerCart;
+      } | null)
+    | ({
+        relationTo: 'integrations';
+        value: number | Integration;
+      } | null)
+    | ({
+        relationTo: 'api-keys';
+        value: number | ApiKey;
       } | null)
     | ({
         relationTo: 'stock-movements';
@@ -4698,6 +4796,15 @@ export interface OrdersSelect<T extends boolean = true> {
         status?: T;
         shippedAt?: T;
         deliveredAt?: T;
+        provider?: T;
+        courierStatus?: T;
+        lastTrackedAt?: T;
+        labelUrl?: T;
+        courierRef?: T;
+        codAmount?: T;
+        codStatus?: T;
+        codRemittedAt?: T;
+        codRemittanceRef?: T;
         id?: T;
       };
   customerNote?: T;
@@ -5992,6 +6099,42 @@ export interface CustomerCartsSelect<T extends boolean = true> {
   store?: T;
   user?: T;
   lines?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "integrations_select".
+ */
+export interface IntegrationsSelect<T extends boolean = true> {
+  store?: T;
+  provider?: T;
+  category?: T;
+  enabled?: T;
+  mode?: T;
+  config?: T;
+  secrets?: T;
+  secretHints?: T;
+  state?: T;
+  status?: T;
+  lastCheckedAt?: T;
+  lastError?: T;
+  webhookKey?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "api-keys_select".
+ */
+export interface ApiKeysSelect<T extends boolean = true> {
+  store?: T;
+  name?: T;
+  prefix?: T;
+  hash?: T;
+  scopes?: T;
+  createdBy?: T;
+  lastUsedAt?: T;
   updatedAt?: T;
   createdAt?: T;
 }
@@ -7678,6 +7821,8 @@ export interface TaskCreateCollectionExport {
       | 'payment-events'
       | 'webhook-endpoints'
       | 'customer-carts'
+      | 'integrations'
+      | 'api-keys'
       | 'stock-movements'
       | 'activity-log'
       | 'exports'

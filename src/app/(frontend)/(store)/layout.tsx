@@ -15,7 +15,8 @@ import { localBusinessJsonLd, organizationJsonLd, websiteJsonLd } from "@/lib/se
 import { getSiteInfo } from "@/lib/repo/site-content";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { currentAvailability } from "@/lib/tenant";
+import { currentAvailability, isPlatformRequest } from "@/lib/tenant";
+import { PlatformShell } from "@/components/marketing/platform-shell";
 import { getStoreLocale } from "@/lib/store-locale";
 
 const CLOSED: Record<string, { title: string; text: string }> = {
@@ -35,6 +36,8 @@ export default async function StoreLayout({ children }: { children: React.ReactN
   // which shop this address belongs to, and whether it is open (unknown sub-domain → 404)
   const { store, availability } = await currentAvailability();
   if (!availability.open) {
+    // ShopEngine's own address: the merchant account pages (sign-up, sign-in, Stores) in ShopEngine's frame
+    if (availability.reason === "missing" && (await isPlatformRequest())) return <PlatformShell>{children}</PlatformShell>;
     if (availability.reason === "missing") notFound();
     const c = CLOSED[availability.reason] ?? CLOSED.closed;
     return (

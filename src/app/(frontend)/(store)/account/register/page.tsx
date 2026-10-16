@@ -7,6 +7,7 @@ import { isDatabaseConfigured } from "@/lib/db/config";
 import { pageMetadata } from "@/lib/seo";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { safePath } from "@/lib/safe-path";
+import { isPlatformRequest } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,22 @@ const safe = (n?: string) => (n ? safePath(n, "") || undefined : undefined);
 export default async function RegisterPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
   const { next } = await searchParams;
   if (isDatabaseConfigured && (await getSessionUser().catch(() => null))) redirect(safe(next) ?? "/account");
+  // ShopEngine's own address: a merchant opening their ShopEngine account
+  if (await isPlatformRequest())
+    return (
+      <AuthShell
+        demo={!isDatabaseConfigured}
+        merchant
+        title={
+          <>
+            Create your <span className="gradient-text">ShopEngine</span> account
+          </>
+        }
+        subtitle="Next you confirm your email, then open your first store."
+      >
+        <RegisterForm next={safe(next) ?? "/account/stores"} askPhone={false} />
+      </AuthShell>
+    );
   return (
     <AuthShell
       demo={!isDatabaseConfigured}

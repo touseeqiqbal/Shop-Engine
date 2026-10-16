@@ -7,7 +7,7 @@ import { mergeSeoSettings, type PageSeoMap, type PagesContentMap, type SeoSettin
 import { mergeHomeConfig, type HomeConfig } from "@/lib/content/home";
 import { fillTokens, resolvePageContent, tokenValues } from "@/lib/content/page-defaults";
 import { cmsPageTexts, cmsSeo, cmsSiteInfo } from "@/lib/cms/site";
-import { currentStoreId, storeDirectory, storeOrigin } from "@/lib/tenant";
+import { currentStoreId, isPlatformRequest, platformOrigin, storeDirectory, storeOrigin } from "@/lib/tenant";
 import { getMoney } from "@/lib/store-locale";
 
 /**
@@ -51,7 +51,11 @@ const siteInfoCached = unstable_cache(
   ["site-business-v3"],
   opts(SITE_TAGS.business)
 );
-export const getSiteInfo = async (storeId?: number | null) => siteInfoCached(storeId === undefined ? await currentStoreId() : storeId);
+export const getSiteInfo = async (storeId?: number | null): Promise<SiteInfo> => {
+  // ShopEngine's own address (merchant sign-up and sign-in): ShopEngine's name, never a store's
+  if (storeId === undefined && (await isPlatformRequest())) return { ...blankSiteInfo("ShopEngine", await platformOrigin()), tagline: "The engine that powers shops", description: "One platform to launch and run independent online stores." };
+  return siteInfoCached(storeId === undefined ? await currentStoreId() : storeId);
+};
 
 /** The store, when it isn't the original shop (whose built-in texts are its own). */
 async function otherStore(storeId: number | null) {

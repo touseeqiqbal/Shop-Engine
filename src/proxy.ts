@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getRedirectMap, storeIdForHost } from "@/lib/repo/redirects";
 import { isStaging, stagingAuthorized } from "@/lib/staging";
 import { ipFromHeaders } from "@/lib/client-ip";
+import { isMarketingHost, MARKETING_PREFIX, PASS_THROUGH } from "@/lib/marketing/hosts";
 
 /**
  * Next.js 16 Proxy (formerly Middleware) – runs on the Node.js runtime before every matched request.
@@ -9,6 +10,9 @@ import { ipFromHeaders } from "@/lib/client-ip";
  * 1. Redirect manager: looks up the pathname in the redirects of the store this host belongs to (/cms → Settings →
  *    Redirects, cached 60s by `getRedirectMap()`) and answers with 301 (permanent) or 307 (temporary).
  * 2. The old admin was retired: `/admin` and everything under it goes to the store admin at `/cms`.
+ * 3. ShopEngine's marketing website (MARKETING_HOSTS – src/lib/marketing/hosts.ts): its addresses show the pages in
+ *    src/app/(marketing)/shopengine at the normal paths; accounts, /cms and the APIs pass through. Store addresses
+ *    never show those pages.
  */
 
 function normalize(pathname: string) {
@@ -93,8 +97,24 @@ function isOwnCronCall(request: NextRequest) {
   return keys.some((k) => auth === `Bearer ${k}`);
 }
 
+const inMarketingFolder = (pathname: string) => pathname === MARKETING_PREFIX || pathname.startsWith(`${MARKETING_PREFIX}/`);
+
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
+  const marketing = isMarketingHost(request.headers.get("host"));
+  if (marketing) {
+    // the marketing site's own sitemap and robots rules
+    if (pathname === "/sitemap.xml" || pathname === "/robots.txt") return NextResponse.rewrite(new URL(`${MARKETING_PREFIX}${pathname}`, request.url));
+    // one address per page: the internal folder name never appears in a URL
+    if (inMarketingFolder(pathname)) {
+      const url = request.nextUrl.clone();
+      url.pathname = pathname.slice(MARKETING_PREFIX.length) || "/";
+      return NextResponse.redirect(url, 308);
+    }
+  } else if (inMarketingFolder(pathname)) {
+    // a store's address: ShopEngine's marketing pages don't exist here (the store's own "not found" page)
+    return NextResponse.rewrite(new URL("/__not-found", request.url));
+  }
   if (!isStaging && STATIC.test(pathname)) return NextResponse.next();
 
   // ── Staging: password-protect everything (pages, APIs, feeds, photos) except the health check ──
@@ -126,6 +146,12 @@ export async function proxy(request: NextRequest) {
     url.pathname = "/cms";
     url.search = "";
     return NextResponse.redirect(url, 308);
+  }
+
+  // ── ShopEngine's marketing website: its pages, or accounts / admin / files passed through ──
+  if (marketing) {
+    if (PASS_THROUGH.test(pathname)) return NextResponse.next();
+    return NextResponse.rewrite(new URL(`${MARKETING_PREFIX}${pathname === "/" ? "" : pathname}${search}`, request.url));
   }
 
   // ── Redirect manager (storefront only) ──

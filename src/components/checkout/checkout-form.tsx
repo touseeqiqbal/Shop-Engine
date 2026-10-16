@@ -128,7 +128,8 @@ export function CheckoutForm({
   const methods = useMemo(() => checkoutMethods(settings), [settings]);
   const [method, setMethod] = useState<PaymentMethod>(() => (methods.find((m) => m.kind !== "gateway") ?? methods[0])?.id ?? "cod");
   const current: CheckoutMethod | null = methods.find((m) => m.id === method) ?? null;
-  const emailNeeded = emailRequired;
+  // card payments and some payment providers (Paystack, Flutterwave, Tap) need an email for the receipt
+  const emailNeeded = emailRequired || method === "card" || Boolean(current?.needsEmail);
   const [file, setFile] = useState<File | null>(null);
   // the transaction id from the wallet / bank transfer receipt (one receipt pays for one order)
   const [reference, setReference] = useState("");
@@ -657,6 +658,7 @@ function methodDescription(m: CheckoutMethod, settings: StoreSettings, fee: numb
     case "card":
       return "Pay securely on the next page";
   }
+  if (m.kind === "gateway") return "Pay securely on the next page";
   if (m.due === "on-delivery") return "Pay when your order arrives";
   return m.account[0] ? `${m.account[0].label}: ${m.account[0].value}` : "Pay, then upload the receipt";
 }

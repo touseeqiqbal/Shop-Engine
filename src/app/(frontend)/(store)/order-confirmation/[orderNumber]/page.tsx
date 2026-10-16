@@ -14,6 +14,7 @@ import { ORDER_NUMBER_RE } from "@/lib/order-number";
 import { cityLine, PAYMENT_STATUS_LABEL, paymentAccountLines, paymentLabel } from "@/lib/order-display";
 import { paidOnDelivery } from "@/lib/order-money";
 import { findCheckoutMethod } from "@/lib/payments/methods";
+import { integrationInfo, isPaymentIntegration, PAYMENT_PAGE_MINUTES } from "@/lib/integrations/catalog";
 import { getStoreSettings } from "@/lib/repo/catalog";
 import { getOrderByNumber } from "@/lib/repo/orders";
 import { getSiteInfo } from "@/lib/repo/site-content";
@@ -76,6 +77,10 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
   // the store's own steps for its own methods ("use your order number as the reference")
   const instructions = findCheckoutMethod(order.paymentMethod, settings)?.instructions;
   const awaitingCode = order.status === "awaiting-confirmation" && Boolean(order.confirmation);
+  // paid on a provider's page: the platform card provider, or one the store connected (PayPal, JazzCash online …)
+  const online = order.paymentMethod === "card" || isPaymentIntegration(order.paymentMethod);
+  const providerName = order.paymentMethod === "card" ? null : (integrationInfo(order.paymentMethod)?.payment?.label ?? integrationInfo(order.paymentMethod)?.name ?? null);
+  const what = providerName ? `${providerName} payment` : "card payment";
   const waText = awaitingCode
     ? `Hi, I have a question about my order ${order.orderNumber} (${money(order.total)}).`
     : `Hi, I just placed order ${order.orderNumber}, total ${money(order.total)}, please confirm.`;
@@ -89,23 +94,25 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
           <h1 className="mt-6 font-display text-3xl font-bold sm:text-4xl">
             Thank you, <span className="gradient-text">{order.customer.name.split(" ")[0]}</span>!
           </h1>
-          {order.paymentMethod === "card" && order.status === "awaiting-payment" ? (
+          {online && order.status === "awaiting-payment" ? (
             // the order is only paid when the payment provider confirms it (never from this page's address)
             <div className="mx-auto mt-3 max-w-md space-y-3 text-muted">
               {payment === "done" ? (
-                <p>We&apos;re confirming your card payment with the bank – this usually takes a few seconds. Refresh this page in a moment.</p>
+                <p>We&apos;re confirming your {what} {providerName ? `with ${integrationInfo(order.paymentMethod)?.name}` : "with the bank"} – this usually takes a few seconds. Refresh this page in a moment.</p>
               ) : (
                 <p>
-                  {payment === "cancelled" ? "The card payment wasn't completed. " : payment === "expired" ? "The payment page has expired. " : ""}
-                  Your order is reserved for 30 minutes while you pay.
+                  {payment === "cancelled" ? `The ${what} wasn't completed. ` : payment === "expired" ? "The payment page has expired. " : ""}
+                  Your order is reserved for {providerName ? PAYMENT_PAGE_MINUTES : 30} minutes while you pay.
                 </p>
               )}
               <form action={payNow.bind(null, order.orderNumber)}>
-                <button className="btn btn-primary btn-lg">Pay {money(order.total)} by card</button>
+                <button className="btn btn-primary btn-lg">
+                  Pay {money(order.total)} {providerName ? `with ${integrationInfo(order.paymentMethod)?.name}` : "by card"}
+                </button>
               </form>
             </div>
-          ) : order.paymentMethod === "card" && order.status === "cancelled" && order.paymentStatus !== "paid" ? (
-            <p className="mx-auto mt-2 max-w-md text-muted">The card payment wasn&apos;t completed, so this order was cancelled and nothing was charged. You can place it again from your cart.</p>
+          ) : online && order.status === "cancelled" && order.paymentStatus !== "paid" ? (
+            <p className="mx-auto mt-2 max-w-md text-muted">The {what} wasn&apos;t completed, so this order was cancelled and nothing was charged. You can place it again from your cart.</p>
           ) : order.status === "awaiting-confirmation" && order.confirmation ? (
             <ConfirmCodeForm
               orderNumber={order.orderNumber}
