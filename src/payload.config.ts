@@ -30,6 +30,7 @@ import { dbName, legacyIdField, perStoreUnique } from "./payload/fields";
 import { migrations } from "./migrations";
 import { mailerAdapter } from "./payload/email";
 import { reportsEndpoint } from "./payload/endpoints/reports";
+import { stockValueEndpoint } from "./payload/endpoints/stock-value";
 import { salesReportEndpoint } from "./payload/endpoints/sales-report";
 import { clearRedirectCache } from "./payload/revalidate";
 import { configExportEndpoint, configImportEndpoint } from "./payload/endpoints/config-transfer";
@@ -42,7 +43,7 @@ import { BlockedPhones, OrderProtection } from "./payload/globals/protection";
 import { ReturnRequests, ReturnsPolicy, WarrantyClaims } from "./payload/collections/aftersales";
 import { CookieNotice } from "./payload/globals/cookie-notice";
 import { SalesChannels } from "./payload/globals/sales-channels";
-import { AbandonedCarts, ConversionSettings, ProductQuestions, StockAlerts, TradeIns } from "./payload/collections/engagement";
+import { AbandonedCarts, ConversionSettings, EmailOptOuts, ProductQuestions, StockAlerts, TradeIns } from "./payload/collections/engagement";
 import { Purchases, StockCounts, Suppliers } from "./payload/collections/inventory";
 import { ActivityLog, isLoggedCollection, StockMovements, withActivityLog, withGlobalActivityLog } from "./payload/collections/history";
 import { StaffGuide } from "./payload/globals/staff-guide";
@@ -56,9 +57,12 @@ import { PaymentEvents, Payments } from "./payload/collections/payments";
 import { StoreInvoices, StoreSubscriptions, SubscriptionPlans } from "./payload/collections/billing";
 import { Integrations } from "./payload/collections/integrations";
 import { ApiKeys } from "./payload/collections/api-keys";
+import { SecurityEvents } from "./payload/collections/security-events";
+import { GiftCards } from "./payload/collections/gift-cards";
 import { integrationEndpoints } from "./payload/endpoints/integrations";
 import { courierEndpoints } from "./payload/endpoints/couriers";
 import { apiKeyEndpoints } from "./payload/endpoints/api-keys";
+import { storeDataEndpoints } from "./payload/endpoints/store-data";
 
 import { dbPoolMax } from "./lib/db/config";
 
@@ -126,6 +130,7 @@ export default buildConfig({
         pos: { Component: "/payload/admin/pos/PosView#PosView", path: "/pos", exact: true, meta: { title: "Shop counter" } },
         rto: { Component: "/payload/admin/reports/RtoView#RtoView", path: "/reports/rto", exact: true, meta: { title: "Refused parcels (RTO)" } },
         sales: { Component: "/payload/admin/reports/SalesView#SalesView", path: "/reports/sales", exact: true, meta: { title: "Sales & profit" } },
+        stockValue: { Component: "/payload/admin/reports/StockValueView#StockValueView", path: "/reports/stock-value", exact: true, meta: { title: "Stock value" } },
         security: { Component: "/payload/admin/security/SecurityView#SecurityView", path: "/security", exact: true, meta: { title: "Security" } },
         privacy: { Component: "/payload/admin/privacy/PrivacyView#PrivacyView", path: "/privacy", exact: true, meta: { title: "Customer data requests" } },
         stockCount: { Component: "/payload/admin/inventory/StockCountView#StockCountView", path: "/stock-count", exact: true, meta: { title: "Stock count" } },
@@ -138,7 +143,7 @@ export default buildConfig({
     },
     importMap: { baseDir: path.resolve(dirname) },
   },
-  endpoints: [reportsEndpoint, salesReportEndpoint, configExportEndpoint, configImportEndpoint, ...posEndpoints, ...orderToolEndpoints, ...twoFactorEndpoints, ...privacyEndpoints, ...inventoryEndpoints, ...platformEndpoints, ...paymentEndpoints, ...marketingEndpoints, ...integrationEndpoints, ...courierEndpoints, ...apiKeyEndpoints],
+  endpoints: [reportsEndpoint, salesReportEndpoint, configExportEndpoint, configImportEndpoint, ...posEndpoints, ...orderToolEndpoints, ...twoFactorEndpoints, ...privacyEndpoints, ...inventoryEndpoints, ...platformEndpoints, ...paymentEndpoints, ...marketingEndpoints, ...integrationEndpoints, ...courierEndpoints, ...apiKeyEndpoints, ...storeDataEndpoints, stockValueEndpoint],
   // Security: GraphQL isn't used by the store – switch it off (smaller attack surface).
   graphQL: { disable: true },
   // Background jobs (scheduled publishing of pages and blog posts): run every minute; only platform admins may queue/run them by hand.
@@ -167,7 +172,7 @@ export default buildConfig({
   collections: [Stores, StoreMemberships, SubscriptionPlans, StoreSubscriptions, StoreInvoices, Users, Media, Products, ProductCollections, Categories, Brands, LaptopModels, Reviews, Posts, Orders, ReturnRequests, WarrantyClaims, PosSales, CashUps, Units, Discounts, FlashSales, WholesaleInquiries, ContactMessages, Pages, Menus, BlockedPhones, TradeIns, ProductQuestions, StockAlerts, AbandonedCarts, Suppliers, Purchases, StockCounts]
     // every settings page also exists per store (one document each) – see src/payload/store-settings.ts
     .concat(STORE_SETTINGS_GLOBALS.map(toStoreSettingsCollection))
-    .concat([OutboxEvents, Payments, PaymentEvents, WebhookEndpoints, CustomerCarts, Integrations, ApiKeys])
+    .concat([OutboxEvents, Payments, PaymentEvents, WebhookEndpoints, CustomerCarts, Integrations, ApiKeys, SecurityEvents, GiftCards, EmailOptOuts])
     .map((c) => (isLoggedCollection(c.slug) ? withActivityLog(c) : c))
     .concat([StockMovements, ActivityLog]),
   // The original globals: ShopEngine's defaults and the default store's fallback – edited by platform admins only.

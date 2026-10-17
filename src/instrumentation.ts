@@ -14,7 +14,8 @@ export async function register() {
 
   if (process.env.SENTRY_DSN) {
     const [Sentry, { sentryEnvironment }] = await Promise.all([import("@sentry/nextjs"), import("./lib/monitoring")]);
-    Sentry.init({ dsn: process.env.SENTRY_DSN, environment: sentryEnvironment(), tracesSampleRate: 0 });
+    // performance tracing is off unless SENTRY_TRACES_SAMPLE_RATE is set (e.g. 0.1 = one request in ten)
+    Sentry.init({ dsn: process.env.SENTRY_DSN, environment: sentryEnvironment(), tracesSampleRate: Math.min(1, Math.max(0, Number(process.env.SENTRY_TRACES_SAMPLE_RATE) || 0)) });
   }
 
   if (process.env.NEXT_PHASE === "phase-production-build" || process.env.HOUSEKEEPING === "off") return;
@@ -32,9 +33,9 @@ export async function register() {
         headers: { Authorization: `Bearer ${process.env.HOUSEKEEPING_INTERNAL_KEY}` },
         signal: AbortSignal.timeout(120_000),
       });
-      if (!res.ok) console.error(`[housekeeping] /api/cron answered ${res.status}`);
+      if (!res.ok) (await import("./lib/log")).log.warn("housekeeping.cron_status", { status: res.status });
     } catch (e) {
-      console.error("[housekeeping] failed:", e);
+      (await import("./lib/log")).log.error("housekeeping.failed", e);
     }
   };
   // first run a minute after start-up (lets the server warm up), then every few minutes

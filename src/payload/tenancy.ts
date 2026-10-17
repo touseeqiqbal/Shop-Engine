@@ -26,6 +26,8 @@ export type TenantUser = {
   currentStore?: unknown;
   twoFactor?: { enabled?: boolean | null } | null;
   collection?: string;
+  /** a platform admin seeing one store as one of its roles (support) – see /cms-api/platform/view-as */
+  supportView?: { store?: number; role?: string; until?: string; reason?: string } | null;
 };
 
 export type Tenant = {
@@ -38,6 +40,8 @@ export type Tenant = {
   defaultStoreId: number | null;
   /** stores whose plan lapsed or that a platform admin suspended – readable, not writable */
   readOnly: Set<number>;
+  /** support: a platform admin currently seeing a store as one of its roles (their own rights are set aside meanwhile) */
+  viewingAs?: { storeId: number; role: StoreRole; until: string };
 };
 
 /** A relationship value (id, "12", { id }) as a number, or null. */
@@ -110,6 +114,16 @@ export async function resolveTenant(payload: Payload, user: TenantUser | null | 
       .catch(() => ({ docs: [] as unknown[] }));
     for (const s of stores.docs as { id: number; status?: string; subscriptionStatus?: string }[])
       if (["suspended", "closed"].includes(String(s.status)) || ["expired", "suspended"].includes(String(s.subscriptionStatus))) readOnly.add(Number(s.id));
+  }
+
+  // Support "view as": for a while, a platform admin has exactly that role in that one store – nothing more
+  const sv = user.supportView;
+  const svStore = storeIdOf(sv?.store);
+  if (platformAdmin && sv && svStore != null && RANK[sv.role as StoreRole] && Date.parse(String(sv.until)) > Date.now()) {
+    const role = sv.role as StoreRole;
+    const store = (await payload.findByID({ collection: "stores" as never, id: svStore, depth: 0, overrideAccess: true, ...(req ? { req } : {}) }).catch(() => null)) as { status?: string; subscriptionStatus?: string } | null;
+    const ro = new Set<number>(store && (["suspended", "closed"].includes(String(store.status)) || ["expired", "suspended"].includes(String(store.subscriptionStatus))) ? [svStore] : []);
+    return { userId, platformAdmin: false, roles: new Map([[svStore, role]]), activeStoreId: svStore, defaultStoreId, readOnly: ro, viewingAs: { storeId: svStore, role, until: String(sv.until) } };
   }
 
   const current = storeIdOf(user.currentStore);

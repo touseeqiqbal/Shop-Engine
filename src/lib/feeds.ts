@@ -7,7 +7,8 @@ import { isCmsConfigured } from "@/lib/db/config";
 import { currentStoreId } from "@/lib/tenant";
 import { getStoreLocale } from "@/lib/store-locale";
 import type { CatalogProduct } from "@/lib/types";
-import { effectivePrice } from "@/lib/utils";
+import { canOrder, effectivePrice, isPreorder } from "@/lib/utils";
+import { log } from "@/lib/log";
 
 /**
  * Product feed items for Google Merchant Center, Meta and TikTok – built from the live catalog
@@ -40,7 +41,7 @@ const feedSettingsCached = unstable_cache(
       };
     } catch (e) {
       // never fall back to the defaults (that would switch disabled feeds back on): keep the last good value
-      console.error("[feeds] settings could not be loaded:", e);
+      log.error("feeds.settings_unavailable", e);
       throw e;
     }
   },
@@ -58,7 +59,9 @@ export type FeedItem = {
   link: string;
   image: string;
   extraImages: string[];
-  availability: "in_stock" | "out_of_stock";
+  availability: "in_stock" | "out_of_stock" | "preorder" | "backorder";
+  /** pre-orders: when it ships (ISO) */
+  availabilityDate: string | null;
   condition: "new" | "used" | "refurbished";
   price: number;
   salePrice: number | null;
@@ -96,7 +99,7 @@ export async function feedItems(channel: FeedChannel): Promise<FeedItem[] | null
   if (!s[channel]) return null;
   const baseShipping = s.shippingPrice ?? store.defaultDeliveryCharge;
   const listed = (products as CatalogProduct[])
-    .filter((p) => !p.priceOnRequest && p.images.length && (s.includeOutOfStock || p.stock > 0))
+    .filter((p) => !p.priceOnRequest && p.images.length && (s.includeOutOfStock || canOrder(p)))
     .filter((p) => !s.excludeProducts.includes(p.id) && !s.excludeCategories.includes(p.categoryId) && !s.excludeCategories.includes(p.topCategoryId));
   // descriptions are cached per product (the catalogue cache leaves them out)
   const descriptions = new Map(await Promise.all(listed.map(async (p) => [p.id, await getProductDescription(p.id).catch(() => "")] as const)));
@@ -114,7 +117,8 @@ export async function feedItems(channel: FeedChannel): Promise<FeedItem[] | null
         link: absoluteUrl(p.url),
         image: feedImage(p.images[0]),
         extraImages: p.images.slice(1, 10).map(feedImage),
-        availability: p.stock > 0 ? "in_stock" : "out_of_stock",
+        availability: isPreorder(p) ? "preorder" : p.stock > 0 ? "in_stock" : p.backorders === "backorder" ? "backorder" : "out_of_stock",
+        availabilityDate: isPreorder(p) && p.releaseDate && Date.parse(p.releaseDate) > Date.now() ? new Date(p.releaseDate).toISOString() : null,
         condition: CONDITION[p.condition ?? "new"] ?? "new",
         price,
         salePrice: sale < price ? sale : null,
@@ -147,6 +151,7 @@ export function toGoogleXml(items: FeedItem[], title: string, storeName: string)
 <g:image_link>${esc(i.image)}</g:image_link>
 ${i.extraImages.map((x) => `<g:additional_image_link>${esc(x)}</g:additional_image_link>`).join("\n")}
 <g:availability>${i.availability}</g:availability>
+${i.availabilityDate ? `<g:availability_date>${i.availabilityDate}</g:availability_date>` : ""}
 <g:condition>${i.condition}</g:condition>
 <g:price>${money(i.price, i.currency)}</g:price>
 ${i.salePrice != null ? `<g:sale_price>${money(i.salePrice, i.currency)}</g:sale_price>` : ""}
@@ -178,7 +183,7 @@ export function toTikTokCsv(items: FeedItem[]) {
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const lines = items.map((i) =>
-    [i.id, i.title, i.description, i.availability.replace("_", " "), i.condition, money(i.price, i.currency), i.salePrice != null ? money(i.salePrice, i.currency) : "", i.link, i.image, i.extraImages.join(","), i.brand, i.googleCategory, i.productType, i.inventory].map(cell).join(",")
+    [i.id, i.title, i.description, i.availability === "backorder" ? "available for order" : i.availability.replace("_", " "), i.condition, money(i.price, i.currency), i.salePrice != null ? money(i.salePrice, i.currency) : "", i.link, i.image, i.extraImages.join(","), i.brand, i.googleCategory, i.productType, i.inventory].map(cell).join(",")
   );
   return [cols.join(","), ...lines].join("\n");
 }

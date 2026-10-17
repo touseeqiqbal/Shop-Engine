@@ -6,7 +6,7 @@ import { m as motion } from "framer-motion";
 import { GitCompareArrows, Plus, ShoppingBag, Trash2, X } from "lucide-react";
 import type { CompareProduct } from "@/app/api/products/route";
 import type { CatalogProduct } from "@/lib/types";
-import { cn, conditionMeta, stockLabel } from "@/lib/utils";
+import { availabilityLabel, cn, conditionMeta } from "@/lib/utils";
 import { Price } from "@/components/ui/price";
 import { Stars } from "@/components/ui/stars";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -77,10 +77,10 @@ export function CompareView() {
       },
       {
         label: "Availability",
-        values: products.map((p) => stockLabel(p.stock).label),
+        values: products.map((p) => availabilityLabel(p).label),
         render: (p) => {
-          const s = stockLabel(p.stock);
-          return <span className={cn("font-medium", s.tone === "rose" ? "text-rose-400" : s.tone === "amber" ? "text-amber-400" : "text-emerald-400")}>{s.label}</span>;
+          const s = availabilityLabel(p);
+          return <span className={cn("font-medium", s.tone === "rose" ? "text-rose-400" : s.tone === "amber" ? "text-amber-400" : s.tone === "violet" ? "text-violet-300" : "text-emerald-400")}>{s.label}</span>;
         },
       },
       { label: "Warranty", values: products.map((p) => p.warranty || null) },

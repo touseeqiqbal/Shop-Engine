@@ -190,7 +190,10 @@ const validateProduct: CollectionBeforeChangeHook = ({ data, originalDoc, contex
   const active = v<string>("status") === "active";
   if (was != null && Number(was) > 0 && Number(was) <= price) errors.push({ path: "compareAtPrice", message: "The “Was price” must be higher than the price (or leave it empty)." });
   if (active && !v<boolean>("priceOnRequest") && price <= 0) errors.push({ path: "price", message: "A product on the store needs a price (or tick “Price on request”)." });
-  if (data.stock !== undefined && Number(data.stock) < 0) errors.push({ path: "stock", message: "Stock can't be below 0." });
+  // below 0 = units owed to customers: only for products that keep selling when sold out (pre-orders / backorders)
+  const keepsSelling = ["backorder", "preorder"].includes(String(v<string>("backorders"))) && !v<boolean>("trackUnits");
+  if (data.stock !== undefined && Number(data.stock) < 0 && !keepsSelling)
+    errors.push({ path: "stock", message: `Stock is ${Number(data.stock)}: ${-Number(data.stock)} sold beyond the stock are still owed to customers. Add stock first, or keep “When sold out” on pre-order / keep selling.` });
   const images = v<unknown[] | null>("images");
   if (active && (!Array.isArray(images) || images.length === 0)) errors.push({ path: "images", message: "Add at least one photo before putting the product on the store." });
   const upgrades = (v<{ price?: number; group?: string; label?: string }[] | null>("upgrades") ?? []);
@@ -255,6 +258,15 @@ const refuseDeleteInUse =
         409
       );
   };
+
+/** Stock is 0 or more – below 0 (units owed to customers) only for products that keep selling when sold out. */
+const stockValue = (v: unknown, { data }: { data?: Record<string, unknown> }) => {
+  if (v == null || v === "") return true;
+  if (typeof v !== "number" || !Number.isFinite(v)) return "Enter a number.";
+  if (v >= 0) return true;
+  const owedOk = (data?.backorders === "backorder" || data?.backorders === "preorder") && !data?.trackUnits;
+  return owedOk ? true : `Stock is ${v}: ${-v} sold beyond the stock are still owed to customers. Add stock first, or keep “When sold out” on pre-order / keep selling.`;
+};
 
 /** Keeps `stockStatus` in sync so the product list can be filtered by it (Inventory view). */
 const setStockStatus: CollectionBeforeChangeHook = async ({ data, originalDoc, operation, req }) => {
@@ -496,6 +508,11 @@ export const Products: CollectionConfig = {
               { name: "costPrice", type: "number", min: 0, access: { read: storeRoleField("store_owner"), update: storeRoleField("store_owner"), create: storeRoleField("store_owner") }, label: "Your cost", admin: { width: "33%", description: "What you paid. Only owners see this. Never shown to customers." } },
             ] },
             { name: "priceOnRequest", type: "checkbox", label: "Price on request (wholesale lot – can't be bought online)" },
+            { name: "taxClass", type: "select", defaultValue: "standard", label: "Tax", options: [
+              { label: "Normal rate", value: "standard" },
+              { label: "Reduced rate", value: "reduced" },
+              { label: "No tax (exempt)", value: "exempt" },
+            ], admin: { description: "Uses the rates in Settings → Delivery & payments → Tax (only when the store charges tax)." } },
             { type: "row", fields: [
               { name: "sku", type: "text", required: true, index: true, label: "SKU (your stock code)", hooks: {
                   // left empty → made from the product name (e.g. P-LOGITECH-M185-7K2Q); the column stays required
@@ -505,10 +522,21 @@ export const Products: CollectionConfig = {
                 // empty is fine here – the hook above fills it in before saving; unique within the store
                 validate: async (v: unknown, opts: unknown) => (v == null || typeof v === "string" ? uniqueInStore("sku", "Another product in this store already has this SKU.")(v, opts as never) : "Enter a code or leave it empty."),
                 admin: { width: "34%", description: "Leave empty and one is made for you." } },
-              { name: "stock", type: "number", defaultValue: 0, min: 0, label: "Stock", hooks: { ...onCopy(0).hooks, afterRead: [liveStockWhenDraft] }, access: { read: storeRoleField("store_staff") }, admin: { width: "33%", description: "How many you have.", components: { Cell: "/payload/admin/products/Cells#ProductStockCell" } } },
+              { name: "stock", type: "number", defaultValue: 0, label: "Stock", validate: stockValue, hooks: { ...onCopy(0).hooks, afterRead: [liveStockWhenDraft] }, access: { read: storeRoleField("store_staff") }, admin: { width: "33%", description: "How many you have.", components: { Cell: "/payload/admin/products/Cells#ProductStockCell" } } },
               // the stock this screen showed – lets the server tell "unchanged" from "changed" (see guardStock)
               { name: "stockSeen", type: "number", virtual: true, admin: { hidden: true }, hooks: { afterRead: [liveStockWhenDraft] } },
               { name: "lowStockThreshold", type: "number", defaultValue: 2, min: 0, access: { read: storeRoleField("store_staff") }, label: "Warn me at", admin: { width: "33%", description: "You get a low-stock alert when stock reaches this number." } },
+            ] },
+            // pre-orders and backorders: keep taking orders when the stock runs out (online and staff orders – never at the
+            // shop counter); the stock then goes below 0 = units owed to customers
+            { type: "row", admin: { condition: (d) => !d?.trackUnits }, fields: [
+              { name: "backorders", type: "select", defaultValue: "no", label: "When sold out", options: [
+                { label: "Stop selling (out of stock)", value: "no" },
+                { label: "Keep selling – ships when back in stock", value: "backorder" },
+                { label: "Pre-order – not released yet", value: "preorder" },
+              ], admin: { width: "34%", description: "Laptops tracked by serial number always stop at 0." } },
+              { name: "releaseDate", type: "date", label: "Ships from", admin: { width: "33%", condition: (d) => d?.backorders === "preorder", date: { pickerAppearance: "dayOnly" }, description: "Shown as “Pre-order · ships from …”. Until then every order is a pre-order." } },
+              { name: "backorderNote", type: "text", label: "Note for shoppers", maxLength: 80, admin: { width: "33%", condition: (d) => d?.backorders === "backorder" || d?.backorders === "preorder", description: "e.g. Ships in 2–3 weeks. Optional." } },
             ] },
             { type: "row", fields: [
               // what a scanner reads at the counter (EAN / UPC / GTIN); optional, unique within the store

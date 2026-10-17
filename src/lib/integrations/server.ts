@@ -122,3 +122,40 @@ export async function removeConnection(payload: Payload, storeId: number, provid
 
 /** The store's own address for a provider's updates (shown in /cms to paste into the provider's dashboard). */
 export const webhookUrlFor = (origin: string, c: Pick<Connection, "provider" | "webhookKey">) => `${origin.replace(/\/+$/, "")}/api/integrations/${c.provider}/${c.webhookKey}`;
+
+/**
+ * One sync at a time per connection (housekeeping and "Sync now" could otherwise both take the same marketplace order
+ * off the stock): an atomic claim in the connection's own row, released when the sync ends – or after `ms` if the
+ * process died meanwhile. Returns false when another sync holds it.
+ */
+export async function claimSync(payload: Payload, connectionId: number, ms = 15 * 60_000): Promise<boolean> {
+  const [{ conn }, { sql }] = await Promise.all([import("../../payload/stock"), import("@payloadcms/db-postgres")]);
+  const now = Date.now();
+  const { rows } = await (await conn(payload)).execute(sql`
+    UPDATE "payload"."cms_integrations"
+    SET "state" = jsonb_set(COALESCE("state", '{}'::jsonb), '{syncLockUntil}', to_jsonb(${now + ms}::bigint))
+    WHERE "id" = ${connectionId} AND COALESCE(("state"->>'syncLockUntil')::bigint, 0) < ${now}
+    RETURNING "id"`);
+  return rows.length > 0;
+}
+
+export async function releaseSync(payload: Payload, connectionId: number): Promise<void> {
+  const [{ conn }, { sql }] = await Promise.all([import("../../payload/stock"), import("@payloadcms/db-postgres")]);
+  await (await conn(payload)).execute(sql`UPDATE "payload"."cms_integrations" SET "state" = COALESCE("state", '{}'::jsonb) - 'syncLockUntil' WHERE "id" = ${connectionId}`);
+}
+
+/** Runs a connection's periodic sync once (housekeeping or "Sync now") and remembers when and what it did. */
+export async function runSync(payload: Payload, c: Connection, sync: (ctx: { payload: Payload; connection: Connection }) => Promise<string | null>): Promise<{ ran: boolean; summary: string | null; error?: string }> {
+  if (!(await claimSync(payload, c.id))) return { ran: false, summary: null };
+  try {
+    const summary = await sync({ payload, connection: c });
+    await rememberForConnection(payload, c, { state: { lastSyncAt: new Date().toISOString(), lastSync: summary ?? "Nothing to change." }, lastError: null });
+    return { ran: true, summary };
+  } catch (e) {
+    const error = String((e as Error)?.message ?? e).slice(0, 500);
+    await rememberForConnection(payload, c, { state: { lastSyncAt: new Date().toISOString(), lastSync: `Failed: ${error}` }, lastError: error }).catch(() => undefined);
+    return { ran: true, summary: null, error };
+  } finally {
+    await releaseSync(payload, c.id).catch(() => undefined);
+  }
+}

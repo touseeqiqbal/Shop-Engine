@@ -4,7 +4,7 @@ import { Lock } from "lucide-react";
 import { CheckoutForm, type CheckoutPrefill } from "@/components/checkout/checkout-form";
 import { ConfirmEmailNotice } from "@/components/account/auth-forms";
 import { emailRequiredAtCheckout, getSessionUser, getUserProfile, mustConfirmEmailToOrder } from "@/lib/auth";
-import { isDatabaseConfigured } from "@/lib/db/config";
+import { isCmsConfigured, isDatabaseConfigured } from "@/lib/db/config";
 import { getStoreSettings } from "@/lib/repo/catalog";
 import { pageMetadata } from "@/lib/seo";
 import { getSiteInfo } from "@/lib/repo/site-content";
@@ -12,6 +12,21 @@ import type { SavedAddress } from "@/lib/types";
 import { getStoreLocale } from "@/lib/store-locale";
 import { deliveryArea } from "@/lib/locale";
 import { checkoutMethods } from "@/lib/payments/methods";
+import { payloadClient } from "@/lib/cms/catalog-source";
+import { getCurrentStore } from "@/lib/tenant";
+import { log } from "@/lib/log";
+
+/** The gift card box shows only in stores that have a card that can pay. */
+async function giftCardsOffered(): Promise<boolean> {
+  if (!isCmsConfigured) return false;
+  try {
+    const [{ storeHasGiftCards }, store] = await Promise.all([import("@/payload/gift-cards"), getCurrentStore()]);
+    return await storeHasGiftCards(await payloadClient(), store?.id ?? null);
+  } catch (e) {
+    log.error("checkout.gift_cards_check_failed", e);
+    return false;
+  }
+}
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +45,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function CheckoutPage() {
-  const [settings, loc] = await Promise.all([getStoreSettings(), getStoreLocale()]);
+  const [settings, loc, giftCards] = await Promise.all([getStoreSettings(), getStoreLocale(), giftCardsOffered()]);
   let prefill: CheckoutPrefill | null = null;
   let addresses: SavedAddress[] = [];
   let accountMode: "remote" | "local" | "none" = isDatabaseConfigured ? "none" : "local";
@@ -69,7 +84,7 @@ export default async function CheckoutPage() {
       {confirmFirst && user ? (
         <ConfirmEmailNotice email={user.email} text="Confirm your email to check out with your account – open the link we sent you, then come back to this page. Your cart is kept." />
       ) : (
-        <CheckoutForm settings={settings} prefill={prefill} savedAddresses={addresses} accountMode={accountMode} emailRequired={emailRequiredAtCheckout()} />
+        <CheckoutForm settings={settings} prefill={prefill} savedAddresses={addresses} accountMode={accountMode} emailRequired={emailRequiredAtCheckout()} giftCards={giftCards} />
       )}
     </div>
   );

@@ -5,7 +5,7 @@ import { toast } from "../ui/toast";
 import { useAdminDates, useAdminLocale, useAdminMoney, useStoreName } from "../ui/store-context";
 import { NEXT_STEP, ORDER_STATUS, PAYMENT_STATUS, intlPhone, timeAgo } from "./status";
 import { cityLine, paymentLabel } from "@/lib/order-display";
-import { PROCEED_STATUSES, amountToCollect, creditedAdvance, paidOnDelivery, paymentBlocksShipping } from "@/lib/order-money";
+import { PROCEED_STATUSES, amountToCollect, creditedAdvance, paidOnDelivery, paymentBlocksShipping, taxLines } from "@/lib/order-money";
 import { formatMoney, type Money } from "@/lib/money";
 import { integrationInfo, isPaymentIntegration } from "@/lib/integrations/catalog";
 
@@ -21,11 +21,16 @@ type Order = {
   status: string;
   placedAt?: string;
   customer?: { name?: string; phone?: string; email?: string; city?: string; address?: string; landmark?: string; region?: string; postalCode?: string; country?: string };
-  items?: { title?: string; qty?: number; unitPrice?: number; serials?: string }[];
+  items?: { title?: string; qty?: number; unitPrice?: number; serials?: string; availability?: "preorder" | "backorder" | null; owedQty?: number | null }[];
   subtotal?: number;
   discount?: number;
   deliveryCharge?: number;
+  shippingMethod?: string | null;
+  giftCardCode?: string | null;
+  giftCardAmount?: number | null;
   taxTotal?: number;
+  taxBreakdown?: { rate: number; base: number; tax: number }[] | null;
+  billing?: { name?: string | null; company?: string | null; taxId?: string | null; address?: string | null; city?: string | null; postalCode?: string | null } | null;
   total?: number;
   advancePaid?: number;
   couponCode?: string;
@@ -612,6 +617,18 @@ export function OrderPanel() {
         </div>
       )}
 
+      {(o.items ?? []).some((it) => it.availability) && !closed && (
+        // sold before release or beyond the stock: these can't ship until the stock arrives
+        <p className="urko-opanel__collect" role="note">
+          ⏳ Ships later:{" "}
+          {(o.items ?? [])
+            .filter((it) => it.availability)
+            .map((it) => `${it.owedQty ?? it.qty} × ${it.title ?? "item"} (${it.availability === "preorder" ? "pre-order" : "backorder"})`)
+            .join(", ")}
+          . Ship when the stock arrives – or send the rest first in a separate parcel.
+        </p>
+      )}
+
       <div className="urko-opanel__grid">
         <div className="urko-card">
           <h3>Customer</h3>
@@ -631,6 +648,15 @@ export function OrderPanel() {
             </p>
           )}
           {o.confirmation?.confirmedAt && <p className="urko-opanel__risk">✓ Confirmed by customer ({o.confirmation.via})</p>}
+          {o.billing?.name && (
+            // the invoice is made out to someone else (a company with a VAT / tax number)
+            <p className="urko-opanel__risk">
+              <strong>Invoice to:</strong> {[o.billing.company, o.billing.name].filter(Boolean).join(" – ")}
+              {o.billing.taxId ? ` · VAT / tax no. ${o.billing.taxId}` : ""}
+              <br />
+              {[o.billing.address, o.billing.city, o.billing.postalCode].filter(Boolean).join(", ")}
+            </p>
+          )}
           {phone && (
             <div className="urko-opanel__contact">
               <a className="urko-btn" href={`tel:${phone.replace(/[^\d+]/g, "")}`}>
@@ -661,18 +687,27 @@ export function OrderPanel() {
             )}
             <div>
               <dt>Delivery</dt>
-              <dd>{(o.deliveryCharge ?? 0) > 0 ? money(o.deliveryCharge ?? 0) : "Free"}</dd>
+              <dd>
+                {(o.deliveryCharge ?? 0) > 0 ? money(o.deliveryCharge ?? 0) : "Free"}
+                {o.shippingMethod ? ` · ${o.shippingMethod}` : ""}
+              </dd>
             </div>
-            {(o.taxTotal ?? 0) > 0 && (
-              <div>
-                <dt>Tax (included in total)</dt>
-                <dd>{money(o.taxTotal ?? 0)}</dd>
+            {taxLines(o).lines.map((t) => (
+              <div key={t.label}>
+                <dt>{taxLines(o).added ? t.label : `${t.label} (in the total)`}</dt>
+                <dd>{money(t.amount)}</dd>
               </div>
-            )}
+            ))}
             <div className="is-total">
               <dt>Total</dt>
               <dd>{money(total)}</dd>
             </div>
+            {(o.giftCardAmount ?? 0) > 0 && (
+              <div>
+                <dt>Gift card{o.giftCardCode ? ` ••••${o.giftCardCode.slice(-4)}` : ""}</dt>
+                <dd>− {money(o.giftCardAmount ?? 0)}</dd>
+              </div>
+            )}
             {advance > 0 && (
               <div>
                 <dt>Advance paid</dt>

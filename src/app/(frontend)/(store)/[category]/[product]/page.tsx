@@ -22,7 +22,6 @@ import {
   CompatibilityList, ConditionPanel, SpecsTable, TrustStrip, WarrantyDelivery,
 } from "@/components/product-detail/sections";
 import {
-  getAllProducts,
   getApprovedReviews,
   getBrands,
   getCategories,
@@ -47,14 +46,11 @@ import { countryInText, type StoreLocale } from "@/lib/locale";
 import { formatMoney } from "@/lib/money";
 import { getStoreLocale } from "@/lib/store-locale";
 
-export const revalidate = 300;
+// Rendered per request (the store comes from the address – a cached page must never reach another store's visitors);
+// the data behind it stays cached per store. No build-time list: products, brands and posts added later work at once.
+export const dynamic = "force-dynamic";
 
 type Params = Promise<{ category: string; product: string }>;
-
-export async function generateStaticParams() {
-  const products = await getAllProducts();
-  return products.map((p) => ({ category: p.topCategorySlug, product: p.slug }));
-}
 
 /** Resolves the product for this URL; redirects mismatched categories, 404s unknown slugs. */
 async function resolveProduct(params: Params): Promise<CatalogProduct> {

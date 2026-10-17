@@ -5,6 +5,7 @@ import { getCategoryTree, getProductBySlug } from "@/lib/repo/catalog";
 import { CHROME_TAG } from "@/payload/revalidate";
 import { DEFAULT_CHROME, toWaNumber, type Chrome, type NavLink } from "./chrome-types";
 import { currentStoreId, getCurrentStore, runInStore } from "@/lib/tenant";
+import { log } from "@/lib/log";
 
 /**
  * Loads the "online store" settings (theme, announcement, header, footer, menus, WhatsApp button) from Payload.
@@ -172,7 +173,7 @@ const chromeCached = unstable_cache(
       return await runInStore(storeId, () => loadFromPayload(storeId));
     } catch (e) {
       // Never break the storefront because the CMS is unavailable – fall back to the built-in design.
-      console.error("[chrome] Payload unavailable, using defaults:", e);
+      log.error("chrome.cms_unavailable_using_defaults", e);
       return DEFAULT_CHROME;
     }
   },

@@ -23,7 +23,12 @@ const subscribers: Endpoint = {
     const gate = await storeGate(req, "store_manager");
     if (gate instanceof Response) return gate;
     const store = gate.store!;
-    const people = (await req.payload.find({ collection: "users", where: { and: [{ marketingConsent: { in: [store] } }, { role: { equals: "customer" } }, { blocked: { not_equals: true } }] }, limit: 0, pagination: false, depth: 0, overrideAccess: true, req })).docs as unknown as Doc[];
+    // …minus anyone who unsubscribed from this store since (Marketing → Unsubscribed)
+    const { optedOut } = await import("../optouts");
+    const unsubscribed = await optedOut(req.payload, store);
+    const people = ((await req.payload.find({ collection: "users", where: { and: [{ marketingConsent: { in: [store] } }, { role: { equals: "customer" } }, { blocked: { not_equals: true } }] }, limit: 0, pagination: false, depth: 0, overrideAccess: true, req })).docs as unknown as Doc[]).filter(
+      (p) => !unsubscribed.has(String(p.email ?? "").toLowerCase()) && !(p.phone && unsubscribed.has(String(p.phone))),
+    );
     // when they agreed: their latest order at this store with the box ticked
     const latest = new Map<string, string>();
     if (people.length) {

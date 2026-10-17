@@ -43,6 +43,9 @@ export interface CheckoutMethod {
   icon: PaymentIcon;
 }
 
+/** A gift card that pays the whole order (checkout sends this id; the card's code goes with it). */
+export const GIFT_CARD_METHOD: CheckoutMethod = { id: "gift-card", label: "Gift card", kind: "manual", due: "upfront", note: "", proof: false, account: [], icon: "other" };
+
 /** A store's own method (/cms → Settings → Payments → Other payment methods). */
 export interface ManualMethodSettings {
   id: string;

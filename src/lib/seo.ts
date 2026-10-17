@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { absoluteUrl, site } from "./site";
 import { DEFAULT_SITE_INFO, socialLinks, type SiteInfo } from "./site-info";
 import type { BlogPost, CatalogProduct, FaqItem, Review } from "./types";
-import { effectivePrice } from "./utils";
+import { effectivePrice, isPreorder } from "./utils";
 import { DEFAULT_LOCALE, countryName, ogLocale, type StoreLocale } from "./locale";
 import { currencySymbol } from "./money";
 import { checkoutMethods } from "@/lib/payments/methods";
@@ -176,6 +176,13 @@ export function breadcrumbJsonLd(items: { name: string; href: string }[]) {
   };
 }
 
+/** schema.org availability – pre-orders and keep-selling products (Products → When sold out) included */
+function schemaAvailability(p: Pick<CatalogProduct, "stock" | "backorders" | "releaseDate" | "backorderNote">): string {
+  if (isPreorder(p)) return "https://schema.org/PreOrder";
+  if (p.stock > 0) return "https://schema.org/InStock";
+  return p.backorders === "backorder" ? "https://schema.org/BackOrder" : "https://schema.org/OutOfStock";
+}
+
 const CONDITION_SCHEMA: Record<string, string> = {
   new: "https://schema.org/NewCondition",
   "open-box": "https://schema.org/NewCondition",
@@ -210,7 +217,8 @@ export function productJsonLd(p: CatalogProduct, reviews: Review[] = [], extras:
         lowPrice: Math.min(...p.variants.map(effectivePrice)),
         highPrice: Math.max(...p.variants.map(effectivePrice)),
         offerCount: p.variants.length,
-        availability: p.variants.some((v) => v.stock > 0) ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+        // the best of its options: one in stock, else one taking pre-orders / backorders
+        availability: schemaAvailability(p.variants.find((v) => v.stock > 0) ?? p.variants.find((v) => v.backorders) ?? p.variants[0]),
         offers: p.variants.map((v) => ({
           "@type": "Offer",
           sku: v.sku,
@@ -219,7 +227,7 @@ export function productJsonLd(p: CatalogProduct, reviews: Review[] = [], extras:
           priceCurrency: loc.currency,
           price: effectivePrice(v),
           priceValidUntil,
-          availability: v.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+          availability: schemaAvailability(v),
           itemCondition: CONDITION_SCHEMA[v.condition ?? p.condition ?? "new"],
           seller: { "@id": STORE_ID },
         })),
@@ -230,7 +238,7 @@ export function productJsonLd(p: CatalogProduct, reviews: Review[] = [], extras:
       priceCurrency: loc.currency,
       price: effectivePrice(p),
       priceValidUntil,
-      availability: p.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+      availability: schemaAvailability(p),
       itemCondition: CONDITION_SCHEMA[p.condition ?? "new"],
       seller: { "@id": STORE_ID },
       shippingDetails: {

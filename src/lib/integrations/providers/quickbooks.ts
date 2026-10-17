@@ -77,6 +77,29 @@ export function receiptLines(o: OrderForIntegrations, item: string) {
   return lines;
 }
 
+/** A refund made through ShopEngine → a RefundReceipt paid from the company's first bank account (never twice). */
+async function bookRefund(ctx: Ctx, d: Record<string, unknown>) {
+  const amount = Number(d.amount);
+  const orderId = Number(d.orderId);
+  if (!(amount > 0) || !orderId || String(d.status) === "failed") return;
+  const o = await loadOrder(ctx.payload, orderId);
+  if (!o || o.storeId !== ctx.connection.store) return;
+  const number = `R${String(d.refundId ?? `${orderId}-${amount}`).replace(/[^A-Za-z0-9-]/g, "").slice(-20)}`.slice(0, 21);
+  if ((await query<{ RefundReceipt?: unknown[] }>(ctx, `select Id from RefundReceipt where DocNumber = '${quote(number)}'`)).RefundReceipt?.length) return;
+  const bank = (await query<{ Account?: { Id: string }[] }>(ctx, "select Id from Account where AccountType = 'Bank' maxresults 1")).Account?.[0]?.Id;
+  if (!bank) throw new IntegrationError("QuickBooks: add a bank account to the company so refunds can be recorded.", 400);
+  await qbo(ctx, "/refundreceipt", {
+    method: "POST",
+    body: {
+      TxnDate: new Date().toISOString().slice(0, 10),
+      DocNumber: number,
+      PrivateNote: `Refund for ShopEngine order ${o.orderNumber}`.slice(0, 4000),
+      DepositToAccountRef: { value: bank },
+      Line: [{ Amount: money(amount), DetailType: "SalesItemLineDetail", Description: `Refund – order ${o.orderNumber}`, SalesItemLineDetail: { ItemRef: { value: await itemId(ctx) }, Qty: 1, UnitPrice: money(amount) } }],
+    },
+  });
+}
+
 const moneyIn = (type: string, d: Record<string, unknown>) => type === "order.paid" || (type === "order.updated" && d.status === "delivered");
 
 const impl: ProviderImpl = {
@@ -87,6 +110,7 @@ const impl: ProviderImpl = {
     return { ok: true, message: `Connected to QuickBooks – ${name}.`, state: { account: name } };
   },
   async onEvent(ctx, event) {
+    if (event.type === "refund.created") return bookRefund(ctx, event.data);
     if (!moneyIn(event.type, event.data)) return;
     const o = await loadOrder(ctx.payload, Number(event.data.id));
     if (!o || o.storeId !== ctx.connection.store || o.total <= 0) return;

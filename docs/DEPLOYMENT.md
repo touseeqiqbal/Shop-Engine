@@ -52,12 +52,17 @@ If `DATABASE_URL`, `PAYLOAD_SECRET`, `AUTH_SECRET` or the `S3_*` bucket variable
 | `SMS_WEBHOOK_URL` | SMS gateway for order messages. |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Cloudflare "are you human" check on checkout and forms. Set **both**, then **redeploy** (the site key is built into the pages). With only one of them the check is skipped and `/api/health` shows a warning. |
 | `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `NEXT_PUBLIC_SENTRY_ENVIRONMENT` | Error alerts (Sentry): `SENTRY_DSN` for the server, `NEXT_PUBLIC_SENTRY_DSN` for visitors' browsers (redeploy after setting it). |
+| `SENTRY_TRACES_SAMPLE_RATE`, `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` | Share of requests Sentry traces for speed (0–1, default 0.1). |
+| `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` | Readable stack traces in Sentry: with all three set, the build uploads source maps (and removes them from the site). |
+| `PLATFORM_ALERT_EMAILS` | Who at ShopEngine hears about failed plan payments and stores closed by their owner (comma-separated). Not set → every platform admin account. |
+| `SHOPPER_SESSION_DAYS` | How long shoppers stay signed in on a storefront (1–90 days, default 14). |
 | `CLIENT_IP_HEADER` | Only if Cloudflare's orange cloud (proxy) is on: set to `cf-connecting-ip`, so limits like "5 orders per 10 minutes" count real visitors, not Cloudflare. Leave unset otherwise. |
 | `NEXT_PUBLIC_GA_ID`, `NEXT_PUBLIC_META_PIXEL_ID`, `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION` … | Fallbacks only – normally set these in **Settings → Google & SEO** instead. |
 | `CRON_SECRET` | Lets an outside scheduler run the background jobs. Not needed – the site runs them itself. |
 | `HOUSEKEEPING`, `HOUSEKEEPING_MINUTES` | Background jobs (auto-cancel unconfirmed orders, reminders). Leave unset. With several copies of the site only one runs them at a time (database lock); `HOUSEKEEPING=off` turns them off on a copy completely. |
 | `TWO_FACTOR_REQUIRED` | Leave unset. `false` turns off forced 2-step verification – emergencies only. |
 | `PAYLOAD_CSRF_ORIGINS`, `DB_POOL_MAX`, `SKIP_MIGRATIONS` | Advanced – leave unset. |
+| `MIGRATE_DURING_BUILD` | `true` applies database changes during the build (the old way). Default: when the server starts (see §4). |
 
 ### Multi-store (ShopEngine)
 | Name | What it is for |
@@ -137,8 +142,9 @@ too (Railway passes service variables to builds), or canonical links will point 
 Some updates change the database (for example, adding a new field). You don't run anything by hand:
 
 1. **Before** pushing an update that includes a database change, make a fresh backup (see [BACKUP-RESTORE.md](BACKUP-RESTORE.md) → "Make a backup right now"). Your developer should tell you when an update contains one.
-2. Push the update. While Railway **builds** the new version it applies the database changes (`payload migrate`, using `DATABASE_BUILD_URL`), then prepares the pages. Changes only ever *add* things, so the old version keeps working until the new one replaces it. Anything still pending is applied when the new version starts.
-3. If a change fails, the **build fails**: Railway keeps the old version running and you'll see the failure in **Deployments**. Send the log to your developer.
+2. Push the update. Railway **builds** the new version without touching the database, then **starts** it: the new version applies the database changes first (Payload's pending migrations), then answers the health check, and only then does Railway switch visitors over. Changes only ever *add* things (CI checks this), so the old version keeps working meanwhile.
+3. If a change fails, the new version **doesn't start**: Railway keeps the old version running and you'll see the failure in **Deployments**. Send the log to your developer.
+   - Run several copies of the site? Deploy with one copy first (or set `MIGRATE_DURING_BUILD=true`, which applies the changes during the build instead – the previous behaviour).
 
 The command `npm run cms:migrate` does **not** work inside the live server (the tools aren't installed there) – and it isn't needed.
 

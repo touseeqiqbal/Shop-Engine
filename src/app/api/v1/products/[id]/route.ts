@@ -54,6 +54,14 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       if (compare != null && compare <= nextPrice) throw Object.assign(new Error("“compareAtPrice” must be higher than the price (or null to remove it)."), { status: 400 });
       await payload.update({ collection: "products", id: Number(p.id), data: { ...(price !== undefined ? { price } : {}), ...(compare !== undefined ? { compareAtPrice: compare } : {}) } as never, overrideAccess: true, req: r, context: { system: true } });
     }
+    // the store's activity log: who (which key) changed what
+    const changes = [
+      ...(stock != null && Number(p.stock) !== Math.floor(stock) ? [{ field: "stock", from: String(p.stock ?? ""), to: String(Math.floor(stock)) }] : []),
+      ...(price !== undefined && Number(p.price) !== price ? [{ field: "price", from: String(p.price ?? ""), to: String(price) }] : []),
+      ...(compare !== undefined && (p.compareAtPrice ?? null) !== compare ? [{ field: "compareAtPrice", from: String(p.compareAtPrice ?? ""), to: String(compare ?? "") }] : []),
+    ];
+    const { logActivity } = await import("@/payload/collections/history");
+    await logActivity(r, { action: "update", entity: "products", entityLabel: "Product", docId: String(p.id), title: String(p.title ?? p.id), changes, storeId: caller.storeId, actor: { id: null, email: `API key: ${caller.keyName}` } });
     await commitTransaction(r);
   } catch (e) {
     await killTransaction(r);

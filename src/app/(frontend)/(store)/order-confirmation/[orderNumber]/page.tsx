@@ -12,7 +12,7 @@ import { deliveryEstimate } from "@/lib/cities";
 import { LAST_ORDER_COOKIE, cookieMatchesOrder } from "@/lib/order-cookie";
 import { ORDER_NUMBER_RE } from "@/lib/order-number";
 import { cityLine, PAYMENT_STATUS_LABEL, paymentAccountLines, paymentLabel } from "@/lib/order-display";
-import { paidOnDelivery } from "@/lib/order-money";
+import { paidOnDelivery, taxLines } from "@/lib/order-money";
 import { findCheckoutMethod } from "@/lib/payments/methods";
 import { integrationInfo, isPaymentIntegration, PAYMENT_PAGE_MINUTES } from "@/lib/integrations/catalog";
 import { getStoreSettings } from "@/lib/repo/catalog";
@@ -25,6 +25,7 @@ import { moneyFormatter } from "@/lib/money";
 import { getStoreLocale } from "@/lib/store-locale";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { payNow } from "./pay-action";
+import { shipsLater } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -81,6 +82,10 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
   const online = order.paymentMethod === "card" || isPaymentIntegration(order.paymentMethod);
   const providerName = order.paymentMethod === "card" ? null : (integrationInfo(order.paymentMethod)?.payment?.label ?? integrationInfo(order.paymentMethod)?.name ?? null);
   const what = providerName ? `${providerName} payment` : "card payment";
+  // what a gift card paid, and what is left to pay (by card, transfer or on delivery)
+  const giftPaid = order.giftCardAmount ?? 0;
+  const tax = taxLines(order);
+  const due = Math.max(0, order.total - giftPaid);
   const waText = awaitingCode
     ? `Hi, I have a question about my order ${order.orderNumber} (${money(order.total)}).`
     : `Hi, I just placed order ${order.orderNumber}, total ${money(order.total)}, please confirm.`;
@@ -107,7 +112,7 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
               )}
               <form action={payNow.bind(null, order.orderNumber)}>
                 <button className="btn btn-primary btn-lg">
-                  Pay {money(order.total)} {providerName ? `with ${integrationInfo(order.paymentMethod)?.name}` : "by card"}
+                  Pay {money(due)} {providerName ? `with ${integrationInfo(order.paymentMethod)?.name}` : "by card"}
                 </button>
               </form>
             </div>
@@ -171,6 +176,7 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
                   <p className="text-xs text-muted">
                     Qty {i.qty} × {money(i.unitPrice)}
                   </p>
+                  {i.availability && <p className="text-xs font-medium text-violet-300">{shipsLater(i)}</p>}
                 </div>
                 <p className="text-sm font-semibold tabular-nums">{money(i.unitPrice * i.qty)}</p>
               </li>
@@ -179,15 +185,23 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
           <dl className="mt-2 space-y-2 border-t border-border pt-4 text-sm">
             <Row label="Subtotal" value={money(order.subtotal)} />
             {order.discount > 0 && <Row label={`Discount${order.couponCode ? ` (${order.couponCode})` : ""}`} value={`− ${money(order.discount)}`} accent />}
-            <Row label="Delivery" value={order.deliveryCharge ? money(order.deliveryCharge) : "FREE"} />
+            <Row label={order.shippingMethod ? `Delivery (${order.shippingMethod})` : "Delivery"} value={order.deliveryCharge ? money(order.deliveryCharge) : "FREE"} />
+            {tax.added && tax.lines.map((t) => <Row key={t.label} label={t.label} value={money(t.amount)} />)}
             <div className="flex items-baseline justify-between border-t border-border pt-3">
               <dt className="font-semibold">Total</dt>
               <dd className="font-display text-2xl font-extrabold tabular-nums">{money(order.total)}</dd>
             </div>
+            {!tax.added && tax.lines.map((t) => <Row key={t.label} label={t.label} value={money(t.amount)} />)}
+            {giftPaid > 0 && (
+              <>
+                <Row label={`Gift card${order.giftCardCode ? ` ••••${order.giftCardCode.slice(-4)}` : ""}`} value={`− ${money(giftPaid)}`} accent />
+                {due > 0 && <Row label="Left to pay" value={money(due)} />}
+              </>
+            )}
             {order.advancePaid ? (
               <>
                 <Row label={order.paymentStatus === "partial" ? "Advance paid" : "Advance (being checked)"} value={money(order.advancePaid)} accent />
-                <Row label="Due on delivery" value={money(Math.max(0, order.total - order.advancePaid))} />
+                <Row label="Due on delivery" value={money(Math.max(0, due - order.advancePaid))} />
               </>
             ) : null}
           </dl>
@@ -211,6 +225,14 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
               <br />
               {cityLine(order.customer, loc.country)}
             </p>
+            {order.billing && (
+              <p className="text-sm text-muted">
+                <span className="font-medium text-fg">Invoice to:</span> {[order.billing.company, order.billing.name].filter(Boolean).join(" – ")}
+                {order.billing.taxId ? ` · VAT / tax no. ${order.billing.taxId}` : ""}
+                <br />
+                {[order.billing.address, cityLine(order.billing, loc.country)].filter(Boolean).join(", ")}
+              </p>
+            )}
             <p className="flex items-center gap-2 rounded-xl bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">
               <CalendarClock className="size-4 shrink-0" aria-hidden="true" /> Estimated: {eta.label}
             </p>
@@ -225,7 +247,7 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
             </p>
             {paidOnDelivery(order) ? (
               <p className="text-sm text-muted">
-                Please keep <strong className="text-fg">{money(Math.max(0, order.total - (order.advancePaid ?? 0)))}</strong> ready {order.paymentMethod === "cod" ? "in cash when the rider arrives" : "when your order arrives"}
+                Please keep <strong className="text-fg">{money(Math.max(0, due - (order.advancePaid ?? 0)))}</strong> ready {order.paymentMethod === "cod" ? "in cash when the rider arrives" : "when your order arrives"}
                 {order.advancePaid && order.paymentStatus !== "partial" ? " (once we've confirmed your advance)" : ""}.
               </p>
             ) : accountLines.length === 0 ? null : (
@@ -233,7 +255,7 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
                 <p className="text-sm text-muted">
                   {order.paymentScreenshotUrl
                     ? "We received your payment screenshot and will verify it shortly."
-                    : `Please send ${money(order.total)} to the account below and share the screenshot on WhatsApp.`}
+                    : `Please send ${money(due)} to the account below and share the screenshot on WhatsApp.`}
                 </p>
                 <dl className="space-y-1 rounded-xl bg-surface-strong p-3 text-xs">
                   {accountLines.map((l) => (

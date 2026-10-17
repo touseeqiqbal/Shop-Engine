@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@payloadcms/ui";
-import { ConfigBackup } from "./ConfigBackup";
+import { ConfigBackup, StoreDataCard } from "./ConfigBackup";
 import { Icon } from "./ui/icons";
 import { ORDER_STATUS } from "./orders/status";
 import { useAdminLocale, useAdminMoney } from "./ui/store-context";
@@ -384,6 +384,7 @@ export function Dashboard() {
       )}
 
       <ConfigBackup />
+      <StoreDataCard />
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf
 import type { Order } from "@/lib/types";
 import type { SiteInfo } from "@/lib/site-info";
 import { cityLine, ORDER_STATUS_LABEL, PAYMENT_STATUS_LABEL, paymentLabel } from "@/lib/order-display";
-import { amountToCollect, creditedAdvance } from "@/lib/order-money";
+import { amountToCollect, creditedAdvance, taxLines } from "@/lib/order-money";
 import { DEFAULT_LOCALE, type StoreLocale } from "@/lib/locale";
 import { currencyDigits, formatMoney, roundMoney } from "@/lib/money";
 
@@ -125,13 +125,27 @@ export async function buildInvoicePdf(order: Order, site: SiteInfo, locale: Stor
   rule();
   y -= 20;
 
-  // ── bill to ──
-  text("BILL TO / DELIVER TO", M, 8, bold, MUTED);
-  y -= 14;
+  // ── bill to (the company on the invoice, when there is one) / deliver to ──
   const c = order.customer;
-  for (const l of [c.name, c.phone, c.email ?? "", ...wrap([c.address, c.landmark ? `(near ${c.landmark})` : "", cityLine(c, locale.country)].filter(Boolean).join(", "), font, 10, 300)].filter(Boolean)) {
+  const deliver = [c.name, c.phone, c.email ?? "", ...wrap([c.address, c.landmark ? `(near ${c.landmark})` : "", cityLine(c, locale.country)].filter(Boolean).join(", "), font, 10, 240)].filter(Boolean);
+  const b = order.billing;
+  const billTo = b ? [b.company ?? "", b.name, b.taxId ? `VAT / tax no. ${b.taxId}` : "", ...wrap([b.address, cityLine(b, locale.country)].filter(Boolean).join(", "), font, 10, 240)].filter(Boolean) : null;
+  const top = y;
+  text(billTo ? "BILL TO" : "BILL TO / DELIVER TO", M, 8, bold, MUTED);
+  y -= 14;
+  for (const l of billTo ?? deliver) {
     text(l, M, 10);
     y -= 13;
+  }
+  if (billTo) {
+    let dy = top;
+    page.drawText(pdfText("DELIVER TO"), { x: M + 280, y: dy, size: 8, font: bold, color: MUTED });
+    dy -= 14;
+    for (const l of deliver) {
+      page.drawText(pdfText(l), { x: M + 280, y: dy, size: 10, font, color: INK });
+      dy -= 13;
+    }
+    y = Math.min(y, dy);
   }
   y -= 12;
 
@@ -165,11 +179,17 @@ export async function buildInvoicePdf(order: Order, site: SiteInfo, locale: Stor
   newPageIfNeeded(140);
   const advance = creditedAdvance(order);
   const due = amountToCollect(order);
+  const tax = taxLines(order);
+  const taxRows = tax.lines.map((t) => [t.label, money(t.amount)] as [string, string]);
   const rows: [string, string, boolean?][] = [
     ["Subtotal", money(order.subtotal)],
     ...(order.discount ? ([[`Discount${order.couponCode ? ` (${order.couponCode})` : ""}`, `- ${money(order.discount)}`]] as [string, string][]) : []),
     ["Delivery", order.deliveryCharge ? money(order.deliveryCharge) : "Free"],
+    // tax added on top comes before the total; tax included in the prices is shown inside it, after
+    ...(tax.added ? taxRows : []),
     ["Total", money(order.total), true],
+    ...(tax.added ? [] : taxRows),
+    ...((order.giftCardAmount ?? 0) > 0 ? ([[`Gift card${order.giftCardCode ? ` ****${order.giftCardCode.slice(-4)}` : ""}`, `- ${money(order.giftCardAmount ?? 0)}`]] as [string, string][]) : []),
     ...(advance ? ([["Advance paid", `- ${money(advance)}`]] as [string, string][]) : []),
     [order.paymentStatus === "paid" ? "Paid" : order.paymentMethod === "cod" ? "To pay on delivery" : "Amount due", order.paymentStatus === "paid" ? money(order.total) : money(due), true],
   ];

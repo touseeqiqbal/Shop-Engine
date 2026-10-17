@@ -64,7 +64,7 @@ export async function parcelFor(payload: Payload, order: Doc, want: Map<number, 
   }
   const { amountToCollect } = await import("@/lib/order-money");
   const everythingLeft = num(order.total);
-  const cod = input.codAmount != null && Number.isFinite(input.codAmount) ? Math.max(0, input.codAmount) : amountToCollect({ paymentMethod: str(order.paymentMethod), paymentDue: str(order.paymentDue), paymentStatus: str(order.paymentStatus), total: everythingLeft, advancePaid: num(order.advancePaid) });
+  const cod = input.codAmount != null && Number.isFinite(input.codAmount) ? Math.max(0, input.codAmount) : amountToCollect({ paymentMethod: str(order.paymentMethod), paymentDue: str(order.paymentDue), paymentStatus: str(order.paymentStatus), total: everythingLeft, advancePaid: num(order.advancePaid), giftCardAmount: num(order.giftCardAmount) });
   const store = (await payload.findByID({ collection: "stores", id: relId(order.store), depth: 0, overrideAccess: true }).catch(() => null)) as unknown as Doc | null;
   return {
     orderId: Number(order.id),
@@ -208,13 +208,35 @@ export async function syncOne(payload: Payload, orderId: number, index: number):
   const { setShipmentStatus } = await import("@/payload/shipments");
   if (s.status === "shipped" && (t.status === "delivered" || t.status === "returned")) {
     const r = await setShipmentStatus(payload, undefined, order, index, t.status, patch, t.status === "delivered" ? `Delivered (reported by ${courier.name})` : `Returned by ${courier.name} (RTO)`);
+    if (r.ok && patch.codStatus === "remitted") await markCodPaid(payload, orderId, courier.name);
     return r.ok ? t.status : "unchanged";
   }
   const next = shipments.map((x, k) => (k === index ? { ...x, ...patch } : x));
   // out for delivery: the order says so too
   const moveOut = t.status === "out_for_delivery" && str(order.status) === "dispatched";
   await payload.update({ collection: "orders", id: orderId, data: { shipments: next, ...(moveOut ? { status: "out-for-delivery" } : {}) } as never, overrideAccess: true, context: { system: true, expectStatus: str(order.status), skipActivity: true } });
+  if (result === "remitted") await markCodPaid(payload, orderId, courier.name);
   return result;
+}
+
+/**
+ * The courier has paid out the cash it collected: once every cash-on-delivery parcel of a delivered order is paid out,
+ * the order is "Paid" (with a note) – no more checking courier statements by hand.
+ */
+export async function markCodPaid(payload: Payload, orderId: number, courierName: string): Promise<boolean> {
+  const order = (await payload.findByID({ collection: "orders", id: orderId, depth: 0, overrideAccess: true })) as unknown as Doc;
+  if (str(order.paymentDue) !== "on-delivery" || ["paid", "refunded", "partially-refunded"].includes(str(order.paymentStatus)) || str(order.status) !== "delivered") return false;
+  const cod = ((Array.isArray(order.shipments) ? order.shipments : []) as ShipmentRow[]).filter((x) => x.status === "delivered" && Number(x.codAmount) > 0);
+  if (!cod.length || cod.some((x) => x.codStatus !== "remitted")) return false;
+  const refs = cod.map((x) => x.codRemittanceRef).filter(Boolean).join(", ");
+  await payload.update({
+    collection: "orders",
+    id: orderId,
+    data: { paymentStatus: "paid", history: [{ status: "delivered", at: new Date().toISOString(), note: `Cash received from ${courierName}${refs ? ` (${refs})` : ""}` }] } as never,
+    overrideAccess: true,
+    context: { system: true, skipNotify: true, skipActivity: true },
+  });
+  return true;
 }
 
 /** Caches a courier's city list in its connection (refreshed daily). */

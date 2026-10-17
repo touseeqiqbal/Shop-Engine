@@ -20,13 +20,11 @@ import { readingTime } from "@/lib/utils";
 import { getStoreLocale } from "@/lib/store-locale";
 import { formatDate } from "@/lib/time";
 
-export const revalidate = 300;
+// Rendered per request (the store comes from the address – a cached page must never reach another store's visitors);
+// the data behind it stays cached per store. No build-time list: products, brands and posts added later work at once.
+export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ slug: string }> };
-
-export async function generateStaticParams() {
-  return (await getBlogPosts()).map((p) => ({ slug: p.slug }));
-}
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;

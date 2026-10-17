@@ -38,6 +38,8 @@ export interface OutgoingEmail {
   text?: string;
   replyTo?: string;
   from?: string;
+  /** extra headers, e.g. List-Unsubscribe on reminder emails */
+  headers?: Record<string, string>;
 }
 
 const TIMEOUT = 15_000;
@@ -73,14 +75,14 @@ export async function deliverEmail(mail: OutgoingEmail): Promise<boolean> {
   const from = mail.from || EMAIL_FROM;
 
   if (provider === "smtp") {
-    await smtp().sendMail({ from, to, subject: mail.subject, html: mail.html, text: mail.text, replyTo: mail.replyTo });
+    await smtp().sendMail({ from, to, subject: mail.subject, html: mail.html, text: mail.text, replyTo: mail.replyTo, ...(mail.headers ? { headers: mail.headers } : {}) });
     return true;
   }
 
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json", "User-Agent": "ShopEngine/1.0" }, // Resend refuses requests without one
-    body: JSON.stringify({ from, to, subject: mail.subject, html: mail.html, text: mail.text, reply_to: mail.replyTo }),
+    body: JSON.stringify({ from, to, subject: mail.subject, html: mail.html, text: mail.text, reply_to: mail.replyTo, ...(mail.headers ? { headers: mail.headers } : {}) }),
     signal: AbortSignal.timeout(TIMEOUT),
   });
   if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 300)}`);

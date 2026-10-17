@@ -87,6 +87,34 @@ export const Users: CollectionConfig = {
   },
   hooks: {
     beforeLogin: [requireTwoFactor],
+    // Platform → Security events: every sign-in (to /cms or a shop), password resets asked for and done
+    afterLogin: [
+      async ({ req, user, context }) => {
+        const { recordSecurityEvent } = await import("../../lib/security-events");
+        const { ipFromHeaders } = await import("../../lib/client-ip");
+        const u = user as { id?: number; email?: string; role?: string };
+        await recordSecurityEvent(req.payload, { kind: "sign-in", area: context?.storefront ? "shop" : "admin", email: u.email, userId: u.id, ip: (context?.clientIp as string | undefined) ?? ipFromHeaders(req.headers) });
+        return user;
+      },
+    ],
+    afterForgotPassword: [
+      async ({ args, context }) => {
+        const email = String((args as { data?: { email?: string } })?.data?.email ?? "");
+        const req = (args as { req?: { payload?: import("payload").Payload; headers?: Headers } })?.req;
+        if (!email || !req?.payload) return;
+        const { recordSecurityEvent } = await import("../../lib/security-events");
+        await recordSecurityEvent(req.payload, { kind: "password-reset-requested", area: context?.storefront ? "shop" : "admin", email });
+      },
+    ],
+    afterOperation: [
+      async ({ operation, result, req }) => {
+        if (operation !== "resetPassword") return result;
+        const u = (result as { user?: { id?: number; email?: string; role?: string } } | undefined)?.user;
+        const { recordSecurityEvent } = await import("../../lib/security-events");
+        await recordSecurityEvent(req.payload, { kind: "password-changed", area: u?.role === "customer" ? "shop" : "admin", email: u?.email, userId: u?.id });
+        return result;
+      },
+    ],
     beforeOperation: [
       // Lazy password migration from the previous bcrypt hashes.
       async ({ operation, args, req }) => {
@@ -238,6 +266,13 @@ export const Users: CollectionConfig = {
       ],
       access: { create: platformAdminField, update: platformAdminField },
       admin: { position: "sidebar", description: "Platform admin = runs ShopEngine (every store). Only a platform admin can change this." },
+    },
+    {
+      // support "view as" (platform admins only, set by /cms-api/platform/view-as, ends by itself after 30 minutes)
+      name: "supportView",
+      type: "json",
+      access: { create: platformAdminField, update: platformAdminField },
+      admin: { hidden: true },
     },
     {
       name: "currentStore",

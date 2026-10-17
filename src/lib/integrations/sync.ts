@@ -1,7 +1,7 @@
 import type { Payload } from "payload";
 import { integrationInfo } from "./catalog";
 import { providerImpl } from "./providers";
-import { rememberForConnection, type Connection } from "./server";
+import { runSync, type Connection } from "./server";
 import { log } from "@/lib/log";
 
 /**
@@ -19,14 +19,9 @@ export async function runIntegrationSyncs(payload: Payload, limit = 25): Promise
     const storeId = Number(d.store && typeof d.store === "object" ? (d.store as { id: unknown }).id : d.store);
     const c = (await getConnection(payload, storeId, d.provider, { fresh: true })) as Connection | null;
     if (!c) continue;
-    try {
-      const summary = await impl.sync({ payload, connection: c });
-      await rememberForConnection(payload, c, { state: { lastSyncAt: new Date().toISOString(), ...(summary ? { lastSync: summary } : {}) } });
-      if (summary) done.push(`${c.provider}#${c.store}: ${summary}`);
-    } catch (e) {
-      log.warn("integrations.sync_failed", { provider: c.provider, store: c.store, error: (e as Error)?.message });
-      await rememberForConnection(payload, c, { lastError: String((e as Error)?.message ?? e).slice(0, 500) }).catch(() => undefined);
-    }
+    const r = await runSync(payload, c, (ctx) => impl.sync!(ctx));
+    if (r.error) log.warn("integrations.sync_failed", { provider: c.provider, store: c.store, error: r.error });
+    else if (r.summary) done.push(`${c.provider}#${c.store}: ${r.summary}`);
   }
   return done;
 }

@@ -1,14 +1,15 @@
 "use server";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { updateTag } from "next/cache";
 import { after } from "next/server";
 import { z } from "zod";
 import { priceCart } from "@/lib/cart-pricing";
+import type { ShippingOption } from "@/lib/types";
 import { resolveDiscounts } from "@/lib/coupons";
 import { orderTotals } from "@/lib/order-totals";
-import { PAKISTAN_CITIES, shippingZoneFor, shipsTo } from "@/lib/cities";
-import { findCheckoutMethod } from "@/lib/payments/methods";
+import { PAKISTAN_CITIES, hasShippingChoices, shippingOptions, shippingZoneFor, shipsTo } from "@/lib/cities";
+import { findCheckoutMethod, GIFT_CARD_METHOD } from "@/lib/payments/methods";
 import { countryName, storeLocale, toCountryCode, type StoreLocale } from "@/lib/locale";
 import { moneyFormatter } from "@/lib/money";
 import { normalizePhone, phonePlaceholder } from "@/lib/phone";
@@ -37,7 +38,7 @@ const ATTEMPT_ID = /^[A-Za-z0-9-]{8,64}$/;
 /** A transfer / wallet receipt's transaction id (UPI UTR, M-Pesa code, PIX id …). */
 const REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._/-]{3,59}$/;
 
-export type CheckoutField = "name" | "phone" | "email" | "city" | "region" | "postalCode" | "address" | "landmark" | "notes" | "paymentMethod" | "screenshot" | "paymentReference" | "items";
+export type CheckoutField = "name" | "phone" | "email" | "city" | "region" | "postalCode" | "address" | "landmark" | "notes" | "paymentMethod" | "screenshot" | "paymentReference" | "items" | "giftCard" | "billing";
 
 export type PlaceOrderState =
   | { ok: false; message?: string; fieldErrors?: Partial<Record<CheckoutField, string>>; ts?: number; requireAdvance?: boolean; couponError?: string; newTotal?: number }
@@ -130,6 +131,49 @@ const CLOSED_MESSAGE: Record<string, string> = {
   missing: "This shop doesn't exist.",
 };
 
+/**
+ * The delivery methods an address gets and what they cost for this cart – asked by the checkout page of a store whose
+ * zones offer a choice (Express …) or price by weight. Prices and weights come from the server's catalog; the order is
+ * priced again when it is placed.
+ */
+export async function quoteShipping(input: { city: string; postalCode?: string; country?: string; discount?: number; items: { productId: string; qty: number; upgradeIds?: string[] }[] }): Promise<{ options: ShippingOption[]; weightKg: number }> {
+  const none = { options: [], weightKg: 0 };
+  if (!(await rateLimit("shipping-quote", 120, 60_000))) return none;
+  const { store } = await currentAvailability();
+  const settings = await getStoreSettings(store?.id ?? null);
+  if (!hasShippingChoices(settings)) return none;
+  const city = String(input?.city ?? "").trim().slice(0, 80);
+  if (!city) return none;
+  const items = (Array.isArray(input?.items) ? input.items : [])
+    .slice(0, 30)
+    .map((i) => ({ productId: String(i?.productId ?? "").slice(0, 120), qty: Math.min(MAX_QTY_PER_ITEM, Math.max(1, Math.floor(Number(i?.qty) || 1))), upgradeIds: (Array.isArray(i?.upgradeIds) ? i.upgradeIds : []).slice(0, 10).map(String) }))
+    .filter((i) => i.productId);
+  if (!items.length) return none;
+  const priced = await priceCart(items);
+  const weights = new Map(priced.products.map((p) => [p.id, p.weightKg ?? 0]));
+  const weightKg = priced.items.reduce((s, i) => s + (weights.get(i.productId) ?? 0) * i.qty, 0);
+  const goods = Math.max(0, priced.subtotal - Math.max(0, Number(input?.discount) || 0));
+  const loc = storeLocale(store);
+  return { options: shippingOptions(city, goods, settings, String(input?.postalCode ?? "").slice(0, 12), toCountryCode(String(input?.country ?? "")) ?? loc.country, weightKg), weightKg };
+}
+
+/**
+ * The balance of a gift card the shopper typed at checkout (this store's cards only). Strictly rate limited, so codes
+ * can't be guessed; the balance is checked again – and taken – when the order is placed.
+ */
+export async function checkGiftCard(code: string): Promise<{ ok: true; code: string; balance: number } | { ok: false; message: string }> {
+  if (!(await rateLimit("gift-card-check", 10, 10 * 60_000))) return { ok: false, message: "Too many tries – please wait a few minutes." };
+  const typed = String(code ?? "").trim().slice(0, 40);
+  if (!typed) return { ok: false, message: "Enter the gift card code." };
+  if (!isCmsConfigured) return { ok: false, message: "Gift cards can't be used in this shop." };
+  const { store } = await currentAvailability();
+  const { findGiftCard, giftCardProblem } = await import("@/payload/gift-cards");
+  const found = await findGiftCard(await payloadClient(), typed, store?.id ?? null).catch(() => null);
+  const problem = giftCardProblem(found);
+  if (problem || !found) return { ok: false, message: problem ?? "We can't find this gift card – check the code." };
+  return { ok: true, code: found.code, balance: found.balance };
+}
+
 export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<PlaceOrderState> {
   const ts = Date.now();
   // Honeypot – real shoppers never see/fill this field.
@@ -174,6 +218,22 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   }
   const data = parsed.data;
 
+  // "Invoice in another name": a company (and its VAT / tax number) on the invoice instead of the person receiving it
+  let billing: Order["billing"] = null;
+  if (str(fd, "billingOn") === "on") {
+    const b = { name: str(fd, "billingName").trim(), company: str(fd, "billingCompany").trim(), taxId: str(fd, "billingTaxId").trim().toUpperCase(), address: str(fd, "billingAddress").trim(), city: str(fd, "billingCity").trim(), postalCode: str(fd, "billingPostalCode").trim().toUpperCase() };
+    const bad =
+      b.name.length < 2 || b.name.length > 120 ? "Enter the name for the invoice"
+      : b.address.length < 5 || b.address.length > 300 ? "Enter the invoice address"
+      : b.city.length < 2 || b.city.length > 80 ? "Enter the invoice city"
+      : b.company.length > 120 ? "The company name is too long"
+      : b.taxId && !/^[A-Z0-9][A-Z0-9 ./-]{1,39}$/.test(b.taxId) ? "Check the VAT / tax number"
+      : b.postalCode && !/^[A-Z0-9][A-Z0-9 -]{1,11}$/.test(b.postalCode) ? "Check the invoice postcode"
+      : null;
+    if (bad) return { ok: false, message: `${bad} – or untick “Invoice in another name”.`, fieldErrors: { billing: bad }, ts };
+    billing = { name: b.name, address: b.address, city: b.city, ...(b.company ? { company: b.company } : {}), ...(b.taxId ? { taxId: b.taxId } : {}), ...(b.postalCode ? { postalCode: b.postalCode } : {}), country: toCountryCode(str(fd, "country")) ?? undefined };
+  }
+
   // Email is how we verify: every order needs one (receipt, cash-on-delivery confirmation link and code, the
   // customer record in /cms), and a signed-in customer must have confirmed their account's email.
   // Both only once the shop can actually send email. Card payments always need one (the payment receipt).
@@ -196,7 +256,9 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   // the method must be one this store offers right now (built-in, the store's own, or its connected card provider)
   if (!shipsTo(settings, shipCountry))
     return { ok: false, message: `Sorry – we don't deliver to ${countryName(shipCountry)}.`, fieldErrors: { city: "Choose a country we deliver to" }, ts };
-  const method = findCheckoutMethod(data.paymentMethod, settings);
+  // a gift card that pays the whole order is its own way to pay (no cash to collect, nothing to upload)
+  const giftOnly = data.paymentMethod === GIFT_CARD_METHOD.id;
+  const method = giftOnly ? GIFT_CARD_METHOD : findCheckoutMethod(data.paymentMethod, settings);
   if (!method)
     return { ok: false, message: "This payment method isn't available right now – please choose another.", fieldErrors: { paymentMethod: "Please choose another payment method" }, ts };
   const card = method.kind === "gateway";
@@ -213,8 +275,19 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   // the code whose use is counted: the typed one, else a lone automatic discount (its usage limit / per-customer limit)
   const couponCode = discounts.code ?? (discounts.applied.length === 1 ? discounts.applied[0].code : null);
 
+  // the delivery method (stores that offer a choice) and the cart's weight (zones that price by weight)
+  const weights = new Map(priced.products.map((p) => [p.id, p.weightKg ?? 0]));
+  const weightKg = priced.items.reduce((s, i) => s + (weights.get(i.productId) ?? 0) * i.qty, 0);
+  const shippingChoice = str(fd, "shipping").trim().slice(0, 60) || "standard";
+  const offered = shippingOptions(data.city, subtotal - discount, settings, data.postalCode, shipCountry, weightKg);
+  if (!offered.some((o) => o.id === shippingChoice))
+    return { ok: false, message: "That delivery method isn't available for this address – please choose again.", fieldErrors: { city: "Choose a delivery method" }, ts };
+
   // COD handling fee (/cms → Settings → Payments) is recorded as part of the delivery charge
-  const totals = orderTotals({ subtotal, discount, city: data.city, postalCode: data.postalCode, country: shipCountry, method: data.paymentMethod, settings, freeShipping: discounts.freeShipping });
+  // each line taxed at its product's rate (Products → Tax)
+  const taxClasses = new Map(priced.products.map((p) => [p.id, p.taxClass]));
+  const taxLines = priced.items.map((i) => ({ amount: i.unitPrice * i.qty, taxClass: taxClasses.get(i.productId) }));
+  const totals = orderTotals({ subtotal, discount, city: data.city, postalCode: data.postalCode, country: shipCountry, method: data.paymentMethod, settings, freeShipping: discounts.freeShipping, shipping: shippingChoice, weightKg, lines: taxLines });
   const delivery = (totals.delivery ?? 0) + totals.fee;
   const total = totals.total;
   const expected = Number(str(fd, "expectedTotal"));
@@ -226,8 +299,27 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       message: `The total changed to ${money(total)} (prices, discounts or delivery were updated). Please check your order and place it again.`,
       ts,
     };
+  // ── Gift card: pays all or part of the total (its balance is taken with the order, in the same transaction) ──
+  const giftCode = str(fd, "giftCardCode").trim().slice(0, 40);
+  let gift: { code: string; amount: number } | null = null;
+  if (giftCode || giftOnly) {
+    if (!isCmsConfigured || !giftCode) return { ok: false, message: "Enter your gift card code.", fieldErrors: { giftCard: "Enter the gift card code" }, ts };
+    const { findGiftCard, giftCardProblem } = await import("@/payload/gift-cards");
+    const found = await findGiftCard(await payloadClient(), giftCode, storeId);
+    const problem = giftCardProblem(found);
+    if (problem || !found) return { ok: false, message: problem ?? "Gift card not found.", fieldErrors: { giftCard: problem ?? "Gift card not found" }, ts };
+    gift = { code: found.code, amount: money.round(Math.min(found.balance, total)) };
+    if (giftOnly && gift.amount < total)
+      return { ok: false, message: `The gift card covers ${money(gift.amount)} – choose how to pay the other ${money(total - gift.amount)}.`, fieldErrors: { paymentMethod: "Choose how to pay the rest" }, ts };
+    // it pays everything: then it is the way to pay (no cash on delivery of nothing, no card payment of nothing)
+    if (!giftOnly && gift.amount >= total)
+      return { ok: false, message: "Your gift card pays the whole order – place it with the gift card.", fieldErrors: { paymentMethod: "Pay with the gift card" }, ts };
+  }
+  // what is left to pay after the gift card (cash on delivery, a transfer or an online payment covers it)
+  const due = money.round(total - (gift?.amount ?? 0));
+
   const codMax = settings.payments?.cod.maxOrder ?? null;
-  if (data.paymentMethod === "cod" && codMax && total > codMax)
+  if (data.paymentMethod === "cod" && codMax && due > codMax)
     return { ok: false, message: `Cash on Delivery is available for orders up to ${money(codMax)}. Please pay online.`, fieldErrors: { paymentMethod: "Choose an online payment method for this order" }, ts };
 
   // ── Fake-order protection (this store's blocked numbers and rules): risk score, advance payment for risky COD ──
@@ -338,14 +430,20 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     discount,
     couponCode,
     deliveryCharge: delivery,
+    // kept only when the store offers a choice (the order of a store with one delivery method stays as before)
+    ...(offered.length > 1 && totals.shipping ? { shippingMethod: totals.shipping.name } : {}),
     taxTotal: totals.tax,
+    // tax per rate – the invoice shows each rate
+    ...(totals.taxBreakdown.length ? { taxBreakdown: totals.taxBreakdown } : {}),
+    ...(billing ? { billing } : {}),
     total,
     ...(advancePaid ? { advancePaid } : {}),
     paymentMethod: method.id,
     paymentMethodLabel: method.label,
     paymentDue: method.due,
     currency: loc.currency,
-    paymentStatus: payOnDelivery ? (advancePaid ? "awaiting-verification" : "unpaid") : card ? "unpaid" : "awaiting-verification",
+    paymentStatus: giftOnly ? "paid" : payOnDelivery ? (advancePaid ? "awaiting-verification" : "unpaid") : card ? "unpaid" : "awaiting-verification",
+    ...(gift && gift.amount > 0 ? { giftCardCode: gift.code, giftCardAmount: gift.amount } : {}),
     paymentScreenshotUrl: screenshotUrl,
     paymentReference: needsProof ? data.paymentReference.toUpperCase() : null,
     courier: null,
@@ -360,7 +458,15 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   };
 
   const attemptRaw = str(fd, "attemptId");
-  const attemptId = ATTEMPT_ID.test(attemptRaw) ? attemptRaw : null;
+  // The checkout page always sends its own attempt id. A submit without one (JavaScript off, an old tab, a script)
+  // gets one from what was ordered: the same phone, items, total and payment method within 10 minutes is the same
+  // order – a repeated submit returns it instead of placing it twice.
+  const attemptId = ATTEMPT_ID.test(attemptRaw)
+    ? attemptRaw
+    : `sv-${createHash("sha256")
+        .update(JSON.stringify([storeId, data.phone, [...order.items].map((i) => `${i.productId}x${i.qty}`).sort(), total, method.id, Math.floor(Date.now() / 600_000)]))
+        .digest("hex")
+        .slice(0, 40)}`;
   const failed = async (message: string, extra: Partial<Extract<PlaceOrderState, { ok: false }>> = {}): Promise<PlaceOrderState> => {
     if (screenshotUrl) await deleteObject(screenshotUrl).catch((e) => log.error("checkout.screenshot_cleanup_failed", e));
     return { ok: false, message, ts, ...extra };
@@ -374,7 +480,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     let placed: Awaited<ReturnType<typeof placeOrderCms>> | null = null;
     for (let attempt = 0; attempt < 3 && !placed; attempt++) {
       try {
-        placed = await placeOrderCms(order, lines, { attemptId, couponCode });
+        placed = await placeOrderCms(order, lines, { attemptId, couponCode, giftCard: gift });
       } catch (err) {
         // a clashing order number (very rare) – try again with a new one
         if (/unique|duplicate key|invalid/i.test(String((err as Error)?.message)) && /order_number|orderNumber|Order number/i.test(String((err as Error)?.message)) && attempt < 2) {
@@ -388,6 +494,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     if (!placed) return failed("Something went wrong while placing your order. Please try again or order on WhatsApp.");
     if (!placed.ok) {
       if (placed.reason === "coupon") return failed(`The coupon ${couponCode} has just run out or expired. Remove it and place the order again.`, { couponError: "This coupon can't be used any more" });
+      if (placed.reason === "gift-card") return failed("The gift card's balance changed meanwhile (used in another order?). Check it and place the order again.", { fieldErrors: { giftCard: "Check the gift card again" } });
       if (placed.reason === "payment-reference")
         return failed("This transaction ID was already used for another order. Please check it – one payment pays for one order.", { fieldErrors: { paymentReference: "This transaction ID was already used" } });
       log.warn("checkout.sold_out", { items: placed.short });
@@ -425,7 +532,8 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       const gateway = getGateway(method.gateway);
       if (!gateway) throw new Error(`payment provider ${method.gateway} not available`);
       const origin = store ? storeOrigin(store) : (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/+$/, "");
-      paymentUrl = (await gateway.start(payload, { orderId: orderDocId, orderNumber: order.orderNumber, total, currency: loc.currency, storeId, email: order.customer.email ?? null, origin })).url;
+      // only what the gift card didn't pay
+      paymentUrl = (await gateway.start(payload, { orderId: orderDocId, orderNumber: order.orderNumber, total: due, currency: loc.currency, storeId, email: order.customer.email ?? null, origin })).url;
     } catch (err) {
       log.error("checkout.card_start_failed", err, { order: order.orderNumber });
       await payload
@@ -502,6 +610,12 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       });
     else after(() => linkOrderToCustomerCms(order.orderNumber, { email: order.customer.email, name: order.customer.name, phone: order.customer.phone, storeId, marketingConsent: data.marketingConsent }).catch((e) => log.error("checkout.customer_link_failed", e)));
     after(() => closeDraftForOrder(order.customer.phone, order.customer.email ?? null, order.orderNumber, storeId).catch((e) => log.error("cart.draft_close_failed", e)));
+    // ticked "send me offers" again: off this store's unsubscribed list (contacts as the cart reminders keep them)
+    if (data.marketingConsent)
+      after(async () => {
+        const { clearOptOut } = await import("@/payload/optouts");
+        await clearOptOut(await payloadClient(), storeId, [order.customer.email, normalizePhone(data.phone, loc.country), data.phone]).catch((e) => log.error("checkout.optout_clear_failed", e));
+      });
   } else {
     // demo mode (no CMS, no outbox): sent straight after the response
     after(() => notifyFromStorefront("order-placed", { order }));

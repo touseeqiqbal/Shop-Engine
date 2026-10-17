@@ -37,6 +37,11 @@ export async function loadCommerceSettings(storeId: number | null): Promise<Part
         charge: num(z.charge),
         freeAbove: numOrNull(z.freeAbove),
         estimate: str(z.estimate),
+        includedKg: numOrNull(z.includedKg),
+        perKg: numOrNull(z.perKg),
+        methods: (Array.isArray(z.methods) ? (z.methods as Doc[]) : [])
+          .filter((m) => str(m.name))
+          .map((m) => ({ name: str(m.name), charge: num(m.charge), perKg: numOrNull(m.perKg), freeAbove: numOrNull(m.freeAbove), estimate: str(m.estimate) })),
       })
     );
   }
@@ -51,7 +56,7 @@ export async function loadCommerceSettings(storeId: number | null): Promise<Part
       card: { enabled: obj(pay.card).enabled === true, note: str(obj(pay.card).note) },
     };
     const tax = obj(pay.tax);
-    out.tax = { enabled: tax.enabled === true && num(tax.rate) > 0, rate: Math.min(50, Math.max(0, num(tax.rate))), inclusive: tax.inclusive !== false, label: str(tax.label) || "Sales tax", taxDelivery: tax.taxDelivery === true };
+    out.tax = { enabled: tax.enabled === true && num(tax.rate) > 0, rate: Math.min(50, Math.max(0, num(tax.rate))), inclusive: tax.inclusive !== false, label: str(tax.label) || "Sales tax", taxDelivery: tax.taxDelivery === true, ...(tax.reducedRate != null && tax.reducedRate !== "" ? { reducedRate: Math.min(50, Math.max(0, num(tax.reducedRate))) } : {}) };
     out.payments = payments;
     out.advanceThreshold = num(cod.advanceThreshold);
     out.advanceAmount = num(cod.advanceAmount);

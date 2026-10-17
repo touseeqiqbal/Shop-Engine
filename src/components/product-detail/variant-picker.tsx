@@ -1,6 +1,6 @@
 "use client";
 import type { CatalogProduct } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { canOrder, cn } from "@/lib/utils";
 
 export type VariantOptions = NonNullable<CatalogProduct["variantOptions"]>;
 
@@ -11,7 +11,7 @@ export function matchVariant(variants: CatalogProduct[], options: VariantOptions
 
 /** Start with the variant from ?variant=… or else the first one in stock (else the first). */
 export function initialPick(variants: CatalogProduct[], slug?: string | null): Record<string, string> {
-  const v = (slug && variants.find((x) => x.slug === slug)) || variants.find((x) => x.stock > 0) || variants[0];
+  const v = (slug && variants.find((x) => x.slug === slug)) || variants.find((x) => canOrder(x)) || variants[0];
   return { ...(v?.optionValues ?? {}) };
 }
 
@@ -41,7 +41,7 @@ export function VariantPicker({
             {o.values.map((value) => {
               const v = matchVariant(variants, options, { ...pick, [o.name]: value });
               const selected = pick[o.name] === value;
-              const soldOut = v ? v.stock <= 0 : false;
+              const soldOut = v ? !canOrder(v) : false;
               return (
                 <button
                   key={value}

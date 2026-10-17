@@ -3,6 +3,7 @@ import { unstable_cache } from "next/cache";
 import { inStore, payloadClient } from "@/lib/cms/catalog-source";
 import { isCmsConfigured } from "@/lib/db/config";
 import { currentStoreId } from "@/lib/tenant";
+import { log } from "@/lib/log";
 
 /**
  * Returns & warranty for the storefront – of the store the customer is on: its rules (Settings → Returns & warranty
@@ -83,7 +84,7 @@ const policyCached = unstable_cache(
         warrantyTable: table.length ? table : d.warrantyTable,
       };
     } catch (e) {
-      console.error("[returns] policy:", e);
+      log.error("returns.policy_unavailable", e);
       return DEFAULT_RETURNS_POLICY;
     }
   },

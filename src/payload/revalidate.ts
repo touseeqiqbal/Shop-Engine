@@ -1,10 +1,11 @@
 import { revalidatePath, revalidateTag } from "next/cache";
 import { after } from "next/server";
+import { log } from "../lib/log";
 
 /** Outside a Next.js request (CLI scripts, migrations, jobs) there is nothing to revalidate – any other error is real. */
 const outsideNext = (e: unknown) => /store missing|outside a request|static generation|workAsyncStorage|not.*request scope|after\(\) was called/i.test(String((e as Error)?.message ?? e));
 const report = (e: unknown) => {
-  if (!outsideNext(e)) console.error("[revalidate]", e);
+  if (!outsideNext(e)) log.error("revalidate.failed", e);
 };
 
 /** Cache tag for everything the storefront chrome reads from Payload (theme, header, footer, menus…). */

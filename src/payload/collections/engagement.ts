@@ -1,7 +1,8 @@
 import type { CollectionAfterChangeHook, CollectionConfig, GlobalConfig } from "payload";
 import { anyone, platformAdmins } from "../access";
 import { assignStore, publicOrStore, sameStore, storeAccess, storeField, storeIdOf, storeRoleField } from "../tenancy";
-import { dbName } from "../fields";
+import { dbName, perStoreUnique } from "../fields";
+import { optOutKey } from "../optout-key";
 import { revalidate } from "../revalidate";
 import { log } from "../../lib/log";
 
@@ -225,6 +226,32 @@ export const AbandonedCarts: CollectionConfig = {
     { name: "lastActivityAt", type: "date", index: true, admin: { readOnly: true, date: { pickerAppearance: "dayAndTime" } } },
     { name: "lastReminderAt", type: "date", admin: { readOnly: true, date: { pickerAppearance: "dayAndTime" } } },
     { name: "recoveredOrder", type: "text", admin: { readOnly: true } },
+  ],
+};
+
+/**
+ * People who asked this store for no more cart reminders or marketing messages – the link in a reminder or their email
+ * app's one-click "Unsubscribe" (src/payload/optouts.ts). Reminders and the subscribers export skip them.
+ */
+export const EmailOptOuts: CollectionConfig = {
+  slug: "email-optouts",
+  dbName: dbName("email_optouts"),
+  labels: { singular: "Unsubscribed contact", plural: "Unsubscribed" },
+  admin: {
+    useAsTitle: "contact",
+    group: "Marketing",
+    defaultColumns: ["contact", "source", "createdAt"],
+    description: "Asked for no more cart reminders or marketing messages from this store – reminders and the subscribers export skip them. Remove someone only if they ask to hear from you again (ticking “send me offers” at checkout does it too).",
+  },
+  access: storeAccess("store_staff", "store_manager", "store_manager", "store_manager"),
+  indexes: perStoreUnique("contact"),
+  hooks: { beforeValidate: [assignStore(), ({ data }) => (data?.contact ? { ...data, contact: optOutKey(data.contact) } : data)] },
+  fields: [
+    storeField(),
+    { type: "row", fields: [
+      { name: "contact", type: "text", required: true, index: true, label: "Email or phone", admin: { width: "60%" } },
+      { name: "source", type: "text", defaultValue: "staff", label: "How", admin: { width: "40%", readOnly: true, description: "cart-reminder = the link in a reminder · one-click = their email app · staff = added here" } },
+    ] },
   ],
 };
 

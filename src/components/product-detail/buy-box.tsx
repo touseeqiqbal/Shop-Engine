@@ -6,11 +6,11 @@ import {
   Banknote, Check, GitCompareArrows, Heart, MapPin, Minus, Plus, Share2, ShieldCheck, ShoppingBag, Truck, Zap,
 } from "lucide-react";
 import type { CatalogProduct, UpgradeOption } from "@/lib/types";
-import { cn, effectivePrice, stockLabel } from "@/lib/utils";
+import { availabilityLabel, buyLimit, canOrder, cn, effectivePrice, formatDate } from "@/lib/utils";
 import { waLink } from "@/lib/site";
 import { primaryPhone } from "@/lib/site-info";
 import { useSiteInfo } from "@/components/providers/site-info";
-import { useMoney } from "@/components/providers/locale";
+import { useMoney, useStoreLocale } from "@/components/providers/locale";
 import { CITY_KEY, PAKISTAN_CITIES, deliveryEstimate, freeDeliveryAbove, type DeliveryInfo } from "@/lib/cities";
 import { Price } from "@/components/ui/price";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
@@ -27,6 +27,7 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
   const site = useSiteInfo(); // live business profile (/cms → Settings → Store details)
   const phone = primaryPhone(site);
   const money = useMoney();
+  const loc = useStoreLocale();
   const router = useRouter();
   const idPrefix = useId();
   const add = useCart((s) => s.add);
@@ -74,9 +75,10 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
   // to the currency's smallest unit (cents add up to float noise: 19.99 × 3)
   const unit = money.round(base + chosen.reduce((s, u) => s + u.price, 0));
   const total = money.round(unit * qty);
-  const outOfStock = unavailable || p.stock <= 0;
-  const maxQty = Math.max(1, Math.min(p.stock, 10));
-  const stock = stockLabel(p.stock);
+  // in stock – or a pre-order / keep-selling product (Products → When sold out)
+  const outOfStock = unavailable || !canOrder(p);
+  const maxQty = Math.max(1, Math.min(buyLimit(p), 10));
+  const stock = availabilityLabel(p, (iso) => formatDate(iso, { day: "numeric", month: "short" }, loc));
   // wishlist / compare keep the main product (not one colour or size)
   const wished = hydrated && wishlist.includes(main.id);
   const comparing = hydrated && compare.includes(main.id);
@@ -139,14 +141,15 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
           <span
             className={cn(
               "inline-flex items-center gap-1.5 font-semibold",
-              stock.tone === "rose" ? "text-rose-400" : stock.tone === "amber" ? "text-amber-400" : "text-emerald-400"
+              stock.tone === "rose" ? "text-rose-400" : stock.tone === "amber" ? "text-amber-400" : stock.tone === "violet" ? "text-violet-300" : "text-emerald-400"
             )}
           >
             <span className="relative flex size-2.5" aria-hidden="true">
-              {!outOfStock && <span className="absolute inline-flex size-full animate-ping rounded-full bg-current opacity-60" />}
+              {stock.kind === "in" && <span className="absolute inline-flex size-full animate-ping rounded-full bg-current opacity-60" />}
               <span className="relative inline-flex size-2.5 rounded-full bg-current" />
             </span>
             {stock.label}
+            {stock.note && <span className="font-normal text-muted">· {stock.note}</span>}
           </span>
           <span className="inline-flex items-center gap-1.5 text-muted">
             <ShieldCheck className="size-4 text-violet-400" aria-hidden="true" /> {p.warranty}
@@ -221,7 +224,7 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
         <div className="grid grid-cols-2 gap-2.5">
           <button type="button" onClick={() => addToCart()} disabled={outOfStock} className="btn btn-secondary btn-lg w-full">
             <ShoppingBag className="size-5" aria-hidden="true" />
-            {outOfStock ? "Sold out" : "Add to Cart"}
+            {outOfStock ? "Sold out" : stock.kind === "preorder" ? "Pre-order now" : "Add to Cart"}
           </button>
           <button type="button" onClick={buyNow} disabled={outOfStock} className="btn btn-primary btn-lg w-full">
             <Zap className="size-5" aria-hidden="true" />

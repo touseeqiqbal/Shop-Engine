@@ -31,11 +31,14 @@ Newest change first.
   "data": [
     { "id": 12, "sku": "HP-200", "title": "Studio Headphones", "slug": "studio-headphones", "status": "published",
       "price": 89, "compareAtPrice": 99, "stock": 8, "stockStatus": "in", "variantOf": null,
-      "updatedAt": "2026-10-16T03:59:00.000Z" }
+      "backorders": "no", "releaseDate": null, "updatedAt": "2026-10-16T03:59:00.000Z" }
   ],
   "page": 1, "totalPages": 1, "total": 1
 }
 ```
+
+`backorders` is `"no"`, `"backorder"` (keeps selling when sold out) or `"preorder"` (`releaseDate` = the day it ships
+from). A product that keeps selling can have a `stock` below 0: the units sold that are still owed to customers.
 
 ### `GET /products/{id or SKU}`
 
@@ -65,7 +68,7 @@ Query: `page`, `limit`, `status`, `updated_since`. Newest change first.
   "data": [
     { "id": 56, "orderNumber": "BKG-261016-482913", "status": "pending", "paymentStatus": "unpaid",
       "paymentMethod": "card-on-delivery", "currency": "USD", "subtotal": 89, "discount": 0, "deliveryCharge": 10,
-      "tax": 0, "total": 99, "couponCode": null, "courier": null, "trackingNumber": null,
+      "tax": 0, "total": 99, "giftCard": null, "shippingMethod": null, "couponCode": null, "courier": null, "trackingNumber": null,
       "placedAt": "…", "updatedAt": "…",
       "customer": { "name": "…", "phone": "…", "email": "…", "address": "…", "area": null, "city": "…",
                     "postalCode": "…", "country": "US" },
@@ -76,7 +79,9 @@ Query: `page`, `limit`, `status`, `updated_since`. Newest change first.
 }
 ```
 
-Internal notes and the order's history are not included.
+Internal notes and the order's history are not included. `giftCard` is `{ "amount": 25, "last4": "7KQ2" }` when a gift
+card paid part or all of the order (the full code is never shown); `shippingMethod` is the delivery method the shopper
+chose ("Express" …) in stores that offer more than one.
 
 ### `GET /orders/{orderNumber}`
 

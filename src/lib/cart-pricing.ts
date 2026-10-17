@@ -82,6 +82,9 @@ export async function priceCart(lines: CartRequestLine[], opts: { checkStock?: b
       const fresh = isCmsConfigured ? await freshStock(id, store).catch(() => null) : ((await getOne("products", "id", id).catch(() => null))?.stock ?? null);
       const stock = fresh ?? byId.get(id)?.stock ?? 0;
       const name = byId.get(id)?.name ?? "An item";
+      // pre-order / keep-selling products may sell beyond the stock (the order's transaction checks it again)
+      const keepsSelling = byId.get(id)?.backorders === "backorder" || byId.get(id)?.backorders === "preorder";
+      if (keepsSelling) continue;
       if (stock <= 0) problems.push(`“${name}” just went out of stock.`);
       else if (qty > stock) problems.push(`Only ${stock} unit${stock === 1 ? "" : "s"} of “${name}” left – please reduce the quantity.`);
     }

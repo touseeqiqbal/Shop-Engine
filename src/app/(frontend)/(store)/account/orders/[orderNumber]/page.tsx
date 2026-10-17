@@ -16,7 +16,7 @@ import { getSiteInfo } from "@/lib/repo/site-content";
 import { pageMetadata } from "@/lib/seo";
 import { waLink } from "@/lib/site";
 import { primaryPhone } from "@/lib/site-info";
-import { cn } from "@/lib/utils";
+import { buyLimit, canOrder, cn, shipsLater } from "@/lib/utils";
 import { moneyFormatter } from "@/lib/money";
 import { getStoreLocale } from "@/lib/store-locale";
 import { formatDate, formatDateTime } from "@/lib/time";
@@ -57,9 +57,9 @@ export default async function OrderDetailPage({ params }: Props) {
   const current = new Map(products.map((p) => [p.id, p]));
   const lines = order.items.flatMap((i) => {
     const p = current.get(i.productId);
-    if (!p || p.priceOnRequest || p.stock <= 0) return [];
+    if (!p || p.priceOnRequest || !canOrder(p)) return [];
     const upgrades = (i.upgrades ?? []).filter((u) => p.upgrades?.some((x) => x.id === u.id)).map((u) => p.upgrades!.find((x) => x.id === u.id)!);
-    return [{ product: p, qty: Math.min(i.qty, Math.max(1, p.stock)), upgrades }];
+    return [{ product: p, qty: Math.min(i.qty, Math.max(1, buyLimit(p))), upgrades }];
   });
   const unavailable = order.items.filter((i) => !lines.some((l) => l.product.id === i.productId)).map((i) => i.name);
 
@@ -126,6 +126,7 @@ export default async function OrderDetailPage({ params }: Props) {
                       <p className="font-medium">{i.name}</p>
                     )}
                     {i.upgrades?.length ? <p className="text-xs text-muted">{i.upgrades.map((u) => u.label).join(" · ")}</p> : null}
+                    {i.availability ? <p className="text-xs font-medium text-violet-300">{shipsLater(i)}</p> : null}
                     <p className="text-xs text-muted">
                       {i.qty} × {money(i.unitPrice)}
                     </p>
@@ -139,6 +140,7 @@ export default async function OrderDetailPage({ params }: Props) {
               {order.discount > 0 && <Row label={`Discount${order.couponCode ? ` (${order.couponCode})` : ""}`} value={`− ${money(order.discount)}`} />}
               <Row label="Delivery" value={order.deliveryCharge ? money(order.deliveryCharge) : "Free"} />
               <Row label="Total" value={money(order.total)} strong />
+              {(order.giftCardAmount ?? 0) > 0 && <Row label={`Gift card${order.giftCardCode ? ` ••••${order.giftCardCode.slice(-4)}` : ""}`} value={`− ${money(order.giftCardAmount ?? 0)}`} />}
               {advance > 0 && <Row label="Advance paid" value={`− ${money(advance)}`} />}
               {order.paymentStatus !== "paid" && order.status !== "cancelled" && (
                 <Row label={paidOnDelivery(order) ? "To pay on delivery" : "Amount due"} value={money(due)} strong />

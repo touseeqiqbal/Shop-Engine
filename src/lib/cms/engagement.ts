@@ -212,8 +212,13 @@ export async function findDraftByToken(token: string, storeId?: StoreArg) {
   return ((await payload.find({ collection: "abandoned-carts", where: { and: [{ token: { equals: token } }, inStore(store)] }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined) ?? null;
 }
 
-export async function stopDraftReminders(token: string, storeId?: StoreArg) {
+export async function stopDraftReminders(token: string, storeId?: StoreArg, source: "cart-reminder" | "one-click" = "cart-reminder") {
   const c = await findDraftByToken(token, storeId);
   if (!c) return;
-  await (await payloadClient()).update({ collection: "abandoned-carts", id: Number(c.id), data: { status: "stopped" } as never, overrideAccess: true });
+  const payload = await payloadClient();
+  await payload.update({ collection: "abandoned-carts", id: Number(c.id), data: { status: "stopped" } as never, overrideAccess: true });
+  // and no reminders for their later carts either (Marketing → Unsubscribed)
+  const { optOut } = await import("@/payload/optouts");
+  const store = typeof c.store === "object" && c.store ? Number((c.store as Doc).id) : c.store == null ? null : Number(c.store);
+  await optOut(payload, store, [c.email, c.phone, c.contact], source);
 }

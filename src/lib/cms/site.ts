@@ -4,6 +4,7 @@ import type { SiteInfoOverrides } from "@/lib/site-info";
 import type { PageSeoMap, PagesContentMap, SeoSettings } from "@/lib/content/registry";
 import { isCmsConfigured } from "@/lib/db/config";
 import { inStore, payloadClient, storefrontId, toMarkdown } from "./catalog-source";
+import { log } from "@/lib/log";
 
 /**
  * Site content managed in /cms (Store info, SEO, page texts, testimonials, FAQs, blog, redirects) – per store.
@@ -24,7 +25,7 @@ async function savedGlobal(slug: string, storeId: number | null): Promise<Doc | 
     const g = await getStoreSettings<Doc>(await payloadClient(), slug as never, storeId, { depth: 1 });
     return g.updatedAt ? g : null;
   } catch (e) {
-    console.error(`[site] /cms settings "${slug}" unavailable:`, e);
+    log.error("site.settings_unavailable", e, { slug });
     return null;
   }
 }

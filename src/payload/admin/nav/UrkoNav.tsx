@@ -3,6 +3,7 @@ import { Logout } from "@payloadcms/ui";
 import { NavHamburger, NavWrapper } from "@payloadcms/next/client";
 import { NavLinks, type NavItem, type NavSection } from "./NavLinks";
 import { StoreSwitcher } from "./StoreSwitcher";
+import { SupportBanner } from "../platform/SupportView";
 import { Icon as BrandMark } from "../Brand";
 import { hasStoreRole, resolveTenant, storeRoleRank, type TenantUser } from "../../tenancy";
 import { STORE_SETTING_ROLES } from "../../store-settings";
@@ -34,6 +35,7 @@ export async function UrkoNav({ payload, permissions, user, visibleEntities }: P
   const store = t.activeStoreId;
   const inStore = store == null ? [] : [{ store: { equals: store } }];
   const isManager = hasStoreRole(t, store, "store_manager");
+  const isOwner = hasStoreRole(t, store, "store_owner");
   // a settings page of the store being worked in (opens – or creates – its own document); a platform admin looking at
   // all stores edits ShopEngine's defaults instead
   const glob = (slug: string, label: string) => {
@@ -111,6 +113,7 @@ export async function UrkoNav({ payload, permissions, user, visibleEntities }: P
       ...(isManager ? { href: `${ADMIN}/reports/sales`, match: `${ADMIN}/reports/sales` } : at(col("stock-movements", "Stock history"))),
       children: [
         isManager ? { label: "Sales & profit", href: `${ADMIN}/reports/sales`, match: `${ADMIN}/reports/sales` } : null,
+        isOwner ? { label: "Stock value", href: `${ADMIN}/reports/stock-value`, match: `${ADMIN}/reports/stock-value` } : null,
         canRead("orders") ? { label: "Refused parcels (RTO)", href: `${ADMIN}/reports/rto`, match: `${ADMIN}/reports/rto` } : null,
         col("stock-movements", "Stock history"),
         col("activity-log", "Activity log"),
@@ -141,9 +144,11 @@ export async function UrkoNav({ payload, permissions, user, visibleEntities }: P
       ...at(col("discounts", "Marketing")),
       children: [
         col("discounts", "Discount codes"),
+        col("gift-cards", "Gift cards"),
         col("flash-sales", "Flash sales"),
         col("reviews", "Reviews"),
         col("abandoned-carts", "Abandoned carts"),
+        col("email-optouts", "Unsubscribed"),
         col("stock-alerts", "Stock & price alerts"),
         // customers who ticked "email me news and offers" at this store – for any email tool
         isManager && store != null ? { label: "Email subscribers (CSV)", href: "/cms-api/marketing/subscribers.csv", match: "/cms-api/marketing" } : null,
@@ -196,6 +201,7 @@ export async function UrkoNav({ payload, permissions, user, visibleEntities }: P
             col("store-invoices", "Invoices"),
             col("payment-events", "Payment events"),
             col("outbox-events", "Background deliveries"),
+            col("security-events", "Security events"),
             col("users", "All accounts"),
             canEditGlobal("staff-guide") ? { label: "Staff guide", href: `${ADMIN}/globals/staff-guide`, match: `${ADMIN}/globals/staff-guide` } : null,
             canEditGlobal("theme-settings") ? { label: "Defaults for new stores", href: `${ADMIN}/globals/theme-settings`, match: `${ADMIN}/globals/` } : null,
@@ -218,7 +224,7 @@ export async function UrkoNav({ payload, permissions, user, visibleEntities }: P
             <small>{storeName || "the engine that powers shops"}</small>
           </span>
         </a>
-        <StoreSwitcher />
+        {t.viewingAs ? <SupportBanner storeName={storeName} role={{ store_staff: "Staff", store_manager: "Manager", store_owner: "Owner" }[t.viewingAs.role]} until={t.viewingAs.until} /> : <StoreSwitcher />}
         <NavLinks sections={sections} />
         <div className="nav__controls urko-nav__controls">
           <Logout />

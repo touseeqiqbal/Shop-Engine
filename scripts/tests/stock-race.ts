@@ -8,7 +8,8 @@
  */
 import { getPayload } from "payload";
 import config from "@payload-config";
-import { putBackStock, setStock, takeStock } from "../../src/payload/stock";
+import { sql } from "@payloadcms/db-postgres";
+import { conn, putBackStock, setStock, takeStock } from "../../src/payload/stock";
 
 const payload = await getPayload({ config });
 const { docs } = await payload.find({ collection: "products", limit: 1, depth: 0, overrideAccess: true, sort: "id" });
@@ -36,7 +37,8 @@ try {
   failed ||= !ok2;
 } finally {
   await setStock(payload, p.id, before.stock);
-  await payload.update({ collection: "products", id: p.id, data: { soldCount: before.sold } as never, overrideAccess: true, depth: 0, context: { skipRevalidate: true } });
+  // straight in the table: a normal save re-checks the whole product (e.g. a published product without photos in old test data)
+  await (await conn(payload)).execute(sql`UPDATE "payload"."cms_products" SET "sold_count" = ${before.sold} WHERE "id" = ${p.id}`);
 }
 console.log(failed ? "Stock race test FAILED" : "Stock race test passed");
 process.exit(failed ? 1 : 0);

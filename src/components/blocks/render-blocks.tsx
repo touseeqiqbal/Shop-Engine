@@ -161,7 +161,8 @@ export async function RenderBlocks({ page }: { page: PageData }) {
           <section key={key} className="container-x">
             {!h1Rendered && h1}
             <HeroSlider slides={slides} />
-            {trust && <TrustBadges className="mt-4" items={trust.badges} />}
+            {/* right under the hero – on screen when the page opens */}
+            {trust && <TrustBadges className="mt-4" items={trust.badges} instant />}
           </section>
         );
         h1Rendered = true;

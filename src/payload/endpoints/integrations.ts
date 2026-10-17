@@ -45,6 +45,9 @@ function view(c: Connection, doc: Doc | undefined, origin: string) {
     lastError: (doc?.lastError as string) ?? null,
     account: typeof c.state.account === "string" ? c.state.account : null,
     webhookUrl: info?.webhook ? webhookUrlFor(origin, c) : null,
+    // marketplaces: the last periodic sync (or "Sync now") and what it did
+    lastSyncAt: typeof c.state.lastSyncAt === "string" ? c.state.lastSyncAt : null,
+    lastSync: typeof c.state.lastSync === "string" ? c.state.lastSync : null,
   };
 }
 
@@ -206,6 +209,31 @@ const remove: Endpoint = {
   },
 };
 
+/** POST /cms-api/integration-tools/sync { provider } – a marketplace sync now (instead of waiting up to 30 minutes). */
+const syncNow: Endpoint = {
+  path: "/integration-tools/sync",
+  method: "post",
+  handler: async (req) => {
+    const gate = await storeGate(req, "store_manager", { write: true });
+    if (gate instanceof Response) return gate;
+    const store = gate.store!;
+    const body = (await req.json?.().catch(() => null)) as { provider?: string } | null;
+    const info = integrationInfo(str(body?.provider));
+    const c = info ? await getConnection(req.payload, store, info.id, { fresh: true }) : null;
+    if (!info || !c) return Response.json({ error: "Not connected (or switched off)." }, { status: 404 });
+    const denied = await canConnect(req, store, info);
+    if (denied) return Response.json({ error: denied }, { status: 403 });
+    const { providerImpl } = await import("../../lib/integrations/providers");
+    const impl = await providerImpl(info.id);
+    if (!impl?.sync) return Response.json({ error: `${info.name} has nothing to sync.` }, { status: 400 });
+    const { runSync } = await import("../../lib/integrations/server");
+    const r = await runSync(req.payload, c, (ctx) => impl.sync!(ctx));
+    if (!r.ran) return Response.json({ ok: false, message: "A sync is already running – try again in a few minutes." }, { status: 409 });
+    await audit(req, store, info, r.error ? "sync failed" : "synced now");
+    return Response.json(r.error ? { ok: false, message: r.error } : { ok: true, message: r.summary ?? "Done – nothing needed changing." });
+  },
+};
+
 /* ───────────── OAuth (accounting, marketplaces): signed state, the provider's sign-in page, back here ───────────── */
 
 const signState = (payloadText: string) => createHmac("sha256", `${process.env.PAYLOAD_SECRET ?? ""}:integrations-oauth`).update(payloadText).digest("base64url");
@@ -292,4 +320,4 @@ const oauthCallback: Endpoint = {
   },
 };
 
-export const integrationEndpoints: Endpoint[] = [list, save, test, toggle, remove, oauthStart, oauthCallback];
+export const integrationEndpoints: Endpoint[] = [list, save, test, toggle, remove, syncNow, oauthStart, oauthCallback];

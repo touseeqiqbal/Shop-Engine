@@ -198,8 +198,9 @@ function staffActor(req: PayloadRequest) {
  * entry can't be written, only the entry is dropped – never the save it describes. (A failing nested Payload
  * create would roll back the whole parent transaction.)
  */
-export async function logActivity(req: PayloadRequest, entry: { action: "create" | "update" | "delete"; entity: string; entityLabel: string; docId: string; title: string; changes: Change[]; storeId?: number | null }) {
-  const u = staffActor(req);
+export async function logActivity(req: PayloadRequest, entry: { action: "create" | "update" | "delete"; entity: string; entityLabel: string; docId: string; title: string; changes: Change[]; storeId?: number | null; actor?: { id?: number | null; email: string } }) {
+  // `actor`: someone who isn't a signed-in person – e.g. a Store API key ("API key: Warehouse sync")
+  const u = entry.actor ?? staffActor(req);
   if (!u || (entry.action === "update" && !entry.changes.length)) return;
   const changes = entry.changes.map((c) => (ownerOnly(entry.entity, c.field) ? { field: c.field, from: "•••", to: "changed" } : c));
   const summary = entry.action === "update" ? summaryOf(changes) : entry.action === "create" ? "created" : "deleted";
@@ -252,7 +253,7 @@ export function withGlobalActivityLog(g: GlobalConfig): GlobalConfig {
 export const LOGGED_COLLECTIONS = new Set([
   "users", "products", "categories", "brands", "laptop-models", "product-collections", "orders", "return-requests", "warranty-claims",
   "pos-sales", "cash-ups", "units", "discounts", "flash-sales", "pages", "posts", "menus", "suppliers", "purchases", "stock-counts",
-  "reviews", "media", "trade-ins", "wholesale-inquiries", "contact-messages", "blocked-phones",
+  "reviews", "media", "trade-ins", "wholesale-inquiries", "contact-messages", "blocked-phones", "gift-cards", "email-optouts",
   // the platform and every store's team, plan and settings
   "stores", "store-memberships", "subscription-plans", "store-subscriptions", "store-invoices",
 ]);

@@ -105,7 +105,7 @@ export function Navbar({ menu, mobileMenu }: { menu: NavLink[]; mobileMenu?: Nav
           <Logo />
 
           {/* Desktop links */}
-          <ul className="ml-6 hidden items-center gap-1 lg:flex">
+          <ul className="ml-3 hidden shrink-0 items-center gap-1 lg:flex xl:ml-6">
             {menu.map((item, i) =>
               item.children.length ? (
                 <li key={`${item.href}-${i}`} onMouseEnter={() => open(i)} onMouseLeave={close} className="relative">
@@ -167,7 +167,8 @@ export function Navbar({ menu, mobileMenu }: { menu: NavLink[]; mobileMenu?: Nav
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
-              className="ml-auto hidden h-11 w-full max-w-sm items-center gap-2 rounded-full border border-border-strong bg-surface px-4 text-left text-sm text-subtle transition hover:border-violet-500/50 md:flex"
+              // a full search bar where there's room (tablets, wide screens); beside a long menu (1024–1279 px) an icon
+              className="ml-auto hidden h-11 w-full min-w-0 max-w-sm items-center gap-2 rounded-full border border-border-strong bg-surface px-4 text-left text-sm text-subtle transition hover:border-violet-500/50 md:flex lg:hidden xl:flex"
               aria-label="Search products"
             >
               <Search className="size-4" aria-hidden="true" />
@@ -178,7 +179,7 @@ export function Navbar({ menu, mobileMenu }: { menu: NavLink[]; mobileMenu?: Nav
 
           <div className={cn("flex items-center gap-0.5 md:ml-2", "ml-auto")}>
             {header.showSearch && (
-              <button type="button" onClick={() => setSearchOpen(true)} className="btn btn-ghost btn-icon md:hidden" aria-label="Search">
+              <button type="button" onClick={() => setSearchOpen(true)} className="btn btn-ghost btn-icon md:hidden lg:inline-flex xl:hidden" aria-label="Search">
                 <Search className="size-5" aria-hidden="true" />
               </button>
             )}
@@ -205,13 +206,13 @@ export function Navbar({ menu, mobileMenu }: { menu: NavLink[]; mobileMenu?: Nav
             )}
             {header.showAccountLinks && (
               <>
-                <Link href="/compare" className="btn btn-ghost btn-icon relative hidden lg:inline-flex" aria-label={`Compare (${hydrated ? compare.length : 0})`}>
+                <Link href="/compare" className="btn btn-ghost btn-icon relative hidden xl:inline-flex" aria-label={`Compare (${hydrated ? compare.length : 0})`}>
                   <GitCompareArrows className="size-5" aria-hidden="true" />
                   {hydrated && compare.length > 0 && (
                     <span className="absolute right-1 top-1 grid size-4 place-items-center rounded-full bg-violet-500 text-[10px] font-bold text-white">{compare.length}</span>
                   )}
                 </Link>
-                <Link href="/account/wishlist" className="btn btn-ghost btn-icon relative hidden lg:inline-flex" aria-label={`Wishlist (${hydrated ? wishlist.length : 0})`}>
+                <Link href="/account/wishlist" className="btn btn-ghost btn-icon relative hidden xl:inline-flex" aria-label={`Wishlist (${hydrated ? wishlist.length : 0})`}>
                   <Heart className="size-5" aria-hidden="true" />
                   {hydrated && wishlist.length > 0 && (
                     <span className="absolute right-1 top-1 grid size-4 place-items-center rounded-full bg-rose-500 text-[10px] font-bold text-white">{wishlist.length}</span>

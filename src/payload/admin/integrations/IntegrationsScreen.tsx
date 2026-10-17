@@ -21,6 +21,8 @@ type Conn = {
   lastError: string | null;
   account: string | null;
   webhookUrl: string | null;
+  lastSyncAt: string | null;
+  lastSync: string | null;
 };
 type Data = { store: { country: string; currency: string; name: string }; isOwner: boolean; catalog: Info[]; connections: Conn[] };
 
@@ -356,6 +358,19 @@ function Connect({ info, conn, isOwner, onClose, onChanged }: { info: Info; conn
                 </div>
               )}
             </form>
+          )}
+
+          {conn && info.category === "marketplaces" && (
+            <div className="urko-int__sync">
+              <p className="urko-muted">
+                {conn.lastSyncAt ? `Last sync ${new Date(conn.lastSyncAt).toLocaleString()}: ${conn.lastSync ?? ""}` : "Not synced yet – it runs about every 30 minutes."}
+              </p>
+              {allowed && conn.enabled && (
+                <button type="button" className="urko-btn urko-btn--ghost" disabled={busy} onClick={() => void run(() => api("/integration-tools/sync", { provider: info.id }))}>
+                  {busy ? "Syncing…" : "Sync now"}
+                </button>
+              )}
+            </div>
           )}
 
           {result && (

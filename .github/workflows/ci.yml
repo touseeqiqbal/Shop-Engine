@@ -89,7 +89,57 @@ jobs:
       - name: Order lifecycle
         run: npm run test:orders
 
+      # store-connected payment gateways with the providers simulated: paid only from the provider, wrong amounts never
+      # paid, forged updates refused, abandoned pages cancelled, refunds
+      - name: Store payment gateways
+        run: npm run test:integration-payments
+
+      # security events recorded, one marketplace sync at a time, courier cash → order paid, platform history and alerts
+      - name: Platform operations
+        run: npm run test:platform-ops
+
+      - name: Gift cards
+        run: npm run test:gift-cards
+
+      - name: Pre-orders and backorders
+        run: npm run test:preorders
+
+      - name: Unsubscribe from reminders
+        run: npm run test:unsubscribe
+
+      - name: Stock value report
+        run: npm run test:stock-value
+
+      # a product with a photo for the browser test (before the build and the server, which cache the catalog)
+      - name: Test product
+        run: npm run test:e2e:seed
+
+      # 10 shoppers buying the last 2 at the same moment: exactly 2 sold, never below 0
+      - name: Stock under concurrent orders
+        run: npm run test:stock
+
       - name: Production build
         run: npm run build
         env:
           NODE_ENV: production
+
+      # the money path in a real headless Chrome (GitHub's runners have Google Chrome): product → cart → checkout →
+      # order placed → thank-you page, on a desktop and a phone screen – against the production build
+      - name: Browser checkout
+        env:
+          NODE_ENV: production
+        run: |
+          npx next start -p 3000 > server.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://localhost:3000/api/health > /dev/null && break; sleep 2; done
+          E2E_BASE_URL=http://localhost:3000 npm run test:e2e || (tail -n 80 server.log; exit 1)
+
+      # the backup service's image builds, and a dump made exactly like its nightly one restores into an empty database
+      # with every table and row (docs/BACKUP-RESTORE.md, "Option B")
+      - name: Backup and restore drill
+        run: |
+          docker build -q -f scripts/backup/Dockerfile -t shop-backup .
+          docker run --rm --network host -e DATABASE_URL="$DATABASE_URL" shop-backup sh -c 'pg_dump --no-owner --no-privileges --clean --if-exists --format=plain "$DATABASE_URL" | gzip -9' > backup.sql.gz
+          gzip -t backup.sql.gz
+          docker run --rm --network host shop-backup psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE restore_drill"
+          gunzip -c backup.sql.gz | docker run --rm -i --network host shop-backup psql "postgresql://postgres:postgres@localhost:5432/restore_drill" -v ON_ERROR_STOP=1 -q > /dev/null
+          node scripts/tests/compare-restore.mjs "$DATABASE_URL" "postgresql://postgres:postgres@localhost:5432/restore_drill"

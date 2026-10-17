@@ -23,8 +23,14 @@ fi
 export DATABASE_URL="$DATABASE_BUILD_URL"
 export NODE_ENV=production
 
-# Payload's migrations only ever ADD things, so the live site keeps working until the new version replaces it.
-echo "[build] payload migrate"
-npx payload migrate
+# The build doesn't change the live database: store pages render per request, so nothing is pre-rendered from it,
+# and pending migrations run when the NEW server starts (prodMigrations in src/payload.config.ts) – a build that
+# fails halfway never leaves the database ahead of the running site. MIGRATE_DURING_BUILD=true restores the old
+# behaviour (migrate here first). Migrations only ever ADD things (checked in CI), so either way the old version
+# keeps working until the new one replaces it.
+if [ "${MIGRATE_DURING_BUILD:-}" = "true" ]; then
+  echo "[build] payload migrate (MIGRATE_DURING_BUILD)"
+  npx payload migrate
+fi
 echo "[build] next build"
 npm run build

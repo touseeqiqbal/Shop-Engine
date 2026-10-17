@@ -126,6 +126,9 @@ export interface Config {
     'customer-carts': CustomerCart;
     integrations: Integration;
     'api-keys': ApiKey;
+    'security-events': SecurityEvent;
+    'gift-cards': GiftCard;
+    'email-optouts': EmailOptout;
     'stock-movements': StockMovement;
     'activity-log': ActivityLog;
     exports: Export;
@@ -206,6 +209,9 @@ export interface Config {
     'customer-carts': CustomerCartsSelect<false> | CustomerCartsSelect<true>;
     integrations: IntegrationsSelect<false> | IntegrationsSelect<true>;
     'api-keys': ApiKeysSelect<false> | ApiKeysSelect<true>;
+    'security-events': SecurityEventsSelect<false> | SecurityEventsSelect<true>;
+    'gift-cards': GiftCardsSelect<false> | GiftCardsSelect<true>;
+    'email-optouts': EmailOptoutsSelect<false> | EmailOptoutsSelect<true>;
     'stock-movements': StockMovementsSelect<false> | StockMovementsSelect<true>;
     'activity-log': ActivityLogSelect<false> | ActivityLogSelect<true>;
     exports: ExportsSelect<false> | ExportsSelect<true>;
@@ -426,6 +432,15 @@ export interface User {
    * Platform admin = runs ShopEngine (every store). Only a platform admin can change this.
    */
   platformRole?: ('customer' | 'merchant_owner' | 'platform_admin') | null;
+  supportView?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
   /**
    * The store this person works in in /cms (changed with the store switcher). Empty for a platform admin = all stores.
    */
@@ -570,6 +585,8 @@ export interface Order {
          * Your cost when it was sold (owners only) – used by the profit report.
          */
         unitCost?: number | null;
+        availability?: ('preorder' | 'backorder') | null;
+        owedQty?: number | null;
         id?: string | null;
       }[]
     | null;
@@ -584,11 +601,45 @@ export interface Order {
    */
   total: number;
   advancePaid?: number | null;
+  /**
+   * Chosen at checkout (stores that offer more than one, e.g. Express).
+   */
+  shippingMethod?: string | null;
+  /**
+   * Paid (part of) this order.
+   */
+  giftCardCode?: string | null;
+  giftCardAmount?: number | null;
+  giftCardCharged?: boolean | null;
   couponCode?: string | null;
   /**
    * Tax inside the total, from the store's tax rate when the order was placed.
    */
   taxTotal?: number | null;
+  taxBreakdown?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  /**
+   * Only when the invoice is made out to someone else (a company with a VAT / tax number). Empty = the customer above.
+   */
+  billing?: {
+    name?: string | null;
+    company?: string | null;
+    taxId?: string | null;
+    address?: string | null;
+    city?: string | null;
+    postalCode?: string | null;
+    /**
+     * ISO code, e.g. PK
+     */
+    country?: string | null;
+  };
   couponConsumed?: boolean | null;
   couponReturned?: boolean | null;
   paymentMethod: string;
@@ -762,6 +813,10 @@ export interface Product {
   costPrice?: number | null;
   priceOnRequest?: boolean | null;
   /**
+   * Uses the rates in Settings → Delivery & payments → Tax (only when the store charges tax).
+   */
+  taxClass?: ('standard' | 'reduced' | 'exempt') | null;
+  /**
    * Leave empty and one is made for you.
    */
   sku: string;
@@ -774,6 +829,18 @@ export interface Product {
    * You get a low-stock alert when stock reaches this number.
    */
   lowStockThreshold?: number | null;
+  /**
+   * Laptops tracked by serial number always stop at 0.
+   */
+  backorders?: ('no' | 'backorder' | 'preorder') | null;
+  /**
+   * Shown as “Pre-order · ships from …”. Until then every order is a pre-order.
+   */
+  releaseDate?: string | null;
+  /**
+   * e.g. Ships in 2–3 weeks. Optional.
+   */
+  backorderNote?: string | null;
   /**
    * EAN / UPC / GTIN – scan it at the shop counter. Optional.
    */
@@ -1773,8 +1840,16 @@ export interface FlashSale {
    */
   store?: (number | null) | Store;
   title: string;
+  /**
+   * Empty = now.
+   */
+  startsAt?: string | null;
   endsAt: string;
   active?: boolean | null;
+  /**
+   * Optional. The products below cost this much less from the start to the end – shop, cart and checkout alike – then go back to their own price by themselves. Empty = a countdown only (set the prices yourself).
+   */
+  discountPercent?: number | null;
   products: (number | Product)[];
   /**
    * Imported from the previous system.
@@ -2836,6 +2911,30 @@ export interface StoreShipping {
          * e.g. 1–3 working days. Empty = automatic.
          */
         estimate?: string | null;
+        /**
+         * Optional. The charge covers carts up to this weight…
+         */
+        includedKg?: number | null;
+        /**
+         * …and each kg above it adds this. Empty = same charge for any weight.
+         */
+        perKg?: number | null;
+        /**
+         * Optional – e.g. Express. Shoppers choose at checkout; the charge above is “Standard”.
+         */
+        methods?:
+          | {
+              name: string;
+              charge: number;
+              perKg?: number | null;
+              /**
+               * Empty = never free.
+               */
+              freeAbove?: number | null;
+              estimate?: string | null;
+              id?: string | null;
+            }[]
+          | null;
         id?: string | null;
       }[]
     | null;
@@ -2955,6 +3054,10 @@ export interface StorePayment {
      */
     inclusive?: boolean | null;
     label?: string | null;
+    /**
+     * For products set to “Reduced rate” (Products → Tax). Empty = the normal rate.
+     */
+    reducedRate?: number | null;
     taxDelivery?: boolean | null;
   };
   updatedAt: string;
@@ -3637,6 +3740,101 @@ export interface ApiKey {
   createdAt: string;
 }
 /**
+ * Sign-ins, wrong passwords and codes, 2-step verification changes and password resets – everywhere on ShopEngine. Kept 180 days.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "security-events".
+ */
+export interface SecurityEvent {
+  id: number;
+  kind:
+    | 'sign-in'
+    | 'sign-in-failed'
+    | 'two-factor-failed'
+    | 'two-factor-locked'
+    | 'two-factor-on'
+    | 'two-factor-off'
+    | 'two-factor-reset'
+    | 'backup-codes'
+    | 'password-reset-requested'
+    | 'password-changed'
+    | 'rate-limited'
+    | 'support-view';
+  area: 'admin' | 'shop';
+  email?: string | null;
+  userId?: number | null;
+  ip?: string | null;
+  detail?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * A code with a balance that pays for orders at checkout. Leave the code empty to have one made for you.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "gift-cards".
+ */
+export interface GiftCard {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  /**
+   * Empty = made for you (e.g. 7KQ2-…). Can't be changed later.
+   */
+  code?: string | null;
+  status: 'active' | 'disabled';
+  /**
+   * In your store's currency.
+   */
+  initialValue: number;
+  balance?: number | null;
+  /**
+   * Empty = never.
+   */
+  expiresAt?: string | null;
+  recipientName?: string | null;
+  recipientEmail?: string | null;
+  /**
+   * Optional – shown in the email to the recipient.
+   */
+  message?: string | null;
+  sendEmail?: boolean | null;
+  issuedFor?: (number | null) | Order;
+  ledger?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Asked for no more cart reminders or marketing messages from this store – reminders and the subscribers export skip them. Remove someone only if they ask to hear from you again (ticking “send me offers” at checkout does it too).
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "email-optouts".
+ */
+export interface EmailOptout {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  contact: string;
+  /**
+   * cart-reminder = the link in a reminder · one-click = their email app · staff = added here
+   */
+  source?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * Every change of stock, newest first: why, how much, the stock after it and who. Filter by product to see one product's history.
  *
  * This interface was referenced by `Config`'s JSON-Schema
@@ -4183,6 +4381,18 @@ export interface PayloadLockedDocument {
         value: number | ApiKey;
       } | null)
     | ({
+        relationTo: 'security-events';
+        value: number | SecurityEvent;
+      } | null)
+    | ({
+        relationTo: 'gift-cards';
+        value: number | GiftCard;
+      } | null)
+    | ({
+        relationTo: 'email-optouts';
+        value: number | EmailOptout;
+      } | null)
+    | ({
         relationTo: 'stock-movements';
         value: number | StockMovement;
       } | null)
@@ -4388,6 +4598,7 @@ export interface UsersSelect<T extends boolean = true> {
   phone?: T;
   role?: T;
   platformRole?: T;
+  supportView?: T;
   currentStore?: T;
   marketingConsent?: T;
   customerOf?: T;
@@ -4493,10 +4704,14 @@ export interface ProductsSelect<T extends boolean = true> {
   compareAtPrice?: T;
   costPrice?: T;
   priceOnRequest?: T;
+  taxClass?: T;
   sku?: T;
   stock?: T;
   stockSeen?: T;
   lowStockThreshold?: T;
+  backorders?: T;
+  releaseDate?: T;
+  backorderNote?: T;
   barcode?: T;
   productType?: T;
   unit?: T;
@@ -4766,6 +4981,8 @@ export interface OrdersSelect<T extends boolean = true> {
         image?: T;
         upgrades?: T;
         unitCost?: T;
+        availability?: T;
+        owedQty?: T;
         id?: T;
       };
   subtotal?: T;
@@ -4773,8 +4990,24 @@ export interface OrdersSelect<T extends boolean = true> {
   deliveryCharge?: T;
   total?: T;
   advancePaid?: T;
+  shippingMethod?: T;
+  giftCardCode?: T;
+  giftCardAmount?: T;
+  giftCardCharged?: T;
   couponCode?: T;
   taxTotal?: T;
+  taxBreakdown?: T;
+  billing?:
+    | T
+    | {
+        name?: T;
+        company?: T;
+        taxId?: T;
+        address?: T;
+        city?: T;
+        postalCode?: T;
+        country?: T;
+      };
   couponConsumed?: T;
   couponReturned?: T;
   paymentMethod?: T;
@@ -5038,8 +5271,10 @@ export interface DiscountsSelect<T extends boolean = true> {
 export interface FlashSalesSelect<T extends boolean = true> {
   store?: T;
   title?: T;
+  startsAt?: T;
   endsAt?: T;
   active?: T;
+  discountPercent?: T;
   products?: T;
   legacyId?: T;
   updatedAt?: T;
@@ -5638,6 +5873,18 @@ export interface StoreShippingSelect<T extends boolean = true> {
         charge?: T;
         freeAbove?: T;
         estimate?: T;
+        includedKg?: T;
+        perKg?: T;
+        methods?:
+          | T
+          | {
+              name?: T;
+              charge?: T;
+              perKg?: T;
+              freeAbove?: T;
+              estimate?: T;
+              id?: T;
+            };
         id?: T;
       };
   updatedAt?: T;
@@ -5717,6 +5964,7 @@ export interface StorePaymentsSelect<T extends boolean = true> {
         rate?: T;
         inclusive?: T;
         label?: T;
+        reducedRate?: T;
         taxDelivery?: T;
       };
   updatedAt?: T;
@@ -6135,6 +6383,51 @@ export interface ApiKeysSelect<T extends boolean = true> {
   scopes?: T;
   createdBy?: T;
   lastUsedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "security-events_select".
+ */
+export interface SecurityEventsSelect<T extends boolean = true> {
+  kind?: T;
+  area?: T;
+  email?: T;
+  userId?: T;
+  ip?: T;
+  detail?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "gift-cards_select".
+ */
+export interface GiftCardsSelect<T extends boolean = true> {
+  store?: T;
+  code?: T;
+  status?: T;
+  initialValue?: T;
+  balance?: T;
+  expiresAt?: T;
+  recipientName?: T;
+  recipientEmail?: T;
+  message?: T;
+  sendEmail?: T;
+  issuedFor?: T;
+  ledger?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "email-optouts_select".
+ */
+export interface EmailOptoutsSelect<T extends boolean = true> {
+  store?: T;
+  contact?: T;
+  source?: T;
   updatedAt?: T;
   createdAt?: T;
 }
@@ -6700,6 +6993,30 @@ export interface Shipping {
          * e.g. 1–3 working days. Empty = automatic.
          */
         estimate?: string | null;
+        /**
+         * Optional. The charge covers carts up to this weight…
+         */
+        includedKg?: number | null;
+        /**
+         * …and each kg above it adds this. Empty = same charge for any weight.
+         */
+        perKg?: number | null;
+        /**
+         * Optional – e.g. Express. Shoppers choose at checkout; the charge above is “Standard”.
+         */
+        methods?:
+          | {
+              name: string;
+              charge: number;
+              perKg?: number | null;
+              /**
+               * Empty = never free.
+               */
+              freeAbove?: number | null;
+              estimate?: string | null;
+              id?: string | null;
+            }[]
+          | null;
         id?: string | null;
       }[]
     | null;
@@ -6814,6 +7131,10 @@ export interface Payment {
      */
     inclusive?: boolean | null;
     label?: string | null;
+    /**
+     * For products set to “Reduced rate” (Products → Tax). Empty = the normal rate.
+     */
+    reducedRate?: number | null;
     taxDelivery?: boolean | null;
   };
   updatedAt?: string | null;
@@ -7357,6 +7678,18 @@ export interface ShippingSelect<T extends boolean = true> {
         charge?: T;
         freeAbove?: T;
         estimate?: T;
+        includedKg?: T;
+        perKg?: T;
+        methods?:
+          | T
+          | {
+              name?: T;
+              charge?: T;
+              perKg?: T;
+              freeAbove?: T;
+              estimate?: T;
+              id?: T;
+            };
         id?: T;
       };
   updatedAt?: T;
@@ -7435,6 +7768,7 @@ export interface PaymentsSelect<T extends boolean = true> {
         rate?: T;
         inclusive?: T;
         label?: T;
+        reducedRate?: T;
         taxDelivery?: T;
       };
   updatedAt?: T;
@@ -7823,6 +8157,9 @@ export interface TaskCreateCollectionExport {
       | 'customer-carts'
       | 'integrations'
       | 'api-keys'
+      | 'security-events'
+      | 'gift-cards'
+      | 'email-optouts'
       | 'stock-movements'
       | 'activity-log'
       | 'exports'

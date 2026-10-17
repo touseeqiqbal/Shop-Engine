@@ -82,15 +82,31 @@ async function refuseVariantParent(db: Exec, productId: number) {
   if (rows.length) throw userError(`“${String(rows[0].title ?? "This product")}” has options (variants) – choose the option (e.g. the colour / size). Stock is kept per option.`, 400);
 }
 
-/** Takes `qty` off a product only if that many are in stock. Returns the new stock, or null if there weren't enough. */
-export async function takeStock(payload: Payload, productId: number, qty: number, req?: PayloadRequest): Promise<number | null> {
+/** What a sale owes the customer: units sold beyond the stock (backorder), or a product not released yet (pre-order). */
+export type OwedLine = { kind: "backorder" | "preorder"; qty: number };
+
+/**
+ * Takes `qty` off a product only if that many are in stock. Returns the new stock, or null if there weren't enough.
+ * `backorders`: an order (not the shop counter) may also sell a product set to keep selling when sold out or to take
+ * pre-orders – its stock then goes below 0 (the units owed), never for products tracked by serial number.
+ * `owed` gets what the sale owes the customer.
+ */
+export async function takeStock(payload: Payload, productId: number, qty: number, req?: PayloadRequest, opts: { backorders?: boolean; owed?: (o: OwedLine) => void } = {}): Promise<number | null> {
   const db = await conn(payload, req);
   await refuseVariantParent(db, productId);
+  const oversell = opts.backorders ? sql`OR ("backorders" IN ('backorder', 'preorder') AND "track_units" IS NOT TRUE)` : sql``;
   const { rows } = await db.execute(sql`
-    UPDATE "payload"."cms_products" SET "stock" = "stock" - ${qty}, "sold_count" = COALESCE("sold_count", 0) + ${qty}
-    WHERE "id" = ${productId} AND COALESCE("stock", 0) >= ${qty}
-    RETURNING "stock", "title", "low_stock_threshold", "store_id"`);
+    UPDATE "payload"."cms_products" SET "stock" = COALESCE("stock", 0) - ${qty}, "sold_count" = COALESCE("sold_count", 0) + ${qty}
+    WHERE "id" = ${productId} AND (COALESCE("stock", 0) >= ${qty} ${oversell})
+    RETURNING "stock", "title", "low_stock_threshold", "store_id", "backorders"::text AS backorders, "release_date"`);
   if (!rows.length) return null;
+  if (opts.owed) {
+    const after = Number(rows[0].stock);
+    const short = Math.min(qty, Math.max(0, -after));
+    const unreleased = rows[0].backorders === "preorder" && rows[0].release_date != null && new Date(String(rows[0].release_date)).getTime() > Date.now();
+    if (rows[0].backorders === "preorder" && (unreleased || short > 0)) opts.owed({ kind: "preorder", qty: unreleased ? qty : short });
+    else if (short > 0) opts.owed({ kind: "backorder", qty: short });
+  }
   await refreshStatus(payload, productId, req);
   await logMove(db, req, productId, rows[0].title, -qty, Number(rows[0].stock));
   await lowStockAlert(payload, req, { productId, title: String(rows[0].title ?? ""), after: Number(rows[0].stock), sold: qty, threshold: rows[0].low_stock_threshold == null ? 2 : Number(rows[0].low_stock_threshold), storeId: rows[0].store_id == null ? null : Number(rows[0].store_id) });
@@ -233,12 +249,18 @@ export async function lockProducts(payload: Payload, ids: number[], req?: Payloa
     ORDER BY "id" FOR UPDATE`);
 }
 
-/** Takes stock for several lines; all or nothing. Returns the titles that were short, or [] on success. */
-export async function takeStockForLines(payload: Payload, lines: { productId: number; qty: number; title?: string }[], req?: PayloadRequest): Promise<string[]> {
+/**
+ * Takes stock for several lines; all or nothing. Returns the titles that were short, or [] on success.
+ * Orders pass `backorders` (pre-order / keep-selling products may go below 0); `owed` collects what each product owes.
+ */
+export async function takeStockForLines(payload: Payload, lines: { productId: number; qty: number; title?: string }[], req?: PayloadRequest, opts: { backorders?: boolean; owed?: Map<number, OwedLine> } = {}): Promise<string[]> {
   const done: { productId: number; qty: number }[] = [];
   await lockProducts(payload, lines.map((l) => l.productId), req);
   for (const l of [...lines].sort((a, b) => a.productId - b.productId)) {
-    const left = await takeStock(payload, l.productId, l.qty, req);
+    const left = await takeStock(payload, l.productId, l.qty, req, {
+      backorders: opts.backorders,
+      owed: opts.owed ? (o) => { const had = opts.owed!.get(l.productId); opts.owed!.set(l.productId, { kind: o.kind, qty: (had?.qty ?? 0) + o.qty }); } : undefined,
+    });
     if (left === null) {
       for (const d of done) await putBackStock(payload, d.productId, d.qty, req);
       return [l.title ?? `#${l.productId}`];

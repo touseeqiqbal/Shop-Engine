@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Check, Plus, ShoppingBag } from "lucide-react";
 import type { CatalogProduct } from "@/lib/types";
-import { cn, effectivePrice } from "@/lib/utils";
+import { canOrder, cn, effectivePrice } from "@/lib/utils";
 import { useCart } from "@/store/cart";
 import { useUi } from "@/store/ui";
 import { trackEvent } from "@/components/analytics";
@@ -26,13 +26,13 @@ export function BoughtTogether({
 }) {
   const items = [product, ...addons];
   const [picked, setPicked] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(items.map((p) => [p.id, p.stock > 0]))
+    Object.fromEntries(items.map((p) => [p.id, canOrder(p)]))
   );
   const add = useCart((s) => s.add);
   const toast = useUi((s) => s.toast);
   const money = useMoney();
 
-  const selected = items.filter((p) => picked[p.id] && p.stock > 0);
+  const selected = items.filter((p) => picked[p.id] && canOrder(p));
   const subtotal = selected.reduce((s, p) => s + effectivePrice(p), 0);
   const qualifies = discountPercent > 0 && selected.length >= 2 && selected.some((p) => p.id === product.id);
   const total = qualifies ? money.round(subtotal * (1 - discountPercent / 100)) : subtotal;
@@ -55,7 +55,7 @@ export function BoughtTogether({
       <div className="relative grid gap-6 lg:grid-cols-[1fr_20rem] lg:items-center">
         <ul className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-0">
           {items.map((p, i) => {
-            const on = !!picked[p.id] && p.stock > 0;
+            const on = !!picked[p.id] && canOrder(p);
             const isMain = p.id === product.id;
             return (
               <li key={p.id} className="flex flex-col items-stretch sm:flex-1 sm:flex-row sm:items-stretch">
@@ -69,14 +69,14 @@ export function BoughtTogether({
                     "relative flex flex-1 cursor-pointer items-center gap-3 rounded-2xl border p-2.5 transition sm:flex-col sm:items-stretch sm:p-3",
                     "has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-violet-500",
                     on ? "border-violet-500/50 bg-violet-500/[0.07]" : "border-border opacity-60 hover:opacity-90",
-                    p.stock <= 0 && "cursor-not-allowed"
+                    !canOrder(p) && "cursor-not-allowed"
                   )}
                 >
                   <input
                     type="checkbox"
                     className="sr-only"
                     checked={on}
-                    disabled={p.stock <= 0}
+                    disabled={!canOrder(p)}
                     onChange={(e) => setPicked((s) => ({ ...s, [p.id]: e.target.checked }))}
                     aria-label={`${isMain ? "This item: " : ""}${p.name} – ${money(effectivePrice(p))}`}
                   />
@@ -103,7 +103,7 @@ export function BoughtTogether({
                         View details
                       </Link>
                     )}
-                    {p.stock <= 0 && <span className="block text-xs text-rose-400">Out of stock</span>}
+                    {!canOrder(p) && <span className="block text-xs text-rose-400">Out of stock</span>}
                   </span>
                 </label>
               </li>

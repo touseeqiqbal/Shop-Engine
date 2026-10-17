@@ -60,6 +60,28 @@ export const ShippingSettings: GlobalConfig = {
           { name: "freeAbove", type: "number", min: 0, label: "Free above", admin: { width: "33%", description: "Empty = store-wide. 0 = never free." } },
           { name: "estimate", type: "text", label: "Delivery time", admin: { width: "34%", description: "e.g. 1–3 working days. Empty = automatic." } },
         ] },
+        // optional: heavier carts cost more (uses each product's weight)
+        { type: "row", fields: [
+          { name: "includedKg", type: "number", min: 0, label: "Weight included (kg)", admin: { width: "50%", description: "Optional. The charge covers carts up to this weight…" } },
+          { name: "perKg", type: "number", min: 0, label: "Each extra kg", admin: { width: "50%", description: "…and each kg above it adds this. Empty = same charge for any weight." } },
+        ] },
+        // optional: Express, Same-day … offered next to the standard charge
+        {
+          name: "methods",
+          type: "array",
+          label: "Other delivery methods",
+          labels: { singular: "Method", plural: "Methods" },
+          admin: { description: "Optional – e.g. Express. Shoppers choose at checkout; the charge above is “Standard”." },
+          fields: [
+            { type: "row", fields: [
+              { name: "name", type: "text", required: true, admin: { width: "34%", placeholder: "Express" } },
+              { name: "charge", type: "number", required: true, min: 0, admin: { width: "22%" } },
+              { name: "perKg", type: "number", min: 0, label: "Each extra kg", admin: { width: "22%" } },
+              { name: "freeAbove", type: "number", min: 0, label: "Free above", admin: { width: "22%", description: "Empty = never free." } },
+            ] },
+            { name: "estimate", type: "text", label: "Delivery time", admin: { placeholder: "Next working day" } },
+          ],
+        },
       ],
     },
     { name: "feeTester", type: "ui", admin: { components: { Field: "/payload/admin/ShippingFeeTester#ShippingFeeTester" } } },
@@ -182,7 +204,10 @@ export const PaymentSettings: GlobalConfig = {
           { name: "inclusive", type: "checkbox", defaultValue: true, label: "Prices already include tax", admin: { width: "25%", style: { alignSelf: "center" }, description: "Off = tax is added on top at checkout." } },
           { name: "label", type: "text", defaultValue: "Sales tax", admin: { width: "25%" } },
         ] },
-        { name: "taxDelivery", type: "checkbox", defaultValue: false, label: "Delivery charges are taxed too" },
+        { type: "row", fields: [
+          { name: "reducedRate", type: "number", min: 0, max: 50, label: "Reduced rate (%)", admin: { width: "50%", description: "For products set to “Reduced rate” (Products → Tax). Empty = the normal rate." } },
+          { name: "taxDelivery", type: "checkbox", defaultValue: false, label: "Delivery charges are taxed too", admin: { width: "50%", style: { alignSelf: "center" } } },
+        ] },
       ],
     },
   ],

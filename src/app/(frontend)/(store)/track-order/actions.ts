@@ -26,6 +26,25 @@ export interface TrackedOrder {
   courierName: string | null;
   trackingNumber: string | null;
   trackingUrl: string | null;
+  /** each parcel with its latest courier status (followed automatically for connected couriers) */
+  parcels: { courierName: string | null; trackingNumber: string | null; trackingUrl: string | null; status: string; courierStatus: string | null; checkedAt: string | null }[];
+}
+
+/** The order's parcels as a shopper may see them (no amounts, no internal references). */
+async function parcelsOf(orderId: string): Promise<TrackedOrder["parcels"]> {
+  const { isCmsConfigured } = await import("@/lib/db/config");
+  if (!isCmsConfigured || !/^\d+$/.test(orderId)) return [];
+  const { payloadClient } = await import("@/lib/cms/catalog-source");
+  const doc = (await (await payloadClient()).findByID({ collection: "orders", id: Number(orderId), depth: 0, overrideAccess: true }).catch(() => null)) as { shipments?: Record<string, unknown>[] } | null;
+  const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+  return (doc?.shipments ?? []).map((s) => ({
+    courierName: courierInfo(str(s.courier) ?? undefined)?.name ?? str(s.courier),
+    trackingNumber: str(s.trackingNumber),
+    trackingUrl: courierTrackingUrl(str(s.courier) ?? undefined, str(s.trackingNumber) ?? undefined),
+    status: str(s.status) ?? "shipped",
+    courierStatus: str(s.courierStatus),
+    checkedAt: str(s.lastTrackedAt),
+  }));
 }
 
 export type TrackState =
@@ -87,6 +106,7 @@ export async function trackOrder(_prev: TrackState, fd: FormData): Promise<Track
       courierName: courierInfo(order.courier)?.name ?? order.courier ?? null,
       trackingNumber: order.trackingNumber ?? null,
       trackingUrl: courierTrackingUrl(order.courier, order.trackingNumber),
+      parcels: await parcelsOf(String(order.id ?? "")).catch(() => []),
     },
   };
 }

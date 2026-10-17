@@ -2,6 +2,8 @@ import "server-only";
 import { normalizePkMobile } from "@/lib/phone";
 import { randomBytes } from "node:crypto";
 import { sql } from "@payloadcms/db-postgres";
+import type { OwedLine } from "@/payload/stock";
+import type { FlashDiscount } from "@/lib/flash-pricing";
 import { commitTransaction, createLocalReq, initTransaction, killTransaction, type Payload, type Where } from "payload";
 import type { Coupon, FlashSale, Order, OrderEvent, OrderItem, PaymentMethod, PaymentStatus, SavedAddress, WholesaleInquiry } from "@/lib/types";
 import { findProductDoc, inStore, payloadClient, storefrontId } from "./catalog-source";
@@ -54,12 +56,21 @@ export function toOrder(d: Doc): Order {
         unitPrice: num(i.unitPrice),
         qty: num(i.qty),
         upgrades: Array.isArray(i.upgrades) ? (i.upgrades as OrderItem["upgrades"]) : [],
+        ...(i.availability === "preorder" || i.availability === "backorder" ? { availability: i.availability, owedQty: num(i.owedQty) || undefined } : {}),
       })
     ),
     subtotal: num(d.subtotal),
     discount: num(d.discount),
     couponCode: opt(str(d.couponCode)) ?? null,
     deliveryCharge: num(d.deliveryCharge),
+    shippingMethod: opt(str(d.shippingMethod)) ?? null,
+    giftCardCode: opt(str(d.giftCardCode)) ?? null,
+    giftCardAmount: typeof d.giftCardAmount === "number" ? d.giftCardAmount : undefined,
+    taxTotal: num(d.taxTotal) || undefined,
+    taxBreakdown: Array.isArray(d.taxBreakdown) ? (d.taxBreakdown as Doc[]).map((t) => ({ rate: num(t.rate), base: num(t.base), tax: num(t.tax) })) : undefined,
+    billing: obj(d.billing)?.name
+      ? { name: str(obj(d.billing)!.name), company: opt(str(obj(d.billing)!.company)), taxId: opt(str(obj(d.billing)!.taxId)), address: str(obj(d.billing)!.address), city: str(obj(d.billing)!.city), postalCode: opt(str(obj(d.billing)!.postalCode)), country: opt(str(obj(d.billing)!.country)) }
+      : null,
     total: num(d.total),
     advancePaid: typeof d.advancePaid === "number" ? d.advancePaid : undefined,
     paymentMethod: str(d.paymentMethod) as PaymentMethod,
@@ -113,9 +124,11 @@ async function orderData(payload: Payload, o: Partial<Order>, storeId: number | 
       })
     );
   }
-  for (const k of ["subtotal", "discount", "deliveryCharge", "total", "advancePaid", "paymentMethod", "paymentMethodLabel", "paymentDue", "currency", "paymentStatus", "courier", "trackingNumber", "couponCode", "taxTotal", "paymentReference"] as const) {
+  for (const k of ["subtotal", "discount", "deliveryCharge", "shippingMethod", "giftCardCode", "giftCardAmount", "total", "advancePaid", "paymentMethod", "paymentMethodLabel", "paymentDue", "currency", "paymentStatus", "courier", "trackingNumber", "couponCode", "taxTotal", "paymentReference"] as const) {
     if (o[k] !== undefined) data[k] = o[k] ?? null;
   }
+  if (o.taxBreakdown !== undefined) data.taxBreakdown = o.taxBreakdown ?? null;
+  if (o.billing !== undefined) data.billing = o.billing ? { name: o.billing.name, company: o.billing.company ?? null, taxId: o.billing.taxId ?? null, address: o.billing.address, city: o.billing.city, postalCode: o.billing.postalCode ?? null, country: o.billing.country ?? null } : { name: null, company: null, taxId: null, address: null, city: null, postalCode: null, country: null };
   // the customer's own note (never the team's internal notes)
   if (o.notes !== undefined) data.customerNote = o.notes ?? null;
   if (o.marketingConsent !== undefined) data.marketingConsent = o.marketingConsent === true;
@@ -149,7 +162,8 @@ export type PlaceOrderResult =
   | { ok: true; order: Order; duplicate?: boolean }
   | { ok: false; reason: "sold-out"; short: string[] }
   | { ok: false; reason: "coupon" }
-  | { ok: false; reason: "payment-reference" };
+  | { ok: false; reason: "payment-reference" }
+  | { ok: false; reason: "gift-card" };
 
 const isUniqueViolation = (e: unknown) => /unique|duplicate key|already exists/i.test(String((e as { message?: string })?.message ?? e));
 
@@ -159,7 +173,7 @@ const isUniqueViolation = (e: unknown) => /unique|duplicate key|already exists/i
  * is kept. `attemptId` makes a repeated submit (double click, retry after a lost response) return the order
  * that was already placed instead of creating a second one.
  */
-export async function placeOrderCms(order: Order, lines: { id: string; qty: number; title: string }[], opts: { attemptId?: string | null; couponCode?: string | null; afterSave?: (orderId: number, req: Awaited<ReturnType<typeof createLocalReq>>) => Promise<void> }): Promise<PlaceOrderResult> {
+export async function placeOrderCms(order: Order, lines: { id: string; qty: number; title: string }[], opts: { attemptId?: string | null; couponCode?: string | null; giftCard?: { code: string; amount: number } | null; afterSave?: (orderId: number, req: Awaited<ReturnType<typeof createLocalReq>>) => Promise<void> }): Promise<PlaceOrderResult> {
   const payload = await payloadClient();
   const storeId = order.storeId ?? null;
   const previous = async () => (opts.attemptId ? await findOne(payload, "orders", { and: [{ attemptId: { equals: opts.attemptId } }, inStore(storeId)] }) : null);
@@ -185,12 +199,32 @@ export async function placeOrderCms(order: Order, lines: { id: string; qty: numb
       await killTransaction(req);
       return { ok: false, reason: "coupon" };
     }
-    const short = await takeStockForLines(payload, resolved, req);
+    // the gift card pays its part in the same transaction (its balance can't be spent twice)
+    if (opts.giftCard && opts.giftCard.amount > 0) {
+      const { takeFromGiftCard } = await import("@/payload/gift-cards");
+      if (!(await takeFromGiftCard(payload, { code: opts.giftCard.code, storeId, amount: opts.giftCard.amount, orderNumber: order.orderNumber }, req))) {
+        await killTransaction(req);
+        return { ok: false, reason: "gift-card" };
+      }
+    }
+    // pre-order / keep-selling products may sell beyond their stock; what is owed is marked on the order's lines
+    const owed = new Map<number, OwedLine>();
+    const short = await takeStockForLines(payload, resolved, req, { backorders: true, owed });
     if (short.length) {
       await killTransaction(req);
       return { ok: false, reason: "sold-out", short };
     }
-    const data = { ...(await orderData(payload, order, storeId)), stockHeld: true, attemptId: opts.attemptId || null, couponConsumed: Boolean(opts.couponCode) };
+    const base = await orderData(payload, order, storeId);
+    if (owed.size && Array.isArray(base.items)) {
+      const left = new Map(owed);
+      base.items = (base.items as Doc[]).map((i) => {
+        const o = left.get(Number(i.product));
+        if (!o) return i;
+        left.delete(Number(i.product));
+        return { ...i, availability: o.kind, owedQty: o.qty };
+      });
+    }
+    const data = { ...base, stockHeld: true, attemptId: opts.attemptId || null, couponConsumed: Boolean(opts.couponCode), giftCardCharged: Boolean(opts.giftCard && opts.giftCard.amount > 0) };
     // context.fromStorefront: the stock was taken just above, so the Orders hook must not take it again
     const doc = (await payload.create({ collection: "orders" as never, data: data as never, overrideAccess: true, depth: 0, context: { fromStorefront: true, storefront: true, storeId }, req })) as Doc;
     // in the same transaction: the confirmation messages (sent only if the order is really saved), online payment …
@@ -310,10 +344,20 @@ export async function getUserByEmailCms(email: string): Promise<CmsUser | null> 
 /** Verify a password (Payload login: lockout after repeated failures, lazy upgrade of old bcrypt hashes). */
 export async function verifyPasswordCms(email: string, password: string): Promise<CmsUser | null> {
   const payload = await payloadClient();
+  // the shopper's network, for Platform → Security events (sign-ins happen in a server action)
+  let clientIp = "";
   try {
-    const res = await payload.login({ collection: "users" as never, data: { email: email.trim().toLowerCase(), password } as never, overrideAccess: true, context: { storefront: true } });
+    const [{ headers }, { ipFromHeaders }] = await Promise.all([import("next/headers"), import("@/lib/client-ip")]);
+    clientIp = ipFromHeaders(await headers());
+  } catch {
+    // outside a request
+  }
+  try {
+    const res = await payload.login({ collection: "users" as never, data: { email: email.trim().toLowerCase(), password } as never, overrideAccess: true, context: { storefront: true, clientIp } });
     return res.user ? toUser(res.user as unknown as Doc) : null;
   } catch {
+    const { recordSecurityEvent } = await import("@/lib/security-events");
+    await recordSecurityEvent(payload, { kind: "sign-in-failed", area: "shop", email, ip: clientIp });
     return null;
   }
 }
@@ -524,7 +568,7 @@ export async function activeFlashSaleCms(storeId: number | null): Promise<FlashS
   const payload = await payloadClient();
   const res = await payload.find({
     collection: "flash-sales" as never,
-    where: { and: [{ active: { equals: true } }, { endsAt: { greater_than: new Date().toISOString() } }, inStore(storeId)] },
+    where: { and: [{ active: { equals: true } }, { endsAt: { greater_than: new Date().toISOString() } }, { or: [{ startsAt: { exists: false } }, { startsAt: { less_than_equal: new Date().toISOString() } }] }, inStore(storeId)] },
     sort: "endsAt",
     limit: 1,
     depth: 1,
@@ -538,7 +582,26 @@ export async function activeFlashSaleCms(storeId: number | null): Promise<FlashS
     endsAt: str(d.endsAt),
     productIds: (Array.isArray(d.products) ? d.products : []).map((p) => storefrontId(obj(p))).filter(Boolean),
     active: true,
+    discountPercent: typeof d.discountPercent === "number" ? d.discountPercent : null,
   };
+}
+
+/** Running flash sales with a discount (their products' prices are lowered in the catalog snapshot). */
+export async function discountedFlashSalesCms(storeId: number | null): Promise<FlashDiscount[]> {
+  const payload = await payloadClient();
+  const now = new Date().toISOString();
+  const res = await payload.find({
+    collection: "flash-sales" as never,
+    where: { and: [{ active: { equals: true } }, { discountPercent: { greater_than: 0 } }, { endsAt: { greater_than: now } }, { or: [{ startsAt: { exists: false } }, { startsAt: { less_than_equal: now } }] }, inStore(storeId)] },
+    limit: 50,
+    depth: 1,
+    overrideAccess: true,
+  });
+  return (res.docs as Doc[]).map((d) => ({
+    productIds: (Array.isArray(d.products) ? d.products : []).map((p) => storefrontId(obj(p))).filter(Boolean),
+    percent: Number(d.discountPercent) || 0,
+    endsAt: str(d.endsAt),
+  }));
 }
 
 // ───────────────────────────── wholesale inquiries & contact messages ─────────────────────────────

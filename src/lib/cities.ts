@@ -1,4 +1,4 @@
-import type { StoreSettings } from "./types";
+import type { ShippingOption, StoreSettings } from "./types";
 import { findCheckoutMethod } from "./payments/methods";
 
 export const MAJOR_CITIES = [
@@ -120,13 +120,17 @@ export function deliveryEstimate(city: string, settings?: Pick<StoreSettings, "z
   }
 }
 
-export function deliveryCharge(city: string, subtotal: number, settings: StoreSettings, postalCode = "", country?: string | null) {
+/** A zone's charge for a cart of this weight: + `perKg` for each started kg above the included weight. */
+export const weighedCharge = (charge: number, perKg: number | null | undefined, includedKg: number | null | undefined, weightKg: number) =>
+  perKg && perKg > 0 && weightKg > (includedKg ?? 0) ? charge + Math.ceil(weightKg - (includedKg ?? 0) - 1e-9) * perKg : charge;
+
+export function deliveryCharge(city: string, subtotal: number, settings: StoreSettings, postalCode = "", country?: string | null, opts: { weightKg?: number } = {}) {
   if (settings.zones?.length) {
     // Zones from /cms → Settings → Shipping
     const zone = city ? shippingZoneFor(city, settings, postalCode, country) : null;
     const freeAbove = zone?.freeAbove ?? settings.freeDeliveryThreshold;
     if (freeAbove > 0 && subtotal >= freeAbove) return 0;
-    return zone ? zone.charge : settings.defaultDeliveryCharge;
+    return zone ? weighedCharge(zone.charge, zone.perKg, zone.includedKg, opts.weightKg ?? 0) : settings.defaultDeliveryCharge;
   }
   // 0 = no free delivery (same rule as the zones above)
   if (settings.freeDeliveryThreshold > 0 && subtotal >= settings.freeDeliveryThreshold) return 0;
@@ -134,6 +138,33 @@ export function deliveryCharge(city: string, subtotal: number, settings: StoreSe
   // the old per-city charges are for the store's own country
   if (country && country !== (settings.country || "PK")) return settings.defaultDeliveryCharge;
   return settings.cityCharges[city] ?? settings.defaultDeliveryCharge;
+}
+
+const methodId = (name: string) =>
+  name
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "method";
+
+/** Does any zone price by weight or offer more than one delivery method? (Then checkout asks the server.) */
+export const hasShippingChoices = (settings: Pick<StoreSettings, "zones">) => (settings.zones ?? []).some((z) => (z.methods?.length ?? 0) > 0 || (z.perKg ?? 0) > 0);
+
+/**
+ * The ways this address can be delivered to, with their charges for this cart: "Standard" (the zone's own charge –
+ * the only one when the zone has no other methods) first, then the zone's other methods (Express …).
+ */
+export function shippingOptions(city: string, subtotal: number, settings: StoreSettings, postalCode = "", country?: string | null, weightKg = 0): ShippingOption[] {
+  const estimate = deliveryEstimate(city, settings, postalCode, country).label;
+  const options: ShippingOption[] = [{ id: "standard", name: "Standard", charge: deliveryCharge(city, subtotal, settings, postalCode, country, { weightKg }), estimate }];
+  const zone = settings.zones?.length && city ? shippingZoneFor(city, settings, postalCode, country) : null;
+  for (const m of zone?.methods ?? []) {
+    const free = m.freeAbove != null && m.freeAbove > 0 && subtotal >= m.freeAbove;
+    const id = methodId(m.name);
+    if (id === "standard" || options.some((o) => o.id === id)) continue;
+    options.push({ id, name: m.name, charge: free ? 0 : weighedCharge(m.charge, m.perKg, zone?.includedKg, weightKg), estimate: m.estimate?.trim() || estimate });
+  }
+  return options;
 }
 
 /** Cart total above which delivery is free for this city (0 = never free). */

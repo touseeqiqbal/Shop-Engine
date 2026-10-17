@@ -62,6 +62,9 @@ export const productOut = (p: Doc) => ({
   compareAtPrice: num(p.compareAtPrice),
   stock: num(p.stock),
   stockStatus: str(p.stockStatus) || null,
+  // "backorder" / "preorder": keeps selling when sold out – stock then goes below 0 (units owed to customers)
+  backorders: str(p.backorders) || "no",
+  releaseDate: str(p.releaseDate) || null,
   variantOf: relId(p.variantOf),
   updatedAt: str(p.updatedAt),
 });
@@ -81,6 +84,9 @@ export const orderOut = (o: Doc) => {
     deliveryCharge: num(o.deliveryCharge),
     tax: num(o.taxTotal),
     total: num(o.total),
+    // paid with a gift card (only its last 4 characters – the API never shows a working code)
+    giftCard: Number(o.giftCardAmount) > 0 ? { amount: Number(o.giftCardAmount), last4: str(o.giftCardCode).slice(-4) || null } : null,
+    shippingMethod: str(o.shippingMethod) || null,
     couponCode: str(o.couponCode) || null,
     courier: str(o.courier) || null,
     trackingNumber: str(o.trackingNumber) || null,

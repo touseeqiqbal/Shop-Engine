@@ -30,9 +30,10 @@ export function useCartSync(enabled: boolean) {
             removed++;
             return [];
           }
-          if (f.unitPrice !== l.unitPrice || f.stock !== l.stock) {
+          if (f.unitPrice !== l.unitPrice || f.stock !== l.stock || f.taxClass !== l.taxClass) {
             if (f.unitPrice !== l.unitPrice) changed++;
-            return [{ ...l, unitPrice: f.unitPrice, basePrice: f.basePrice, stock: f.stock, qty: Math.min(l.qty, Math.max(f.stock, 1)) }];
+            const { taxClass: _old, ...rest } = l;
+            return [{ ...rest, unitPrice: f.unitPrice, basePrice: f.basePrice, stock: f.stock, qty: Math.min(l.qty, Math.max(f.stock, 1)), ...(f.taxClass ? { taxClass: f.taxClass } : {}) }];
           }
           return [l];
         });

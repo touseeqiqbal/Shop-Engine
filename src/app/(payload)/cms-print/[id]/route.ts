@@ -1,4 +1,4 @@
-import { amountToCollect, creditedAdvance, paymentBlocksShipping } from "@/lib/order-money";
+import { amountToCollect, creditedAdvance, paymentBlocksShipping, taxLines } from "@/lib/order-money";
 import { cityLine, paymentLabel } from "@/lib/order-display";
 import { adminRequest, canSeeStore } from "@/payload/route-access";
 import { getSiteInfo } from "@/lib/repo/site-content";
@@ -15,12 +15,17 @@ type Order = {
   orderNumber: string;
   placedAt?: string;
   customer?: { name?: string; phone?: string; email?: string; city?: string; address?: string; landmark?: string; region?: string; postalCode?: string; country?: string };
-  items?: { title?: string; qty?: number; unitPrice?: number; product?: number | { id: number } | null }[];
+  items?: { title?: string; qty?: number; unitPrice?: number; product?: number | { id: number } | null; availability?: string | null; owedQty?: number | null }[];
   subtotal?: number;
   discount?: number;
   deliveryCharge?: number;
   total?: number;
   advancePaid?: number;
+  giftCardCode?: string | null;
+  giftCardAmount?: number | null;
+  taxTotal?: number | null;
+  taxBreakdown?: { rate: number; tax: number }[] | null;
+  billing?: { name?: string | null; company?: string | null; taxId?: string | null; address?: string | null; city?: string | null; postalCode?: string | null } | null;
   paymentMethod?: string;
   paymentMethodLabel?: string | null;
   paymentDue?: string | null;
@@ -61,19 +66,25 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
   const rows = (o.items ?? [])
     .map(
-      (i) => `<tr><td>${esc(i.title)}${serialsFor(i.product) ? `<div class="muted">Serial: ${esc(serialsFor(i.product))}</div>` : ""}</td><td class="n">${esc(i.qty)}</td>${
+      (i) => `<tr><td>${esc(i.title)}${serialsFor(i.product) ? `<div class="muted">Serial: ${esc(serialsFor(i.product))}</div>` : ""}${i.availability ? `<div class="muted"><strong>${i.availability === "preorder" ? "PRE-ORDER" : "BACKORDER"}</strong>${i.owedQty ? ` – ${esc(i.owedQty)} not in stock when ordered` : ""}</div>` : ""}</td><td class="n">${esc(i.qty)}</td>${
         slip ? '<td class="n">☐</td>' : `<td class="n">${amt(i.unitPrice)}</td><td class="n">${amt((i.unitPrice ?? 0) * (i.qty ?? 0))}</td>`
       }</tr>`
     )
     .join("");
 
+  // tax per rate: added on top before the total, included in the prices after it
+  const tax = taxLines({ ...o, taxTotal: o.taxTotal ?? undefined, taxBreakdown: o.taxBreakdown ?? undefined });
+  const taxRows = tax.lines.map((t) => `<tr><td>${esc(t.label)}</td><td class="n">${amt(t.amount)}</td></tr>`).join("");
   const money = slip
     ? ""
     : `<table class="sum">
         <tr><td>Items</td><td class="n">${amt(o.subtotal)}</td></tr>
         ${(o.discount ?? 0) > 0 ? `<tr><td>Discount</td><td class="n">− ${amt(o.discount)}</td></tr>` : ""}
         <tr><td>Delivery</td><td class="n">${(o.deliveryCharge ?? 0) > 0 ? amt(o.deliveryCharge) : "Free"}</td></tr>
+        ${tax.added ? taxRows : ""}
         <tr class="t"><td>Total</td><td class="n">${amt(o.total)}</td></tr>
+        ${tax.added ? "" : taxRows}
+        ${(o.giftCardAmount ?? 0) > 0 ? `<tr><td>Gift card${o.giftCardCode ? ` ••••${esc(o.giftCardCode.slice(-4))}` : ""}</td><td class="n">− ${amt(o.giftCardAmount ?? 0)}</td></tr>` : ""}
         ${advance > 0 ? `<tr><td>Advance paid</td><td class="n">− ${amt(advance)}</td></tr>` : ""}
       </table>`;
 

@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/auth";
 import { isCmsConfigured } from "@/lib/db/config";
 import { priceCart } from "@/lib/cart-pricing";
 import { MAX_QTY_PER_ITEM } from "@/lib/cart-limits";
+import { buyLimit } from "@/lib/utils";
 import { rateLimit } from "@/lib/rate-limit";
 import { currentStoreId } from "@/lib/tenant";
 import { log } from "@/lib/log";
@@ -62,6 +63,6 @@ export async function loadCart(): Promise<SavedCartLine[] | null> {
   const byId = new Map(priced.products.map((p) => [p.id, p]));
   return priced.items.map((i) => {
     const p = byId.get(i.productId);
-    return { productId: i.productId, slug: i.slug, name: i.name, image: i.image, url: i.url, brandName: p?.brandName ?? "", unitPrice: i.unitPrice, qty: i.qty, stock: p?.stock ?? 0, upgrades: i.upgrades };
+    return { productId: i.productId, slug: i.slug, name: i.name, image: i.image, url: i.url, brandName: p?.brandName ?? "", unitPrice: i.unitPrice, qty: i.qty, stock: p ? buyLimit(p) : 0, upgrades: i.upgrades };
   });
 }

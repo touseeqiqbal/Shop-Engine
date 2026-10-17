@@ -31,6 +31,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ orderNumber: s
       overrideAccess: true,
       context: { expectStatus: current },
     });
+    const [{ logActivity }, { createLocalReq }] = await Promise.all([import("@/payload/collections/history"), import("payload")]);
+    await logActivity(await createLocalReq({}, payload), { action: "update", entity: "orders", entityLabel: "Order", docId: String(o.id), title: orderNumber, changes: [{ field: "status", from: current, to: next }, ...(trackingNumber ? [{ field: "trackingNumber", from: String(o.trackingNumber ?? ""), to: trackingNumber }] : [])], storeId, actor: { id: null, email: `API key: ${caller.keyName}` } });
     return Response.json({ data: orderOut(saved as unknown as Record<string, unknown>) }, { headers: { "cache-control": "no-store" } });
   } catch (e) {
     const status = (e as { status?: number }).status;

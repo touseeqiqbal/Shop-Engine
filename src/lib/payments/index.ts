@@ -1,6 +1,7 @@
 import { commitTransaction, createLocalReq, initTransaction, killTransaction, type Payload, type PayloadRequest } from "payload";
 import { fromMinor, stripe, stripeConfigured, toMinor } from "./stripe";
 import { log } from "@/lib/log";
+import { dueAfterGiftCard } from "@/lib/order-money";
 
 /**
  * Online card payments through Stripe (customer → merchant) – the Stripe provider plugin (stripe-gateway.ts) calls
@@ -100,7 +101,8 @@ export async function markCheckoutPaid(payload: Payload, s: { sessionId: string;
     const order = (await payload.findByID({ collection: "orders", id: orderId, depth: 0, overrideAccess: true, req })) as unknown as Doc;
     const store = (await payload.findByID({ collection: "stores", id: relId(order.store), depth: 0, overrideAccess: true, req })) as unknown as Doc;
     const currency = String(charge.currency).toLowerCase();
-    const expected = toMinor(Number(order.total), currency);
+    // what the payment was for: the order total minus what a gift card already paid
+    const expected = toMinor(dueAfterGiftCard(order as { total?: number; giftCardAmount?: number }), currency);
     const wrongAccount = s.account && store.paymentsAccountId && s.account !== store.paymentsAccountId;
     if (s.currency.toLowerCase() !== currency || s.amountMinor !== expected || wrongAccount) {
       await payload.update({ collection: "payment-transactions", id: Number(charge.id), data: { status: "failed", failureReason: `Mismatch: got ${s.amountMinor} ${s.currency} on ${s.account ?? "?"}, expected ${expected} ${currency}` } as never, overrideAccess: true, req });

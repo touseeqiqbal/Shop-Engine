@@ -20,6 +20,7 @@ import { getStoreSettings } from "@/lib/repo/catalog";
 import { getNotifySettings } from "@/lib/cms/notify-settings";
 import { deliverEmail, isEmailConfigured } from "@/lib/mailer";
 import { amountToCollect, paidOnDelivery } from "@/lib/order-money";
+import { shipsLater } from "@/lib/utils";
 import { log } from "@/lib/log";
 import { NO_CHANNELS, storeChannels, storeTemplate, type StoreChannels } from "@/lib/integrations/channels";
 
@@ -101,7 +102,7 @@ const esc = (s: string | number | null | undefined) =>
  * `country`: the store's country, for a phone number typed without its country code (older messages: Pakistan).
  */
 export type Message =
-  | { channel: "email"; to: string; subject: string; html: string; text: string; replyTo?: string }
+  | { channel: "email"; to: string; subject: string; html: string; text: string; replyTo?: string; headers?: Record<string, string> }
   | { channel: "whatsapp"; to: string; text: string; template?: { name?: string; params: string[] }; country?: string }
   | { channel: "sms"; to: string; text: string; country?: string };
 
@@ -113,9 +114,9 @@ const push = (m: Message) => {
   list.push(m);
 };
 
-async function sendEmail(to: string, subject: string, html: string, text: string) {
+async function sendEmail(to: string, subject: string, html: string, text: string, headers?: Record<string, string>) {
   if (!to) return;
-  push({ channel: "email", to, subject, html, text, replyTo: ctx().site.email || undefined });
+  push({ channel: "email", to, subject, html, text, replyTo: ctx().site.email || undefined, ...(headers ? { headers } : {}) });
 }
 
 async function sendWhatsApp(phone: string, text: string, template?: { name?: string; params: string[] }) {
@@ -141,7 +142,7 @@ export async function sendMessage(m: Message, opts: { payload?: Payload | null; 
       const impl = (await providerImpl(own.provider))?.messaging;
       const c = { payload: opts.payload, connection: own };
       try {
-        if (m.channel === "email") return await impl?.email?.(c, { to: [m.to], subject: m.subject, html: m.html, text: m.text, replyTo: m.replyTo });
+        if (m.channel === "email") return await impl?.email?.(c, { to: [m.to], subject: m.subject, html: m.html, text: m.text, replyTo: m.replyTo, headers: m.headers });
         if (m.channel === "whatsapp") return await impl?.whatsapp?.(c, intlDigits(m.to, m.country), m.text, m.template);
         return await impl?.sms?.(c, intlDigits(m.to, m.country), m.text);
       } catch (e) {
@@ -152,7 +153,7 @@ export async function sendMessage(m: Message, opts: { payload?: Payload | null; 
     }
   }
   if (m.channel === "email") {
-    await deliverEmail({ to: m.to, subject: m.subject, html: m.html, text: m.text, replyTo: m.replyTo });
+    await deliverEmail({ to: m.to, subject: m.subject, html: m.html, text: m.text, replyTo: m.replyTo, headers: m.headers });
     return;
   }
   if (m.channel === "whatsapp") return deliverWhatsApp(m.to, m.text, m.template, m.country);
@@ -234,7 +235,7 @@ function itemsTable(o: Order) {
       (i) => `<tr>
         <td style="padding:10px 0;border-bottom:1px solid #e5e7eb;font-size:14px;color:#111827">
           ${esc(i.name)}${i.upgrades.length ? `<br><span style="color:#7c3aed;font-size:12px">+ ${esc(i.upgrades.map((u) => u.label).join(", "))}</span>` : ""}
-          <br><span style="color:#6b7280;font-size:12px">Qty ${i.qty} × ${esc(price(i.unitPrice))}</span>
+          <br><span style="color:#6b7280;font-size:12px">Qty ${i.qty} × ${esc(price(i.unitPrice))}</span>${i.availability ? `<br><span style="color:#7c3aed;font-size:12px">${esc(shipsLater(i))}</span>` : ""}
         </td>
         <td style="padding:10px 0;border-bottom:1px solid #e5e7eb;font-size:14px;text-align:right;white-space:nowrap;color:#111827">${esc(price(i.unitPrice * i.qty))}</td>
       </tr>`
@@ -248,7 +249,8 @@ function itemsTable(o: Order) {
     ${o.discount ? line(`Discount${o.couponCode ? ` (${o.couponCode})` : ""}`, `− ${price(o.discount)}`) : ""}
     ${line("Delivery", o.deliveryCharge ? price(o.deliveryCharge) : "FREE")}
     ${line("Total", price(o.total), true)}
-    ${o.advancePaid ? (o.paymentStatus === "partial" ? line("Advance paid", price(o.advancePaid)) : line("Advance (being checked)", price(o.advancePaid))) + line("Due on delivery", price(Math.max(0, o.total - o.advancePaid))) : ""}
+    ${(o.giftCardAmount ?? 0) > 0 ? line(`Gift card${o.giftCardCode ? ` ••••${o.giftCardCode.slice(-4)}` : ""}`, `− ${price(o.giftCardAmount ?? 0)}`) : ""}
+    ${o.advancePaid ? (o.paymentStatus === "partial" ? line("Advance paid", price(o.advancePaid)) : line("Advance (being checked)", price(o.advancePaid))) + line("Due on delivery", price(Math.max(0, o.total - (o.giftCardAmount ?? 0) - o.advancePaid))) : ""}
   </table>`;
 }
 
@@ -258,9 +260,9 @@ function paymentBlock(o: Order, s: StoreSettings) {
     ? `<p style="margin:8px 0 0;font-size:13px;color:#4b5563">${o.paymentStatus === "awaiting-verification" ? "We have received your payment screenshot and will verify it shortly." : "Please transfer the amount to:"}</p>
        <p style="margin:6px 0 0;font-size:13px;color:#111827">${lines.map((l) => `${esc(l.label)}: <strong>${esc(l.value)}</strong>`).join("<br>")}</p>`
     : o.paymentMethod === "cod"
-      ? `<p style="margin:8px 0 0;font-size:13px;color:#4b5563">Please keep ${esc(moneyOf(o)(o.total))} ready in cash when the rider arrives.</p>`
+      ? `<p style="margin:8px 0 0;font-size:13px;color:#4b5563">Please keep ${esc(moneyOf(o)(amountToCollect(o)))} ready in cash when the rider arrives.</p>`
       : paidOnDelivery(o)
-        ? `<p style="margin:8px 0 0;font-size:13px;color:#4b5563">Please keep ${esc(moneyOf(o)(o.total))} ready when your order arrives.</p>`
+        ? `<p style="margin:8px 0 0;font-size:13px;color:#4b5563">Please keep ${esc(moneyOf(o)(amountToCollect(o)))} ready when your order arrives.</p>`
         : "";
   // the store's own steps for its own methods ("use your order number as the reference")
   const steps = lines.length && o.paymentStatus !== "awaiting-verification" ? findCheckoutMethod(o.paymentMethod, s)?.instructions : undefined;
@@ -558,6 +560,41 @@ export async function notifyStaff(subject: string, lines: string[], link?: { hre
   }
 }
 
+/**
+ * ShopEngine's own team (not a store's): a store's plan payment failed, a store went offline … Sent to
+ * PLATFORM_ALERT_EMAILS, else to every platform admin account.
+ */
+export async function notifyPlatform(payload: Payload | null, subject: string, lines: string[], link?: { href: string; label: string }): Promise<void> {
+  try {
+    let to = (process.env.PLATFORM_ALERT_EMAILS ?? "").split(",").map((e) => e.trim()).filter(Boolean);
+    if (!to.length && payload) {
+      const admins = await payload.find({ collection: "users", where: { or: [{ role: { equals: "owner" } }, { platformRole: { equals: "platform_admin" } }] } as never, limit: 20, depth: 0, overrideAccess: true });
+      to = (admins.docs as unknown as { email?: string }[]).map((u) => u.email ?? "").filter(Boolean);
+    }
+    const href = link ? (/^https?:\/\//.test(link.href) ? link.href : mainSiteUrl(link.href)) : null;
+    const text = [...lines, link && href ? `${link.label}: ${href}` : ""].filter(Boolean).join("\n");
+    const inner = `<h1 style="margin:0;font-size:20px;color:#111827">${esc(subject)}</h1>${lines.map((l) => `<p style="margin:8px 0 0;font-size:14px;color:#4b5563">${esc(l)}</p>`).join("")}${link && href ? button(href, link.label) : ""}`;
+    await settle(`platform: ${subject}`, to.map((t) => sendEmail(t, `[ShopEngine] ${subject}`, layout(subject, lines[0] ?? subject, inner), text)));
+  } catch (err) {
+    buildFailed("notify.platform_failed", err);
+  }
+}
+
+/** A gift card for someone (Marketing → Gift cards → "Email the gift card"): its code, value and how to use it. */
+export async function notifyGiftCard(c: { code: string; balance: number; expiresAt?: string | null; recipientName?: string | null; recipientEmail: string; message?: string | null }) {
+  const subject = `A ${money(c.balance)} gift card for you from ${ctx().site.name}`;
+  const lines = [
+    `${c.recipientName ? `Hi ${c.recipientName.split(" ")[0]}! ` : ""}You've received a gift card worth ${money(c.balance)} for ${ctx().site.name}.`,
+    ...(c.message ? [`“${c.message}”`] : []),
+    `Your gift card code: ${c.code}`,
+    "Enter it at checkout – it pays for all or part of your order.",
+    ...(c.expiresAt ? [`Use it before ${new Date(c.expiresAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}.`] : []),
+  ];
+  const shop = absoluteUrl("/");
+  const inner = `<h1 style="margin:0;font-size:20px;color:#111827">${esc(subject)}</h1>${lines.map((l) => `<p style="margin:8px 0 0;font-size:14px;color:#4b5563">${esc(l)}</p>`).join("")}${button(shop, "Go shopping")}`;
+  await sendEmail(c.recipientEmail, subject, layout(subject, lines[0], inner), [...lines, shop].join("\n"));
+}
+
 /** Part of an order is on its way (the rest follows) – email and WhatsApp/SMS with the parcel's tracking. */
 export async function notifyShipment(order: Order, s: { items?: { title?: string; qty?: number }[]; courier?: string | null; trackingNumber?: string | null }) {
   const what = (s.items ?? []).map((i) => `${i.title ?? "Item"} × ${i.qty ?? 1}`).join(", ");
@@ -594,10 +631,14 @@ export async function canReach(contact: string, whatsappTemplateEnv: string, sto
 }
 
 /** Email when possible; WhatsApp (approved template) for phone numbers once WHATSAPP_TEMPLATE_<KIND> is set. */
-async function reach(contact: string, subject: string, message: string, link: { href: string; label: string }, whatsappTemplate?: { env: string; params: string[] }) {
+async function reach(contact: string, subject: string, message: string, link: { href: string; label: string }, whatsappTemplate?: { env: string; params: string[] }, opts: { unsubscribe?: { url: string; oneClick: string } } = {}) {
   if (isEmail(contact)) {
-    const inner = `<h1 style="margin:0;font-size:20px;color:#111827">${esc(subject)}</h1><p style="margin:8px 0 0;font-size:14px;color:#4b5563">${esc(message)}</p>${button(link.href, link.label)}`;
-    return sendEmail(contact, subject, layout(subject, message, inner), `${message}\n${link.href}`);
+    const stop = opts.unsubscribe ? `<p style="margin:16px 0 0;font-size:12px;color:#6b7280">Don&#39;t want these reminders? <a href="${esc(opts.unsubscribe.url)}" style="color:#6b7280">Unsubscribe</a></p>` : "";
+    const inner = `<h1 style="margin:0;font-size:20px;color:#111827">${esc(subject)}</h1><p style="margin:8px 0 0;font-size:14px;color:#4b5563">${esc(message)}</p>${button(link.href, link.label)}${stop}`;
+    // the email app's own "Unsubscribe" button (one click, RFC 8058)
+    // (only with a full address – email apps ignore a relative one)
+    const headers = opts.unsubscribe && /^https?:\/\//.test(opts.unsubscribe.oneClick) ? { "List-Unsubscribe": `<${opts.unsubscribe.oneClick}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } : undefined;
+    return sendEmail(contact, subject, layout(subject, message, inner), `${message}\n${link.href}`, headers);
   }
   const name = whatsappTemplate ? waTemplate(whatsappTemplate.env) : undefined;
   if (name) return sendWhatsApp(contact, `${message}\n${link.href}`, { name, params: whatsappTemplate!.params });
@@ -662,10 +703,10 @@ export async function notifyStockOrPrice(a: { contact: string; kind: "stock" | "
   await reach(a.contact, subject, message, { href: absoluteUrl(a.url), label: "View product" }, { env: a.kind === "stock" ? "WHATSAPP_TEMPLATE_BACK_IN_STOCK" : "WHATSAPP_TEMPLATE_PRICE_DROP", params: [a.title, money(a.price), absoluteUrl(a.url)] });
 }
 
-export async function notifyAbandonedCart(c: { contact: string; name: string; items: { name: string; qty: number }[]; total: number; restoreUrl: string; subject: string; message: string; coupon?: string }) {
+export async function notifyAbandonedCart(c: { contact: string; name: string; items: { name: string; qty: number }[]; total: number; restoreUrl: string; subject: string; message: string; coupon?: string; unsubscribeUrl?: string }) {
   const list = c.items.map((i) => `${i.name}${i.qty > 1 ? ` × ${i.qty}` : ""}`).join(", ");
   const message = `${c.name ? `Hi ${c.name.split(" ")[0]}! ` : ""}${c.message} Your cart: ${list} (${money(c.total)}).${c.coupon ? ` Use code ${c.coupon} at checkout.` : ""} No more reminders: ${c.restoreUrl}?stop=1`;
-  await reach(c.contact, c.subject, message, { href: c.restoreUrl, label: "Complete my order" }, { env: "WHATSAPP_TEMPLATE_CART", params: [c.name || "there", money(c.total), c.restoreUrl] });
+  await reach(c.contact, c.subject, message, { href: c.restoreUrl, label: "Complete my order" }, { env: "WHATSAPP_TEMPLATE_CART", params: [c.name || "there", money(c.total), c.restoreUrl] }, c.unsubscribeUrl ? { unsubscribe: { url: `${c.restoreUrl}?stop=1`, oneClick: c.unsubscribeUrl } } : {});
 }
 
 /* ───────────────────────────── queueing (outbox) ───────────────────────────── */
@@ -683,7 +724,9 @@ export type NotifyKind =
   | "stock-or-price"
   | "abandoned-cart"
   | "store-invite"
-  | "shipment";
+  | "shipment"
+  | "platform"
+  | "gift-card";
 
 /** The order a notification is about, read fresh when it is delivered. */
 async function loadOrder(payload: Payload, orderId: unknown): Promise<Order | null> {
@@ -729,6 +772,14 @@ export async function buildMessages(payload: Payload | null, kind: NotifyKind, s
           return notifyAbandonedCart(data as Parameters<typeof notifyAbandonedCart>[0]);
         case "store-invite":
           return notifyStoreInvite(data as Parameters<typeof notifyStoreInvite>[0]);
+        case "gift-card": {
+          if (!payload) return;
+          const card = (await payload.findByID({ collection: "gift-cards" as never, id: Number(data.giftCardId), depth: 0, overrideAccess: true }).catch(() => null)) as { code?: string; balance?: number; expiresAt?: string | null; recipientName?: string | null; recipientEmail?: string | null; message?: string | null } | null;
+          if (!card?.code || !card.recipientEmail) return;
+          return notifyGiftCard({ code: card.code, balance: Number(card.balance) || 0, expiresAt: card.expiresAt, recipientName: card.recipientName, recipientEmail: card.recipientEmail, message: card.message });
+        }
+        case "platform":
+          return notifyPlatform(payload, String(data.subject ?? ""), (data.lines as string[]) ?? [], data.link as { href: string; label: string } | undefined);
         case "shipment": {
           const order = payload ? await loadOrder(payload, data.orderId) : null;
           if (order) return notifyShipment(order, data.shipment as Parameters<typeof notifyShipment>[1]);

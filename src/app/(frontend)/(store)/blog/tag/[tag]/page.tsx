@@ -6,18 +6,16 @@ import { BlogCategoryChips, BlogTagCloud, PostGrid } from "@/components/blog/blo
 import { getBlogPosts } from "@/lib/repo/catalog";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { storePlace } from "@/lib/site-info";
-import { blogTagSlug, blogTags } from "@/lib/blog";
+import { blogTagSlug } from "@/lib/blog";
 import { pageMetadata } from "@/lib/seo";
 import { getStoreLocale } from "@/lib/store-locale";
 import { countryInText } from "@/lib/locale";
 
-export const revalidate = 300;
+// Rendered per request (the store comes from the address – a cached page must never reach another store's visitors);
+// the data behind it stays cached per store. No build-time list: products, brands and posts added later work at once.
+export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ tag: string }> };
-
-export async function generateStaticParams() {
-  return blogTags(await getBlogPosts()).map((t) => ({ tag: t.slug }));
-}
 
 async function load(slug: string) {
   const all = await getBlogPosts();

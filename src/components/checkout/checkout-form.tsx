@@ -21,22 +21,23 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { placeOrder, type CheckoutField, type PlaceOrderState } from "@/app/(frontend)/(store)/checkout/actions";
+import { placeOrder, quoteShipping, type CheckoutField, type PlaceOrderState } from "@/app/(frontend)/(store)/checkout/actions";
 import { trackEvent } from "@/components/analytics";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { readLocalAddresses, writeLocalAddresses } from "@/lib/addresses";
-import { deliveryEstimate, freeDeliveryAbove, shipToCountries } from "@/lib/cities";
+import { deliveryEstimate, freeDeliveryAbove, hasShippingChoices, shipToCountries } from "@/lib/cities";
 import { orderTotals } from "@/lib/order-totals";
-import { checkoutMethods, type CheckoutMethod, type PaymentIcon } from "@/lib/payments/methods";
+import { checkoutMethods, GIFT_CARD_METHOD, type CheckoutMethod, type PaymentIcon } from "@/lib/payments/methods";
 import { countryInText, countryName, deliveryArea } from "@/lib/locale";
 import { normalizePhone, phonePlaceholder } from "@/lib/phone";
-import type { PaymentMethod, SavedAddress, StoreSettings } from "@/lib/types";
+import type { PaymentMethod, SavedAddress, ShippingOption, StoreSettings } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useMoney, useStoreLocale } from "@/components/providers/locale";
 import { cartCount, cartSubtotal, useCart } from "@/store/cart";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CityCombobox } from "./city-combobox";
 import { CouponBox } from "./coupon-box";
+import { GiftCardBox, type AppliedGiftCard } from "./gift-card-box";
 import { Field, fieldAria } from "./field";
 import { formatPhoneInput } from "./phone";
 import { toRequestLines, useCartCoupon, useCartSync } from "./use-coupon";
@@ -64,6 +65,7 @@ export function CheckoutForm({
   savedAddresses: remoteAddresses,
   accountMode,
   emailRequired = false,
+  giftCards = false,
 }: {
   settings: StoreSettings;
   prefill: CheckoutPrefill | null;
@@ -72,6 +74,8 @@ export function CheckoutForm({
   accountMode: "remote" | "local" | "none";
   /** Email is required (receipt and cash-on-delivery confirmation are emailed) */
   emailRequired?: boolean;
+  /** the store has gift cards that can pay (shows the gift card box) */
+  giftCards?: boolean;
 }) {
   const hydrated = useHydrated();
   const router = useRouter();
@@ -140,8 +144,12 @@ export function CheckoutForm({
   const [formMessage, setFormMessage] = useState("");
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [saveAddress, setSaveAddress] = useState(accountMode !== "none");
+  // "Invoice in another name" (a company with a VAT / tax number) – the fields themselves are plain form fields
+  const [billingOn, setBillingOn] = useState(false);
   const [localAddresses, setLocalAddresses] = useState<SavedAddress[]>([]);
   const [placed, setPlaced] = useState(false);
+  // a gift card the server confirmed (code + balance); what it pays is worked out from the total below
+  const [gift, setGift] = useState<AppliedGiftCard | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const began = useRef(false);
 
@@ -212,14 +220,48 @@ export function CheckoutForm({
   }, [state]);
 
   const subtotal = cartSubtotal(lines);
+  // Delivery methods (Express …) and weight pricing: the server says what this address and cart get (product weights
+  // live there); stores without a choice never ask
+  const choices = hasShippingChoices(settings);
+  const [quote, setQuote] = useState<{ options: ShippingOption[]; weightKg: number } | null>(null);
+  const [shipping, setShipping] = useState("standard");
+  const quoteKey = choices && f.city ? JSON.stringify([f.city, f.postalCode, shipTo, coupon.discount, toRequestLines(lines)]) : "";
+  useEffect(() => {
+    if (!quoteKey) return setQuote(null);
+    let live = true;
+    const t = setTimeout(() => {
+      void quoteShipping({ city: f.city, postalCode: f.postalCode, country: shipTo, discount: coupon.discount, items: toRequestLines(lines) })
+        .then((q) => {
+          if (!live) return;
+          setQuote(q);
+          if (!q.options.some((o) => o.id === shipping)) setShipping("standard");
+        })
+        .catch(() => undefined);
+    }, 350);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quoteKey]);
   // the same arithmetic the server uses (lib/order-totals.ts) – the server's total is the one that counts
-  const totals = orderTotals({ subtotal, discount: coupon.discount, city: f.city, postalCode: f.postalCode, country: shipTo, method, settings, freeShipping: coupon.freeShipping });
+  const totalsInput = { subtotal, discount: coupon.discount, city: f.city, postalCode: f.postalCode, country: shipTo, settings, freeShipping: coupon.freeShipping, shipping, weightKg: quote?.weightKg ?? 0, lines: lines.map((l) => ({ amount: l.unitPrice * l.qty, taxClass: l.taxClass })) };
+  // a gift card that pays the whole order (no cash-on-delivery fee then) becomes the way to pay
+  const giftTotals = gift ? orderTotals({ ...totalsInput, method: GIFT_CARD_METHOD.id }) : null;
+  const giftCovers = Boolean(gift && giftTotals && giftTotals.delivery !== null && gift.balance >= giftTotals.total);
+  const totals = giftCovers && giftTotals ? giftTotals : orderTotals({ ...totalsInput, method });
   const { discount, delivery, fee, total } = totals;
-  const eta = f.city ? deliveryEstimate(f.city, settings, f.postalCode, shipTo) : null;
+  const payMethod: PaymentMethod = giftCovers ? GIFT_CARD_METHOD.id : method;
+  // what the card pays and what is left (cash on delivery, a transfer or a card payment covers the rest)
+  const giftUsed = gift ? Math.min(gift.balance, total) : 0;
+  const toPay = Math.max(0, Math.round((total - giftUsed) * 100) / 100);
+  // a chosen delivery method's own delivery time (Express: "Next working day" …)
+  const chosenShipping = quote && quote.options.length > 1 ? quote.options.find((o) => o.id === shipping) : null;
+  const eta = f.city ? (chosenShipping?.estimate ? { label: chosenShipping.estimate, days: chosenShipping.estimate } : deliveryEstimate(f.city, settings, f.postalCode, shipTo)) : null;
   const codMax = settings.payments?.cod.maxOrder ?? null;
-  const onDelivery = current?.due === "on-delivery";
+  const onDelivery = !giftCovers && current?.due === "on-delivery";
   const advanceEligible = onDelivery && settings.advanceAmount > 0 && (total >= settings.advanceThreshold || advanceRequired);
-  const needsProof = Boolean(current?.proof);
+  const needsProof = !giftCovers && Boolean(current?.proof);
   const accountLines = current?.account ?? [];
   // where an advance for cash on delivery can be sent: every method with a receipt
   const advanceTargets = methods
@@ -251,8 +293,10 @@ export function CheckoutForm({
     if (pkAddr ? !f.city : f.city.trim().length < 2) e.city = pkAddr ? "Please choose your city from the list" : "Please enter your city";
     if (f.postalCode.trim() && !/^[A-Za-z0-9][A-Za-z0-9 -]{1,11}$/.test(f.postalCode.trim())) e.postalCode = "Enter a valid postcode";
     if (f.address.trim().length < (pkAddr ? 10 : 5)) e.address = "Please enter your complete address (house, street, area)";
-    if (!current) e.paymentMethod = "Please choose a payment method";
-    else if (method === "cod" && codMax && total > codMax) e.paymentMethod = `Cash on Delivery is available for orders up to ${money(codMax)} – please pay online`;
+    if (giftCovers) {
+      // nothing else to choose
+    } else if (!current) e.paymentMethod = "Please choose a payment method";
+    else if (method === "cod" && codMax && toPay > codMax) e.paymentMethod = `Cash on Delivery is available for orders up to ${money(codMax)} – please pay online`;
     if (needsProof && !file) e.screenshot = "Upload a screenshot of your payment (JPG, PNG or WebP)";
     if (needsProof && !REFERENCE.test(reference.trim())) e.paymentReference = "Enter the transaction ID from your payment receipt";
     if (onDelivery && advanceRequired && !file) e.screenshot = "Upload the screenshot of your advance payment";
@@ -278,8 +322,10 @@ export function CheckoutForm({
     const fd = new FormData(e.currentTarget);
     fd.set("items", JSON.stringify(toRequestLines(lines)));
     fd.set("couponCode", coupon.code && coupon.status !== "error" ? coupon.code : "");
-    fd.set("paymentMethod", method);
+    fd.set("paymentMethod", payMethod);
+    fd.set("giftCardCode", gift?.code ?? "");
     fd.set("country", shipTo);
+    fd.set("shipping", shipping);
     if (!attemptId.current) attemptId.current = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
     fd.set("attemptId", attemptId.current);
     fd.set("expectedTotal", String(acceptedTotal.current ?? total));
@@ -328,6 +374,7 @@ export function CheckoutForm({
       tax={totals.tax}
       taxAdded={totals.taxAdded}
       total={total}
+      gift={gift && giftUsed > 0 ? { code: gift.code, used: giftUsed, toPay } : null}
       eta={eta?.label ?? null}
       city={f.city}
       postalCode={f.postalCode}
@@ -351,7 +398,7 @@ export function CheckoutForm({
             {summaryOpen ? "Hide" : "Show"} order summary ({cartCount(lines)})
             <ChevronDown className={cn("size-4 transition-transform", summaryOpen && "rotate-180")} aria-hidden="true" />
           </span>
-          <span className="font-display text-lg font-bold tabular-nums">{money(total)}</span>
+          <span className="font-display text-lg font-bold tabular-nums">{money(gift ? toPay : total)}</span>
         </button>
         <AnimatePresence initial={false}>
           {summaryOpen && (
@@ -536,12 +583,89 @@ export function CheckoutForm({
               <input type="checkbox" name="marketingConsent" className="size-4 accent-violet-500" />
               Email me news and offers from this store (you can say no at any time)
             </label>
+            <label className="flex cursor-pointer items-center gap-2.5 text-sm text-muted sm:col-span-2">
+              <input type="checkbox" name="billingOn" checked={billingOn} onChange={(e) => setBillingOn(e.target.checked)} className="size-4 accent-violet-500" />
+              Invoice in another name (a company, with a VAT / tax number)
+            </label>
+            {billingOn && (
+              <fieldset className="grid gap-4 rounded-2xl border border-border p-4 sm:col-span-2 sm:grid-cols-2" aria-describedby={errors.billing ? fid("billing-error") : undefined}>
+                <legend className="px-1 text-sm font-semibold">Invoice to</legend>
+                <Field id={fid("billingName")} label="Name on the invoice" required>
+                  <input id={fid("billingName")} name="billingName" className="input w-full" autoComplete="billing name" maxLength={120} />
+                </Field>
+                <Field id={fid("billingCompany")} label="Company" optional>
+                  <input id={fid("billingCompany")} name="billingCompany" className="input w-full" autoComplete="billing organization" maxLength={120} />
+                </Field>
+                <Field id={fid("billingTaxId")} label="VAT / tax number" optional>
+                  <input id={fid("billingTaxId")} name="billingTaxId" className="input w-full uppercase" autoComplete="off" maxLength={40} />
+                </Field>
+                <Field id={fid("billingPostalCode")} label="Postcode" optional>
+                  <input id={fid("billingPostalCode")} name="billingPostalCode" className="input w-full uppercase" autoComplete="billing postal-code" maxLength={12} />
+                </Field>
+                <Field id={fid("billingAddress")} label="Invoice address" required className="sm:col-span-2">
+                  <input id={fid("billingAddress")} name="billingAddress" className="input w-full" autoComplete="billing street-address" maxLength={300} />
+                </Field>
+                <Field id={fid("billingCity")} label="City" required>
+                  <input id={fid("billingCity")} name="billingCity" className="input w-full" autoComplete="billing address-level2" maxLength={80} />
+                </Field>
+                {errors.billing && (
+                  <p id={fid("billing-error")} className="text-xs font-medium text-rose-400 sm:col-span-2" role="alert">
+                    {errors.billing}
+                  </p>
+                )}
+              </fieldset>
+            )}
           </div>
+          {quote && quote.options.length > 1 && (
+            <fieldset className="mt-5">
+              <legend className="mb-2 text-sm font-semibold">Delivery method</legend>
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                {quote.options.map((o) => (
+                  <label key={o.id} className={cn("card flex cursor-pointer items-start gap-3 p-3.5 text-sm transition", shipping === o.id ? "border-violet-500/60 bg-violet-500/10" : "hover:border-border-strong")}>
+                    <input type="radio" name="shippingChoice" value={o.id} checked={shipping === o.id} onChange={() => setShipping(o.id)} className="mt-0.5 size-4 accent-violet-500" />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-baseline justify-between gap-2 font-semibold">
+                        {o.name}
+                        <span>{coupon.freeShipping || o.charge === 0 ? "Free" : money(o.charge)}</span>
+                      </span>
+                      {o.estimate && <span className="block text-xs text-muted">{o.estimate}</span>}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
         </Section>
 
         <Section step={3} title="Payment method" subtitle={pk ? "Cash on Delivery available in every city" : methods.some((m) => m.id === "cod") ? "Cash on Delivery available" : "Choose how you'd like to pay"}>
+          {(giftCards || gift) && (
+            <GiftCardBox
+              className="mb-4"
+              applied={gift}
+              used={giftUsed}
+              error={errors.giftCard}
+              onApply={(card) => {
+                setGift(card);
+                setErrors((er) => ({ ...er, giftCard: undefined, paymentMethod: undefined }));
+              }}
+              onRemove={() => {
+                setGift(null);
+                setErrors((er) => ({ ...er, giftCard: undefined }));
+              }}
+            />
+          )}
+          {giftCovers ? (
+            <p className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm" role="status">
+              Your gift card pays the whole order – there is nothing else to pay.
+            </p>
+          ) : (
           <fieldset aria-describedby={errors.paymentMethod ? fid("pm-error") : undefined}>
             <legend className="sr-only">Choose a payment method</legend>
+            {gift && giftUsed > 0 && (
+              <p className="mb-2.5 text-sm text-muted">
+                How would you like to pay the other <strong className="text-fg">{money(toPay)}</strong>?
+              </p>
+            )}
             <div className="grid gap-2.5 sm:grid-cols-2">
               {methods.map((m) => (
                 <PayOption key={m.id} id={fid(`pm-${m.id}`)} value={m.id} current={method} onSelect={setMethod} icon={METHOD_ICON[m.icon]} title={m.id === "card" ? "Debit / credit card" : m.label} desc={methodDescription(m, settings, fee, money)} badge={m.id === "cod" ? "Most popular" : undefined} />
@@ -553,13 +677,14 @@ export function CheckoutForm({
               </p>
             )}
           </fieldset>
+          )}
 
           <AnimatePresence mode="wait" initial={false}>
             {needsProof && (
               <motion.div key={method} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-5 space-y-4 rounded-2xl border border-violet-500/30 bg-violet-500/5 p-4">
                 <div>
                   <p className="text-sm font-semibold">
-                    Send <span className="gradient-text font-bold">{money(total)}</span> via {current?.label} to:
+                    Send <span className="gradient-text font-bold">{money(toPay)}</span> via {current?.label} to:
                   </p>
                   <dl className="mt-2 grid gap-1.5 text-sm">
                     {accountLines.map((l) => (
@@ -615,7 +740,7 @@ export function CheckoutForm({
         </Section>
 
         <div className="hidden lg:block">
-          <SubmitButton pending={pending} total={total} />
+          <SubmitButton pending={pending} total={gift ? toPay : total} />
           <TrustLine />
         </div>
       </div>
@@ -633,10 +758,10 @@ export function CheckoutForm({
       </div>
       <div className="glass fixed inset-x-0 bottom-16 z-30 flex items-center gap-3 border-x-0 px-4 py-3 lg:hidden">
         <div className="min-w-0">
-          <p className="text-xs text-muted">Total</p>
-          <p className="font-display text-lg font-bold tabular-nums">{money(total)}</p>
+          <p className="text-xs text-muted">{gift && giftUsed > 0 ? "To pay" : "Total"}</p>
+          <p className="font-display text-lg font-bold tabular-nums">{money(gift ? toPay : total)}</p>
         </div>
-        <SubmitButton pending={pending} total={total} compact />
+        <SubmitButton pending={pending} total={gift ? toPay : total} compact />
       </div>
       <div className="h-20 lg:hidden" aria-hidden="true" />
     </form>
@@ -811,7 +936,7 @@ function SubmitButton({ pending, total, compact }: { pending: boolean; total: nu
         </>
       ) : (
         <>
-          <Lock className="size-4" aria-hidden="true" /> {compact ? "Place order" : `Place order · ${money(total)}`}
+          <Lock className="size-4" aria-hidden="true" /> {compact || total <= 0 ? "Place order" : `Place order · ${money(total)}`}
         </>
       )}
     </button>
@@ -837,6 +962,7 @@ function OrderSummary({
   tax,
   taxAdded,
   total,
+  gift,
   eta,
   city,
   postalCode,
@@ -851,6 +977,8 @@ function OrderSummary({
   tax: number;
   taxAdded: number;
   total: number;
+  /** a gift card paying part or all of it */
+  gift: { code: string; used: number; toPay: number } | null;
   eta: string | null;
   city: string;
   postalCode: string;
@@ -921,6 +1049,18 @@ function OrderSummary({
           <dt className="font-semibold">Total</dt>
           <dd className="font-display text-2xl font-extrabold tabular-nums">{money(total)}</dd>
         </div>
+        {gift && (
+          <>
+            <div className="flex justify-between text-emerald-400">
+              <dt>Gift card ••••{gift.code.slice(-4)}</dt>
+              <dd className="tabular-nums">− {money(gift.used)}</dd>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <dt className="font-semibold">To pay</dt>
+              <dd className="font-display text-xl font-extrabold tabular-nums">{money(gift.toPay)}</dd>
+            </div>
+          </>
+        )}
       </dl>
       {remaining > 0 && (
         <p className="rounded-xl bg-surface-strong px-3 py-2 text-xs text-muted">

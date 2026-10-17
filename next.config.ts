@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { withPayload } from "@payloadcms/next/withPayload";
+import { withSentryConfig } from "@sentry/nextjs/config";
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -79,7 +80,7 @@ const nextConfig: NextConfig = {
 const config = withPayload(nextConfig, { devBundleServerPackages: false });
 const payloadHeaders = config.headers;
 
-export default {
+const finalConfig = {
   ...config,
   // Payload sends Accept-CH / Critical-CH (the admin's colour scheme) on EVERY page. Critical-CH makes Chrome repeat the
   // first request of a visit (~1 s on mobile), so the store pages don't get it – only the admin (/cms) needs it.
@@ -88,3 +89,10 @@ export default {
     return all.map((h) => (h.source === "/:path*" && h.headers.some((x) => x.key === "Critical-CH") ? { ...h, source: "/cms/:path*" } : h));
   },
 } satisfies NextConfig;
+
+// Readable error locations in Sentry: the build uploads its source maps (then deletes them from the server) – only
+// when the upload credentials are set for the build. Otherwise the config is unchanged.
+const uploadSourceMaps = Boolean(process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT);
+export default uploadSourceMaps
+  ? withSentryConfig(finalConfig, { org: process.env.SENTRY_ORG, project: process.env.SENTRY_PROJECT, authToken: process.env.SENTRY_AUTH_TOKEN, silent: true, telemetry: false, sourcemaps: { deleteSourcemapsAfterUpload: true } })
+  : finalConfig;

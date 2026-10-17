@@ -4,7 +4,7 @@ import Link from "next/link";
 import { m as motion } from "framer-motion";
 import { GitCompareArrows, Heart, ShoppingBag, Flame, FileText } from "lucide-react";
 import type { CatalogProduct } from "@/lib/types";
-import { cn, discountPercent, effectivePrice } from "@/lib/utils";
+import { availabilityLabel, canOrder, cn, discountPercent, effectivePrice, formatDate } from "@/lib/utils";
 import { trackEvent } from "@/components/analytics";
 import { useStoreLocale } from "@/components/providers/locale";
 import { Price } from "@/components/ui/price";
@@ -31,12 +31,15 @@ export function ProductCard({
   const { wishlist, compare, toggleWishlist, toggleCompare } = useLists();
   const toast = useUi((s) => s.toast);
   const hydrated = useHydrated();
-  const { currency } = useStoreLocale();
+  const loc = useStoreLocale();
+  const { currency } = loc;
   const wished = hydrated && wishlist.includes(p.id);
   const analyticsItem = { item_id: p.sku, item_name: p.name, item_brand: p.brandName, item_category: p.categoryName, price: effectivePrice(p), quantity: 1 };
   const comparing = hydrated && compare.includes(p.id);
   const off = discountPercent(p);
-  const outOfStock = p.stock <= 0;
+  // in stock – or a pre-order / keep-selling product (Products → When sold out)
+  const outOfStock = !canOrder(p);
+  const availability = availabilityLabel(p, (iso) => formatDate(iso, { day: "numeric", month: "short" }, loc));
   const list = layout === "list";
   const quoteOnly = Boolean(p.priceOnRequest);
 
@@ -164,8 +167,8 @@ export function ProductCard({
           <>
           {p.variantCount ? <span className="text-[11px] font-medium text-muted">From</span> : null}
           <Price price={p.price} salePrice={p.salePrice} size="sm" />
-          <p className={cn("mt-0.5 text-xs", outOfStock ? "text-rose-400" : p.stock <= 3 ? "text-amber-400" : "text-emerald-400")}>
-            {outOfStock ? "Out of stock" : p.stock <= 3 ? `Only ${p.stock} left` : "In stock"}
+          <p className={cn("mt-0.5 text-xs", { rose: "text-rose-400", amber: "text-amber-400", violet: "text-violet-300", emerald: "text-emerald-400" }[availability.tone])}>
+            {availability.label}
             {!outOfStock && <span className="hidden text-muted sm:inline"> · COD available</span>}
           </p>
           {p.variantCount ? (

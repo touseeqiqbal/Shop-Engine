@@ -5,6 +5,7 @@ import { inStore, payloadClient } from "@/lib/cms/catalog-source";
 import { currentStoreId } from "@/lib/tenant";
 import { isCmsConfigured } from "@/lib/db/config";
 import type { OrderConfirmation, OrderRisk } from "@/lib/types";
+import { log } from "@/lib/log";
 
 /**
  * Fake-order protection (settings: /cms → Settings → Fake order protection).
@@ -75,7 +76,7 @@ const protectionCached = unstable_cache(
         advanceCities: list(g.advanceCities),
       };
     } catch (e) {
-      console.error("[protection] settings:", e);
+      log.error("protection.settings_unavailable", e);
       return DEFAULT_PROTECTION;
     }
   },

@@ -3,6 +3,7 @@ import { listAll } from "./db";
 import { isCmsConfigured } from "@/lib/db/config";
 import { cmsRedirects } from "@/lib/cms/site";
 import { matchStore, toDirectoryEntry, type StoreDirectoryEntry } from "@/lib/tenant-shared";
+import { log } from "@/lib/log";
 
 /**
  * Redirects for the proxy, per store, cached for 60 s. The cache lives on globalThis so /cms can clear it the moment a
@@ -24,7 +25,7 @@ export async function storeIdForHost(host: string | null): Promise<number | null
       const res = await (await payloadClient()).find({ collection: "stores", limit: 0, pagination: false, depth: 0, overrideAccess: true });
       g.__shopengineStores = { at: now, stores: (res.docs as unknown as Record<string, unknown>[]).map(toDirectoryEntry) };
     } catch (e) {
-      console.error("[proxy] store list failed", e);
+      log.error("proxy.store_list_failed", e);
       g.__shopengineStores = { at: now, stores: g.__shopengineStores?.stores ?? [] };
     }
   }
@@ -44,7 +45,7 @@ export async function getRedirectMap(storeId: number | null) {
       all.set(key, { at: Date.now(), map: new Map(rows.map((r) => [r.fromPath, { toPath: r.toPath, permanent: r.permanent }])) });
     }
   } catch (e) {
-    console.error("[redirects] load failed", e);
+    log.error("redirects.load_failed", e);
     all.set(key, { at: Date.now(), map: cache?.map ?? new Map() });
   }
   return all.get(key)!.map;

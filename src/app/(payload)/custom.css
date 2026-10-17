@@ -977,3 +977,14 @@ a.urko-ocell:hover strong { color: var(--urko-accent); }
 @media (max-width: 760px) {
   .urko-int__row { grid-template-columns: 1fr; gap: 8px; }
 }
+.urko-int__sync { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-top: 14px; padding: 10px 12px; border-radius: 10px; background: var(--theme-elevation-50); }
+.urko-int__sync p { margin: 0; font-size: 13px; }
+/* /cms/platform – month-by-month history */
+.urko-history td { white-space: nowrap; }
+.urko-history__bar { display: inline-block; vertical-align: middle; height: 8px; min-width: 2px; max-width: 120px; margin-right: 6px; border-radius: 4px; background: var(--urko-accent, #6366f1); }
+/* support "view as" */
+.urko-support { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin: 8px 12px; padding: 10px 12px; border-radius: 10px; background: var(--urko-yellow-bg); color: var(--theme-text); font-size: 13px; }
+.urko-support__form { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
+.urko-support__form label { display: grid; gap: 4px; font-size: 13px; font-weight: 600; }
+.urko-support__form select, .urko-support__form input { min-height: 38px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--theme-elevation-200); background: var(--theme-input-bg, var(--theme-elevation-0)); color: var(--theme-text); font: inherit; font-weight: 400; }
+.urko-support__reason { grid-column: 1 / -1; }

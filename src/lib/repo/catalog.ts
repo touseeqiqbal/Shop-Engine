@@ -5,7 +5,8 @@ import { getSetting, listAll } from "./db";
 import { isCmsConfigured } from "@/lib/db/config";
 import { loadApprovedReviewsFromPayload, loadCatalogFromPayload, loadProductDescription, loadProductDraft } from "@/lib/cms/catalog-source";
 import { loadCommerceSettings } from "@/lib/cms/commerce";
-import { activeFlashSaleCms } from "@/lib/cms/sales";
+import { activeFlashSaleCms, discountedFlashSalesCms } from "@/lib/cms/sales";
+import { applyFlashSales } from "@/lib/flash-pricing";
 import { cmsBlogPosts, cmsFaqs, cmsTestimonials } from "@/lib/cms/site";
 import { seedFaqs, seedSettings, seedTestimonials } from "@/lib/data/seed";
 import type {
@@ -122,7 +123,10 @@ const loadSnapshotCached = unstable_cache(
   async (storeId: number | null): Promise<CatalogSnapshot> => {
     const { categories, brands, products, models } = await loadRaw(storeId);
     categories.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
-    return { categories, brands, products: groupVariants(enrich(products, categories, brands)).map((p) => ({ ...p, description: "" })), models };
+    // running flash sales with "% off" lower their products' prices here – every page, the cart and checkout read this
+    // snapshot (housekeeping refreshes it when such a sale starts or ends)
+    const flash = isCmsConfigured ? await discountedFlashSalesCms(storeId) : [];
+    return { categories, brands, products: applyFlashSales(groupVariants(enrich(products, categories, brands)), flash).map((p) => ({ ...p, description: "" })), models };
   },
   ["catalog-snapshot-v5"],
   { tags: [TAGS.catalog], revalidate: REVALIDATE }

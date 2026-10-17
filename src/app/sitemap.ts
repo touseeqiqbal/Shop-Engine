@@ -10,6 +10,7 @@ import { indexable } from "@/lib/seo";
 import { currentAvailability, currentOrigin } from "@/lib/tenant";
 import { getStoreLocale } from "@/lib/store-locale";
 import { site } from "@/lib/site";
+import { log } from "@/lib/log";
 
 export const revalidate = 3600;
 
@@ -48,7 +49,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
 async function entriesOf(cityPages: boolean): Promise<MetadataRoute.Sitemap> {
   const [products, categories, brands, posts, builderPages] = await Promise.all([getAllProducts(), getCategories(), getBrands(), getBlogPosts(), listPublishedPages()]);
-  const collections = await listCollections().catch((e) => (console.error("[sitemap] collections unavailable:", e), []));
+  const collections = await listCollections().catch((e) => (log.error("sitemap.collections_unavailable", e), []));
   // built-in pages set to "Noindex" in /cms → Settings → Google & SEO → Built-in pages stay out of the sitemap
   const noindexed = new Set((await Promise.all(STATIC_PAGES.map(async (p) => ((await getPageMeta(p.path).catch(() => ({}) as Metadata)).robots as { index?: boolean } | undefined)?.index === false ? p.path : ""))).filter(Boolean));
   const now = new Date();

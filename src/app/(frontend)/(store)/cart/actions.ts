@@ -4,7 +4,7 @@ import { resolveDiscounts } from "@/lib/coupons";
 import { priceCart } from "@/lib/cart-pricing";
 import { rateLimit } from "@/lib/rate-limit";
 import { getProductsByIds } from "@/lib/repo/catalog";
-import { effectivePrice } from "@/lib/utils";
+import { buyLimit, canOrder, effectivePrice } from "@/lib/utils";
 import { MAX_QTY_PER_ITEM } from "@/lib/cart-limits";
 
 const schema = z.object({
@@ -20,6 +20,7 @@ export interface RepricedLine {
   unitPrice: number;
   basePrice: number;
   stock: number;
+  taxClass?: "reduced" | "exempt";
 }
 
 /** Live price/stock for each cart line (keyed like the cart store's lineKey) so stale carts show current prices. */
@@ -38,7 +39,8 @@ export async function repriceCart(input: { productId: string; qty: number; upgra
     const ups = p ? l.upgradeIds.map((id) => pool.find((u) => u.id === id)) : [];
     if (!p || p.priceOnRequest || ups.some((u) => !u)) return { key, available: false, unitPrice: 0, basePrice: 0, stock: 0 };
     const base = effectivePrice(p);
-    return { key, available: p.stock > 0, basePrice: base, unitPrice: base + ups.reduce((s, u) => s + (u?.price ?? 0), 0), stock: p.stock };
+    // stock = what one line may hold (the cart's own limit for pre-order / keep-selling products)
+    return { key, available: canOrder(p), basePrice: base, unitPrice: base + ups.reduce((s, u) => s + (u?.price ?? 0), 0), stock: buyLimit(p), ...(p.taxClass ? { taxClass: p.taxClass } : {}) };
   });
 }
 

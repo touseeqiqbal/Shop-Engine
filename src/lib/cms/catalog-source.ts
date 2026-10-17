@@ -1,6 +1,7 @@
 import "server-only";
 import type { Payload, Where } from "payload";
 import type { Brand, Category, CategoryAttribute, Condition, LaptopModel, Product, Review } from "@/lib/types";
+import { log } from "@/lib/log";
 
 /**
  * Catalog read/write against Payload (single source of truth since Phase 4).
@@ -43,7 +44,7 @@ export async function toMarkdown(payload: Payload, value: unknown): Promise<stri
     editorConfig ??= await editorConfigFactory.default({ config: payload.config });
     return convertLexicalToMarkdown({ data: state as never, editorConfig: editorConfig as never }).trim();
   } catch (e) {
-    console.error("[catalog] description conversion failed:", e);
+    log.error("catalog.description_conversion_failed", e);
     return "";
   }
 }
@@ -111,6 +112,9 @@ async function toProduct(payload: Payload, p: Doc): Promise<Product> {
     price: onSale ? compareAt : price,
     salePrice: onSale ? price : null,
     stock: num(p.stock),
+    ...(p.taxClass === "reduced" || p.taxClass === "exempt" ? { taxClass: p.taxClass } : {}),
+    ...(p.backorders === "backorder" || p.backorders === "preorder" ? { backorders: p.backorders, releaseDate: opt(str(p.releaseDate)) ?? null, backorderNote: opt(str(p.backorderNote)) ?? null } : {}),
+    weightKg: num(p.weight) > 0 ? num(p.weight) : undefined,
     condition: opt(str(p.condition)) as Condition | undefined,
     conditionNotes: opt(str(p.conditionNotes)),
     warranty: str(p.warranty),

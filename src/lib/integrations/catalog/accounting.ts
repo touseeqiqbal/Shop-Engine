@@ -3,10 +3,11 @@ import type { IntegrationInfo } from "../catalog-types";
 /**
  * Accounting: each sale goes to the store's own accounting company once the money is in – paid online, or the order
  * delivered (cash collected). Connected with the provider's sign-in page (ShopEngine's app – lib/integrations/oauth.ts).
- * Refunds and returns are recorded in the accounting software by the store (not sent automatically).
+ * Refunds made through ShopEngine (online payments) follow as a refund receipt / credit note; refunds handled outside
+ * (cash returned at the counter, Orders → Returns) are recorded in the accounting software by the store.
  */
 
-const after = "After connecting, every paid online order – and every delivered order – is added as a sale. Orders from before connecting are not sent.";
+const after = "After connecting, every paid online order – and every delivered order – is added as a sale, and refunds of online payments follow. Orders from before connecting are not sent.";
 
 export const ACCOUNTING: IntegrationInfo[] = [
   {
@@ -22,7 +23,7 @@ export const ACCOUNTING: IntegrationInfo[] = [
     verified: false,
     docsUrl: "https://quickbooks.intuit.com/",
     color: "#2ca01c",
-    events: ["order.paid", "order.updated"],
+    events: ["order.paid", "order.updated", "refund.created"],
   },
   {
     id: "xero",
@@ -46,6 +47,6 @@ export const ACCOUNTING: IntegrationInfo[] = [
     verified: false,
     docsUrl: "https://www.xero.com/",
     color: "#13b5ea",
-    events: ["order.paid", "order.updated"],
+    events: ["order.paid", "order.updated", "refund.created"],
   },
 ];

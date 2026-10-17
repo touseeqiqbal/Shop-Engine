@@ -35,6 +35,8 @@ export type CountLine = {
 
 const bad = (error: string, status = 400) => Response.json({ error }, { status });
 const body = async (req: PayloadRequest) => ((await req.json?.().catch(() => null)) ?? {}) as Doc;
+/** What should be on the shelf: a stock below 0 (pre-orders / backorders still owed) means none – the count keeps what is owed. */
+const onShelf = (stock: unknown) => Math.max(0, Number(stock) || 0);
 const getCount = async (req: PayloadRequest, id: unknown) => (await req.payload.findByID({ collection: "stock-counts", id: Number(id), depth: 0, overrideAccess: true, req, context: { keepCost: true } }).catch(() => null)) as unknown as Doc | null;
 const save = (req: PayloadRequest, id: number, data: Doc) => req.payload.update({ collection: "stock-counts", id, data: data as never, overrideAccess: true, depth: 0, req, context: { keepCost: true } });
 /** Cost prices only for the store's owner. */
@@ -75,14 +77,14 @@ async function inStockSerials(req: PayloadRequest, productId: number) {
 async function lineFor(req: PayloadRequest, p: Doc): Promise<CountLine> {
   const tracked = Boolean(p.trackUnits);
   const serials = tracked ? await inStockSerials(req, Number(p.id)) : [];
-  return { productId: Number(p.id), title: String(p.title ?? ""), sku: String(p.sku ?? ""), tracked, expected: Number(p.stock) || 0, counted: 0, unitCost: Number(p.costPrice) || 0, expectedSerials: serials, scannedSerials: [] };
+  return { productId: Number(p.id), title: String(p.title ?? ""), sku: String(p.sku ?? ""), tracked, expected: onShelf(p.stock), counted: 0, unitCost: Number(p.costPrice) || 0, expectedSerials: serials, scannedSerials: [] };
 }
 
 /** First time a line is counted: what the system says is on that shelf RIGHT NOW (see the note at the top). */
 async function firstTouch(req: PayloadRequest, line: CountLine) {
   if (line.touched) return;
   const { liveProduct } = await import("../stock");
-  line.expected = (await liveProduct(req.payload, line.productId, req))?.stock ?? line.expected;
+  line.expected = onShelf((await liveProduct(req.payload, line.productId, req))?.stock ?? line.expected);
   if (line.tracked) line.expectedSerials = await inStockSerials(req, line.productId);
 }
 

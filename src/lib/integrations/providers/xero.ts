@@ -59,6 +59,33 @@ export function invoiceLines(o: OrderForIntegrations, account: string, taxType: 
   return lines;
 }
 
+/**
+ * A refund made through ShopEngine → an approved credit note with the order number as its reference, allocated to the
+ * order's invoice while that still has something to pay (never twice: Xero's idempotency key per refund).
+ */
+async function bookRefund(ctx: Ctx, d: Record<string, unknown>) {
+  const amount = Number(d.amount);
+  const orderId = Number(d.orderId);
+  if (!(amount > 0) || !orderId || String(d.status) === "failed") return;
+  const o = await loadOrder(ctx.payload, orderId);
+  if (!o || o.storeId !== ctx.connection.store) return;
+  const cfg = ctx.connection.config;
+  const date = new Date().toISOString().slice(0, 10);
+  const key = `shopengine-credit-${o.storeId}-${String(d.refundId ?? `${orderId}-${amount}`)}`.slice(0, 128);
+  const r = await xero<{ CreditNotes?: { CreditNoteID?: string; HasErrors?: boolean; ValidationErrors?: { Message?: string }[] }[] }>(ctx, "/CreditNotes?summarizeErrors=false", {
+    method: "PUT",
+    headers: { "Idempotency-Key": key },
+    body: { CreditNotes: [{ Type: "ACCRECCREDIT", Contact: { Name: String(cfg.contactName || "Online shop customers").slice(0, 255) }, Date: date, Reference: o.orderNumber, Status: "AUTHORISED", LineAmountTypes: "NoTax", CurrencyCode: o.currency, LineItems: [{ Description: `Refund – order ${o.orderNumber}`, Quantity: 1, UnitAmount: money(amount), AccountCode: String(cfg.salesAccount || "200"), TaxType: String(cfg.taxType || "NONE") }] }] },
+  });
+  const note = r.CreditNotes?.[0];
+  if (!note?.CreditNoteID || note.HasErrors) throw new IntegrationError(`Xero: ${note?.ValidationErrors?.[0]?.Message ?? "the credit note wasn’t accepted"}`, 400);
+  // put it against the order's invoice while that is still open
+  const where = encodeURIComponent(`Reference=="${o.orderNumber.replace(/"/g, "")}" AND Type=="ACCREC" AND Status=="AUTHORISED"`);
+  const inv = (await xero<{ Invoices?: { InvoiceID?: string; AmountDue?: number }[] }>(ctx, `/Invoices?where=${where}`)).Invoices?.[0];
+  if (inv?.InvoiceID && Number(inv.AmountDue) > 0)
+    await xero(ctx, `/CreditNotes/${note.CreditNoteID}/Allocations`, { method: "PUT", body: { Allocations: [{ Invoice: { InvoiceID: inv.InvoiceID }, Amount: money(Math.min(amount, Number(inv.AmountDue))), Date: date }] } }).catch(() => undefined);
+}
+
 const moneyIn = (type: string, d: Record<string, unknown>) => type === "order.paid" || (type === "order.updated" && d.status === "delivered");
 
 const impl: ProviderImpl = {
@@ -68,6 +95,7 @@ const impl: ProviderImpl = {
     return { ok: true, message: `Connected to Xero – ${org?.Name ?? "organisation"}${org?.BaseCurrency ? ` (${org.BaseCurrency})` : ""}.`, state: { account: org?.Name ?? "" } };
   },
   async onEvent(ctx, event) {
+    if (event.type === "refund.created") return bookRefund(ctx, event.data);
     if (!moneyIn(event.type, event.data)) return;
     const o = await loadOrder(ctx.payload, Number(event.data.id));
     if (!o || o.storeId !== ctx.connection.store || o.total <= 0) return;

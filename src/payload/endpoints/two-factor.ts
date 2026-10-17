@@ -4,6 +4,7 @@ import { sql } from "@payloadcms/db-postgres";
 import { decrypt, encrypt, hashCode, newBackupCodes, newSecret, otpauthUrl, twoFactorRequired, verifyTotp } from "../two-factor";
 import { log } from "../../lib/log";
 import { ipFromHeaders } from "../../lib/client-ip";
+import { recordSecurityEvent } from "../../lib/security-events";
 import { adminSeat, isPlatformAdminUser, type TenantUser } from "../tenancy";
 
 /**
@@ -171,6 +172,7 @@ const enable: Endpoint = {
     const moved = Boolean(full.twoFactor?.enabled);
     await save(req, u.id, { enabled: true, secret: encrypt(secret), pendingSecret: null, lastStep: step, backupCodes: codes.map(hashCode), failedCodes: 0, lockedUntil: null });
     log.info(moved ? "auth.2fa_moved_to_new_phone" : "auth.2fa_enabled", { user: u.id });
+    await recordSecurityEvent(req.payload, { kind: "two-factor-on", email: u.email, userId: u.id, ip: ipFromHeaders(req.headers), detail: moved ? "moved to a new phone" : null });
     return Response.json({ ok: true, backupCodes: codes });
   },
 };
@@ -190,6 +192,7 @@ const backupCodes: Endpoint = {
     const codes = newBackupCodes();
     await save(req, u.id, { ...(fresh.twoFactor ?? {}), backupCodes: codes.map(hashCode) });
     log.info("auth.2fa_backup_codes_renewed", { user: u.id });
+    await recordSecurityEvent(req.payload, { kind: "backup-codes", email: u.email, userId: u.id, ip: ipFromHeaders(req.headers) });
     return Response.json({ ok: true, backupCodes: codes });
   },
 };
@@ -207,6 +210,7 @@ const disable: Endpoint = {
     if (!(await verifyOrCount(req, full, String(body?.code ?? "").trim()))) return bad(WRONG_OR_LOCKED(full));
     await save(req, u.id, { enabled: false, secret: null, pendingSecret: null, lastStep: null, backupCodes: null });
     log.info("auth.2fa_disabled", { user: u.id });
+    await recordSecurityEvent(req.payload, { kind: "two-factor-off", email: u.email, userId: u.id, ip: ipFromHeaders(req.headers) });
     return Response.json({ ok: true });
   },
 };
@@ -222,6 +226,7 @@ const reset: Endpoint = {
     if (!id || id === u.id) return bad("Choose another user (to change your own, use My account → Security).");
     await save(req, id, { enabled: false, secret: null, pendingSecret: null, lastStep: null, backupCodes: null });
     log.warn("auth.2fa_reset", { user: id, by: u.id });
+    await recordSecurityEvent(req.payload, { kind: "two-factor-reset", userId: id, ip: ipFromHeaders(req.headers), detail: `by ${u.email ?? `user #${u.id}`}` });
     return Response.json({ ok: true });
   },
 };
@@ -231,13 +236,16 @@ const login: Endpoint = {
   method: "post",
   handler: async (req) => {
     const ip = ipFromHeaders(req.headers); // the proxy's entry – a faked X-Forwarded-For can't dodge the limit
-    if (tooMany(`login:${ip}`)) return bad("Too many sign-in attempts. Please wait 10 minutes.", 429);
+    if (tooMany(`login:${ip}`)) {
+      await recordSecurityEvent(req.payload, { kind: "rate-limited", ip, detail: "/cms sign-in" });
+      return bad("Too many sign-in attempts. Please wait 10 minutes.", 429);
+    }
     const body = (await req.json?.().catch(() => null)) as { email?: string; password?: string; code?: string } | null;
     const email = String(body?.email ?? "").trim().toLowerCase();
     const password = String(body?.password ?? "");
     if (!email || !password) return bad("Enter your email and password.");
     try {
-      const res = await req.payload.login({ collection: "users", data: { email, password }, context: { twoFactorCode: String(body?.code ?? "").trim() } });
+      const res = await req.payload.login({ collection: "users", data: { email, password }, context: { twoFactorCode: String(body?.code ?? "").trim(), clientIp: ip } });
       const user = res.user as unknown as U;
       if (!user) return bad("This account can't open the admin.", 403);
       const cookie = generatePayloadCookie({ collectionAuthConfig: req.payload.collections.users.config.auth, cookiePrefix: req.payload.config.cookiePrefix, token: res.token! });
@@ -246,6 +254,8 @@ const login: Endpoint = {
     } catch (e) {
       const msg = (e as Error).message;
       if (msg === "TWO_FACTOR_REQUIRED") return Response.json({ needCode: true });
+      const kind = msg === "TWO_FACTOR_WRONG" ? "two-factor-failed" : msg === "TWO_FACTOR_LOCKED" ? "two-factor-locked" : msg === "ADMIN_NOT_ALLOWED" ? null : "sign-in-failed";
+      if (kind) await recordSecurityEvent(req.payload, { kind, email, ip, detail: /locked/i.test(msg) && kind === "sign-in-failed" ? "account locked" : null });
       if (msg === "TWO_FACTOR_WRONG") return bad("That code isn't right. Use the newest code from your app, or a backup code.", 401);
       if (msg === "ADMIN_NOT_ALLOWED") return bad("This account can't open the admin. Shoppers sign in on the store; merchants create a store first (Account → Stores).", 403);
       if (msg === "TWO_FACTOR_LOCKED") return bad("Too many wrong codes – 2-step sign-in for this account is paused for 15 minutes.", 423);

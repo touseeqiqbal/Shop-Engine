@@ -1,6 +1,7 @@
 import type { Condition, Product } from "./types";
 import { formatMoney } from "./money";
 import { normalizePkMobile } from "./phone";
+import { MAX_QTY_PER_ITEM } from "./cart-limits";
 
 export function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -63,6 +64,37 @@ export function stockLabel(stock: number) {
   if (stock <= 0) return { label: "Out of stock", tone: "rose" as const };
   if (stock <= 3) return { label: `Only ${stock} left`, tone: "amber" as const };
   return { label: "In stock", tone: "emerald" as const };
+}
+
+/* ── pre-orders and backorders (Products → When sold out) ── */
+type Stocked = Pick<Product, "stock" | "backorders" | "releaseDate" | "backorderNote">;
+const keepsSelling = (p: Partial<Stocked>) => p.backorders === "backorder" || p.backorders === "preorder";
+
+/** A pre-order right now: not released yet, or released but nothing in stock. */
+export const isPreorder = (p: Stocked, now = Date.now()) =>
+  p.backorders === "preorder" && (p.stock <= 0 || Boolean(p.releaseDate && Date.parse(p.releaseDate) > now));
+
+/** Can it be ordered now? In stock, or set to keep taking orders when sold out. */
+export const canOrder = (p: Stocked) => p.stock > 0 || keepsSelling(p);
+
+/** The most one cart line may hold: what is in stock – or the cart's own limit for pre-order / keep-selling products. */
+export const buyLimit = (p: Stocked) => (keepsSelling(p) ? MAX_QTY_PER_ITEM : Math.max(0, p.stock));
+
+/** An order line that ships later: "Pre-order – ships when released" / "2 of 3 on backorder – ship when back in stock". */
+export function shipsLater(i: { availability?: "preorder" | "backorder"; owedQty?: number; qty: number }): string {
+  if (i.availability === "preorder") return "Pre-order – ships when released";
+  if (i.availability !== "backorder") return "";
+  return i.owedQty && i.owedQty < i.qty ? `${i.owedQty} of ${i.qty} on backorder – they ship when back in stock` : "On backorder – ships when back in stock";
+}
+
+/** What the product page and cards say about availability (`date` formats the ship-from day in the store's way). */
+export function availabilityLabel(p: Stocked, date: (iso: string) => string = (iso) => formatDate(iso, { day: "numeric", month: "short" })) {
+  if (isPreorder(p)) {
+    const later = p.releaseDate && Date.parse(p.releaseDate) > Date.now() ? date(p.releaseDate) : "";
+    return { kind: "preorder" as const, label: later ? `Pre-order · ships from ${later}` : "Pre-order", note: p.backorderNote || null, tone: "violet" as const };
+  }
+  if (p.stock <= 0 && p.backorders === "backorder") return { kind: "backorder" as const, label: "On backorder", note: p.backorderNote || "Ships when back in stock", tone: "amber" as const };
+  return { kind: p.stock > 0 ? ("in" as const) : ("out" as const), ...stockLabel(p.stock), note: null };
 }
 
 export function readingTime(markdown: string) {

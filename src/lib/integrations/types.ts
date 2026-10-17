@@ -126,7 +126,7 @@ export interface PaymentImpl {
 export interface MessagingImpl {
   whatsapp?(ctx: Ctx, to: string, text: string, template?: { name?: string; params: string[] }): Promise<void>;
   sms?(ctx: Ctx, to: string, text: string): Promise<void>;
-  email?(ctx: Ctx, mail: { to: string[]; subject: string; html: string; text?: string; replyTo?: string }): Promise<void>;
+  email?(ctx: Ctx, mail: { to: string[]; subject: string; html: string; text?: string; replyTo?: string; headers?: Record<string, string> }): Promise<void>;
 }
 
 /* ───────────── everything else ───────────── */

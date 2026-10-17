@@ -105,6 +105,22 @@ const orderLines = (items: unknown) =>
     .filter((l) => Number.isFinite(l.productId) && l.productId > 0 && l.qty > 0);
 
 type Line = { productId: number; qty: number; title?: string };
+type Owed = { kind: "backorder" | "preorder"; qty: number };
+/**
+ * Marks the order's lines that sold beyond the stock (backorder) or before the product's release (pre-order), so the
+ * team knows what can't ship yet. `add`: an edit added more of a product (owed on top of what was owed already).
+ */
+const markOwed = (items: unknown, owed: Map<number, Owed>, add = false) => {
+  if (!owed.size || !Array.isArray(items)) return undefined;
+  const left = new Map(owed);
+  return (items as (OrderLine & { owedQty?: number | null })[]).map((i) => {
+    const id = Number(i.product && typeof i.product === "object" ? i.product.id : i.product);
+    const o = left.get(id);
+    if (!o) return i;
+    left.delete(id);
+    return { ...i, availability: o.kind, owedQty: (add ? Number(i.owedQty) || 0 : 0) + o.qty };
+  });
+};
 const qtyByProduct = (lines: Line[]) => {
   const m = new Map<number, number>();
   for (const l of lines) m.set(l.productId, (m.get(l.productId) ?? 0) + l.qty);
@@ -312,8 +328,11 @@ const orderStock: CollectionBeforeChangeHook = async ({ data, originalDoc, opera
     const lines = orderLines(data.items);
     if (RELEASED.has(status) || !lines.length) return { ...data, stockHeld: false };
     setStockLog(req, { reason: "order", ref, note: "Order created in /cms" });
-    const short = await takeStockForLines(req.payload, lines, req);
+    const owed = new Map<number, Owed>();
+    const short = await takeStockForLines(req.payload, lines, req, { backorders: true, owed });
     if (short.length) throw userError(`Not enough stock for: ${short.join(", ")}`, 409);
+    const marked = markOwed(data.items, owed);
+    if (marked) data.items = marked;
     data.stockHeld = true;
     changed = true;
   } else {
@@ -344,12 +363,21 @@ const orderStock: CollectionBeforeChangeHook = async ({ data, originalDoc, opera
         data.couponConsumed = false;
         data.couponReturned = true;
       }
+      // … and the money it paid with a gift card goes back onto the card
+      if (status !== "returned" && originalDoc?.giftCardCode && originalDoc?.giftCardCharged && Number(originalDoc.giftCardAmount) > 0) {
+        const { giveBackToGiftCard } = await import("../gift-cards");
+        await giveBackToGiftCard(req.payload, { code: String(originalDoc.giftCardCode), storeId: storeIdOf(originalDoc.store), amount: Number(originalDoc.giftCardAmount), orderNumber: ref, note: `Order ${status}` }, req);
+        data.giftCardCharged = false;
+      }
       data.stockHeld = false;
       changed = true;
     } else if (statusChanged && !RELEASED.has(status) && !held) {
       setStockLog(req, { reason: "order-reopened", ref });
-      const short = await takeStockForLines(req.payload, newLines, req);
+      const owed = new Map<number, Owed>();
+      const short = await takeStockForLines(req.payload, newLines, req, { backorders: true, owed });
       if (short.length) throw userError(`Cannot re-open – not enough stock for: ${short.join(", ")}`, 409);
+      const marked = markOwed(data.items ?? originalDoc?.items, owed);
+      if (marked) data.items = marked;
       const coupon = originalDoc?.couponCode ? String(originalDoc.couponCode) : "";
       // re-opening takes the coupon use again – if the order had given one back
       if (coupon && originalDoc?.status !== "returned" && originalDoc?.couponReturned) {
@@ -358,6 +386,13 @@ const orderStock: CollectionBeforeChangeHook = async ({ data, originalDoc, opera
           throw userError(`Cannot re-open – the coupon ${coupon} has no uses left (or has expired). Remove the coupon and its discount from the order first.`, 409);
         data.couponConsumed = true;
         data.couponReturned = false;
+      }
+      // re-opening pays with the gift card again (if it still has the money)
+      if (originalDoc?.giftCardCode && Number(originalDoc.giftCardAmount) > 0 && !originalDoc.giftCardCharged && originalDoc?.status !== "returned") {
+        const { takeFromGiftCard } = await import("../gift-cards");
+        if (!(await takeFromGiftCard(req.payload, { code: String(originalDoc.giftCardCode), storeId: storeIdOf(originalDoc.store), amount: Number(originalDoc.giftCardAmount), orderNumber: ref }, req)))
+          throw userError("Cannot re-open – the gift card it was paid with no longer has that balance (or is switched off).", 409);
+        data.giftCardCharged = true;
       }
       data.stockHeld = true;
       context.assignUnits = true;
@@ -375,8 +410,11 @@ const orderStock: CollectionBeforeChangeHook = async ({ data, originalDoc, opera
       }
       setStockLog(req, { reason: "order-edited", ref });
       if (more.length) {
-        const short = await takeStockForLines(req.payload, more, req);
+        const owed = new Map<number, Owed>();
+        const short = await takeStockForLines(req.payload, more, req, { backorders: true, owed });
         if (short.length) throw userError(`Not enough stock for: ${short.join(", ")}`, 409);
+        const marked = markOwed(data.items, owed, true);
+        if (marked) data.items = marked;
       }
       for (const l of less) await putBackStock(req.payload, l.productId, l.qty, req);
       changed = more.length > 0 || less.length > 0;
@@ -633,6 +671,11 @@ export const Orders: CollectionConfig = {
         { name: "image", type: "text", admin: { hidden: true } },
         { name: "upgrades", type: "json", admin: { components: { Field: "/payload/admin/orders/UpgradesField#UpgradesField" } } },
         { name: "unitCost", type: "number", label: "Cost each", access: { read: storeRoleField("store_owner"), create: () => false, update: () => false }, admin: { readOnly: true, description: "Your cost when it was sold (owners only) – used by the profit report." } },
+        // sold beyond the stock or before the product's release – set by the server when the stock was taken
+        { type: "row", fields: [
+          { name: "availability", type: "select", label: "Ships later", options: [{ label: "Pre-order", value: "preorder" }, { label: "Backorder (sold out when ordered)", value: "backorder" }], admin: { width: "50%", readOnly: true, condition: (_, s) => Boolean(s?.availability) } },
+          { name: "owedQty", type: "number", label: "Owed (not in stock when ordered)", admin: { width: "50%", readOnly: true, condition: (_, s) => Boolean(s?.availability) } },
+        ] },
       ],
     },
     { type: "row", fields: [
@@ -642,10 +685,38 @@ export const Orders: CollectionConfig = {
       { name: "total", type: "number", required: true, label: "Total", hooks: { beforeValidate: [calculatedLater] }, admin: { width: "20%", readOnly: true, description: "Calculated", components: { Cell: "/payload/admin/orders/Cells#OrderTotalCell" } } },
       { name: "advancePaid", type: "number", min: 0, label: "Advance paid", admin: { width: "20%" } },
     ] },
+    { name: "shippingMethod", type: "text", label: "Delivery method", admin: { readOnly: true, description: "Chosen at checkout (stores that offer more than one, e.g. Express)." } },
+    { type: "row", fields: [
+      { name: "giftCardCode", type: "text", label: "Gift card", access: { update: () => false }, admin: { width: "50%", readOnly: true, description: "Paid (part of) this order." } },
+      { name: "giftCardAmount", type: "number", min: 0, label: "Paid by gift card", access: { update: () => false }, admin: { width: "50%", readOnly: true } },
+    ] },
+    // the card's balance was really taken (given back when the order is cancelled, taken again if it is re-opened)
+    { name: "giftCardCharged", type: "checkbox", defaultValue: false, access: { read: storeRoleField("store_staff"), create: () => false, update: () => false }, admin: { hidden: true } },
     { type: "row", fields: [
       { name: "couponCode", type: "text", label: "Coupon code", admin: { width: "50%" } },
       { name: "taxTotal", type: "number", defaultValue: 0, min: 0, label: "Tax included", admin: { width: "50%", readOnly: true, description: "Tax inside the total, from the store's tax rate when the order was placed." } },
     ] },
+    // tax per rate (Products → Tax) – set when the order was placed
+    { name: "taxBreakdown", type: "json", label: "Tax per rate", admin: { readOnly: true, condition: (d) => Array.isArray(d?.taxBreakdown) && d.taxBreakdown.length > 0 } },
+    {
+      name: "billing",
+      type: "group",
+      label: "Invoice to",
+      admin: { description: "Only when the invoice is made out to someone else (a company with a VAT / tax number). Empty = the customer above." },
+      fields: [
+        { type: "row", fields: [
+          { name: "name", type: "text", maxLength: 120, admin: { width: "34%" } },
+          { name: "company", type: "text", maxLength: 120, admin: { width: "33%" } },
+          { name: "taxId", type: "text", maxLength: 40, label: "VAT / tax number", admin: { width: "33%" } },
+        ] },
+        { name: "address", type: "text", maxLength: 300 },
+        { type: "row", fields: [
+          { name: "city", type: "text", maxLength: 80, admin: { width: "34%" } },
+          { name: "postalCode", type: "text", maxLength: 12, admin: { width: "33%" } },
+          { name: "country", type: "text", maxLength: 2, admin: { width: "33%", description: "ISO code, e.g. PK" } },
+        ] },
+      ],
+    },
     // true once the order took one use of the coupon (checkout, re-open) – only then does cancelling give it back
     { name: "couponConsumed", type: "checkbox", defaultValue: false, access: { read: storeRoleField("store_staff"), create: () => false, update: () => false }, admin: { hidden: true } },
     { name: "couponReturned", type: "checkbox", defaultValue: false, access: { read: storeRoleField("store_staff"), create: () => false, update: () => false }, admin: { hidden: true } },

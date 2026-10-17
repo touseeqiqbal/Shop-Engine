@@ -219,7 +219,31 @@ function TrackResult({ order }: { order: TrackedOrder }) {
           <h2 id="track-courier" className="flex items-center gap-2 font-display font-bold">
             <Truck className="size-4 text-violet-300" aria-hidden="true" /> Courier
           </h2>
-          {order.trackingNumber ? (
+          {order.parcels.length > 1 || order.parcels.some((p) => p.courierStatus) ? (
+            // parcels with their latest status from the courier
+            <ul className="space-y-3">
+              {order.parcels.map((p, i) => (
+                <li key={`${p.trackingNumber ?? "p"}-${i}`} className="space-y-1.5 rounded-xl bg-surface p-3 text-sm">
+                  <p>
+                    {order.parcels.length > 1 && <span className="text-muted">Parcel {i + 1} · </span>}
+                    <strong>{p.courierName ?? "Courier"}</strong>
+                    {p.trackingNumber && <span className="font-mono"> · {p.trackingNumber}</span>}
+                  </p>
+                  {p.courierStatus && (
+                    <p>
+                      {p.courierStatus}
+                      {p.checkedAt && <span className="text-xs text-muted"> · checked {new Date(p.checkedAt).toLocaleString()}</span>}
+                    </p>
+                  )}
+                  {p.trackingUrl && (
+                    <a href={p.trackingUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-semibold text-violet-300 hover:underline">
+                      Track on {p.courierName} <ExternalLink className="size-3" aria-hidden="true" />
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : order.trackingNumber ? (
             <>
               <p className="text-sm">
                 <span className="text-muted">Courier:</span> <strong>{order.courierName ?? "Courier"}</strong>

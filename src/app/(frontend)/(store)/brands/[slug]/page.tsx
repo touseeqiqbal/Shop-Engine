@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getBrand, getBrands } from "@/lib/repo/catalog";
+import { getBrand } from "@/lib/repo/catalog";
 import { getPageMeta } from "@/lib/page-seo";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { PageHero } from "@/components/shop/page-hero";
@@ -16,9 +16,9 @@ type Props = { params: Promise<{ slug: string }>; searchParams: Promise<RawSearc
 
 const LAPTOP_BRANDS = new Set(["hp", "dell", "lenovo", "apple", "asus", "acer", "msi"]);
 
-export async function generateStaticParams() {
-  return (await getBrands()).map((b) => ({ slug: b.slug }));
-}
+// Rendered per request (the store comes from the address – a cached page must never reach another store's visitors);
+// the data behind it stays cached per store. No build-time list: products, brands and posts added later work at once.
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const [{ slug }, sp] = await Promise.all([params, searchParams]);

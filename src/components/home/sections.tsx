@@ -34,7 +34,7 @@ async function isOriginalStore() {
  * `items` overrides the badge texts (/cms → Online store → Home page); icons stay fixed per position.
  * Built-in texts about the original shop's Karachi delivery are replaced by plain ones on any other store.
  */
-export async function TrustBadges({ className, items }: { className?: string; items?: TrustBadgeText[] }) {
+export async function TrustBadges({ className, items, instant = false }: { className?: string; items?: TrustBadgeText[]; instant?: boolean }) {
   const [original, { country }] = await Promise.all([isOriginalStore(), getStoreLocale()]);
   const own = (text: string) => (original ? text : NEUTRAL_TRUST_TEXT[text] ?? text);
   // "all over Pakistan" is for stores in Pakistan
@@ -43,7 +43,7 @@ export async function TrustBadges({ className, items }: { className?: string; it
   return (
     <ul className={cn("snap-row -mx-4 scroll-px-4 gap-3 px-4 sm:mx-0 sm:grid sm:grid-cols-3 sm:px-0 lg:grid-cols-5", className)} aria-label="Why shop with us">
       {badges.map((b, i) => (
-        <Reveal as="li" key={b.title} delay={i * 0.05} className="card flex w-[68%] items-center gap-3 p-3.5 sm:w-auto sm:p-4">
+        <Reveal as="li" key={b.title} delay={i * 0.05} instant={instant} className="card flex w-[68%] items-center gap-3 p-3.5 sm:w-auto sm:p-4">
           <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-surface-strong">
             <b.icon className={cn("size-5", b.tone)} aria-hidden="true" />
           </span>
@@ -66,7 +66,7 @@ export function CategoryBento({ categories, counts }: { categories: Category[]; 
   return (
     <div className="grid auto-rows-[7.25rem] grid-cols-3 gap-2.5 sm:auto-rows-[10.5rem] sm:gap-3 sm:grid-cols-4 lg:grid-cols-6 lg:gap-4">
       {tiles.map((c, i) => (
-        <Reveal key={c.id} delay={(i % 6) * 0.04} className={layout(i)}>
+        <Reveal key={c.id} delay={(i % 6) * 0.04} className={layout(i)} instant={i < 3}>
           <Link
             href={`/category/${c.slug}`}
             className="group glow-hover card relative flex h-full flex-col justify-between overflow-hidden p-3 transition-transform duration-300 hover:-translate-y-1 sm:p-5"
@@ -80,6 +80,9 @@ export function CategoryBento({ categories, counts }: { categories: Category[]; 
                 width={360}
                 height={360}
                 sizes="(min-width: 1024px) 22rem, 60vw"
+                // usually the largest thing on a phone's first screen: fetched first
+                loading="eager"
+                fetchPriority="high"
                 className={cn(
                   "pointer-events-none absolute -right-10 top-2 w-[62%] max-w-[22rem] opacity-90 transition-transform duration-700 group-hover:-translate-y-2 group-hover:scale-105 sm:-right-6",
                   c.image && "max-h-[70%] rounded-2xl object-contain"

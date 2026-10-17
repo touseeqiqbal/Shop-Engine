@@ -35,6 +35,14 @@ import * as migration_20261015_114028_international from './20261015_114028_inte
 import * as migration_20261016_000546_pos_currency from './20261016_000546_pos_currency';
 import * as migration_20261016_031120_integrations from './20261016_031120_integrations';
 import * as migration_20261016_035623_store_api_shipments from './20261016_035623_store_api_shipments';
+import * as migration_20261017_110806_security_events from './20261017_110806_security_events';
+import * as migration_20261017_121832_support_view from './20261017_121832_support_view';
+import * as migration_20261017_123512_shipping_methods from './20261017_123512_shipping_methods';
+import * as migration_20261017_124818_gift_cards from './20261017_124818_gift_cards';
+import * as migration_20261017_131404_preorders from './20261017_131404_preorders';
+import * as migration_20261017_133534_email_optouts from './20261017_133534_email_optouts';
+import * as migration_20261017_134900_flash_sale_discount from './20261017_134900_flash_sale_discount';
+import * as migration_20261017_142121_tax_classes_billing from './20261017_142121_tax_classes_billing';
 
 export const migrations = [
   {
@@ -221,5 +229,45 @@ export const migrations = [
     up: migration_20261016_035623_store_api_shipments.up,
     down: migration_20261016_035623_store_api_shipments.down,
     name: '20261016_035623_store_api_shipments',
+  },
+  {
+    up: migration_20261017_110806_security_events.up,
+    down: migration_20261017_110806_security_events.down,
+    name: '20261017_110806_security_events',
+  },
+  {
+    up: migration_20261017_121832_support_view.up,
+    down: migration_20261017_121832_support_view.down,
+    name: '20261017_121832_support_view',
+  },
+  {
+    up: migration_20261017_123512_shipping_methods.up,
+    down: migration_20261017_123512_shipping_methods.down,
+    name: '20261017_123512_shipping_methods',
+  },
+  {
+    up: migration_20261017_124818_gift_cards.up,
+    down: migration_20261017_124818_gift_cards.down,
+    name: '20261017_124818_gift_cards',
+  },
+  {
+    up: migration_20261017_131404_preorders.up,
+    down: migration_20261017_131404_preorders.down,
+    name: '20261017_131404_preorders',
+  },
+  {
+    up: migration_20261017_133534_email_optouts.up,
+    down: migration_20261017_133534_email_optouts.down,
+    name: '20261017_133534_email_optouts',
+  },
+  {
+    up: migration_20261017_134900_flash_sale_discount.up,
+    down: migration_20261017_134900_flash_sale_discount.down,
+    name: '20261017_134900_flash_sale_discount',
+  },
+  {
+    up: migration_20261017_142121_tax_classes_billing.up,
+    down: migration_20261017_142121_tax_classes_billing.down,
+    name: '20261017_142121_tax_classes_billing'
   },
 ];

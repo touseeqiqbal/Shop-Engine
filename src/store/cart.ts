@@ -2,7 +2,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { CatalogProduct, UpgradeOption } from "@/lib/types";
-import { effectivePrice } from "@/lib/utils";
+import { buyLimit, effectivePrice } from "@/lib/utils";
 import { MAX_QTY_PER_ITEM } from "@/lib/cart-limits";
 
 export interface CartLine {
@@ -18,6 +18,8 @@ export interface CartLine {
   qty: number;
   stock: number;
   upgrades: UpgradeOption[];
+  /** the product's tax class when it isn't the normal rate (Products → Tax) */
+  taxClass?: "reduced" | "exempt";
 }
 
 interface CartState {
@@ -54,7 +56,9 @@ export const useCart = create<CartState>()(
         const unit = base + upgrades.reduce((s, u) => s + u.price, 0);
         const lines = [...get().lines];
         const existing = lines.find((l) => l.key === key);
-        if (existing) existing.qty = Math.min(existing.qty + qty, Math.max(p.stock, 1), MAX_QTY_PER_ITEM);
+        // the stock – or the cart's own limit for pre-order / keep-selling products
+        const limit = buyLimit(p);
+        if (existing) existing.qty = Math.min(existing.qty + qty, Math.max(limit, 1), MAX_QTY_PER_ITEM);
         else
           lines.push({
             key,
@@ -66,9 +70,10 @@ export const useCart = create<CartState>()(
             brandName: p.brandName,
             basePrice: base,
             unitPrice: unit,
-            qty: Math.min(qty, Math.max(p.stock, 1), MAX_QTY_PER_ITEM),
-            stock: p.stock,
+            qty: Math.min(qty, Math.max(limit, 1), MAX_QTY_PER_ITEM),
+            stock: limit,
             upgrades,
+            ...(p.taxClass ? { taxClass: p.taxClass } : {}),
           });
         set({ lines, pulse: get().pulse + 1, drawerOpen: opts.openDrawer ?? true });
       },

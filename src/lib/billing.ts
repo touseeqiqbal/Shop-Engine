@@ -29,6 +29,16 @@ async function planAlert(payload: Payload, storeId: number, kind: "payment-faile
     expired: { subject: "Your shop is offline", lines: ["Your plan ended, so your shop is offline and /cms is read-only.", "Your data is kept – pay for a plan to open the shop again."] },
   }[kind];
   await queueNotification(payload, "staff", storeId, { ...text, link: { href: "/account/stores", label: "Manage your plan" } }, { dedupeKey: `plan-alert:${storeId}:${kind}:${(graceEndsAt ?? new Date().toISOString()).slice(0, 10)}` }).catch((e) => log.error("billing.alert_failed", e, { store: storeId }));
+  // ShopEngine's own team hears about money problems too (not about trials ending – that's normal)
+  if (kind !== "trial-ended") {
+    const store = (await payload.findByID({ collection: "stores", id: storeId, depth: 0, overrideAccess: true }).catch(() => null)) as unknown as Doc | null;
+    const name = String(store?.name ?? `Store #${storeId}`);
+    const platform = {
+      "payment-failed": { subject: `${name}: plan payment failed`, lines: [`The plan payment of ${name} (store #${storeId}) didn't go through.${until}`, "The store has been asked to update its payment details."] },
+      expired: { subject: `${name} is offline – plan ended`, lines: [`${name} (store #${storeId}) went offline because its plan ended. Its /cms is read-only; its data is kept.`] },
+    }[kind];
+    await queueNotification(payload, "platform", null, { ...platform, link: { href: "/cms/platform", label: "Open the platform overview" } }, { dedupeKey: `platform-alert:${storeId}:${kind}:${new Date().toISOString().slice(0, 10)}` }).catch((e) => log.error("billing.platform_alert_failed", e, { store: storeId }));
+  }
 }
 
 async function subscriptionOf(payload: Payload, storeId: number): Promise<Doc | null> {

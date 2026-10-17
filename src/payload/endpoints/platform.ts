@@ -113,6 +113,135 @@ export async function overviewFor(req: PayloadRequest) {
   };
 }
 
+export type MonthRow = { month: string; storesCreated: number; orders: number; orderValue: Record<string, number>; planRevenue: Record<string, number> };
+
+/**
+ * The last `months` months, oldest first: new stores, orders and their value, plan payments collected – money per
+ * currency (never added across currencies). Grouped in the database, so it stays quick with many orders.
+ */
+export async function historyFor(req: PayloadRequest, months = 12): Promise<MonthRow[]> {
+  const [{ conn }, { sql }] = await Promise.all([import("../stock"), import("@payloadcms/db-postgres")]);
+  const db = await conn(req.payload, req);
+  const start = new Date();
+  start.setUTCDate(1);
+  start.setUTCHours(0, 0, 0, 0);
+  start.setUTCMonth(start.getUTCMonth() - (months - 1));
+  const from = start.toISOString();
+  const [orders, invoices, stores] = await Promise.all([
+    db.execute(sql`SELECT to_char(date_trunc('month', "placed_at"), 'YYYY-MM') AS m, upper(COALESCE("currency", 'PKR')) AS c, count(*)::int AS n, COALESCE(sum("total"), 0)::float AS v
+      FROM "payload"."cms_orders" WHERE "placed_at" >= ${from} AND "status" NOT IN ('cancelled', 'refused', 'returned', 'awaiting-payment') GROUP BY 1, 2`),
+    db.execute(sql`SELECT to_char(date_trunc('month', "paid_at"), 'YYYY-MM') AS m, upper(COALESCE("currency", 'PKR')) AS c, COALESCE(sum("amount"), 0)::float AS v
+      FROM "payload"."cms_store_invoices" WHERE "status" = 'paid' AND "paid_at" >= ${from} GROUP BY 1, 2`),
+    db.execute(sql`SELECT to_char(date_trunc('month', "created_at"), 'YYYY-MM') AS m, count(*)::int AS n FROM "payload"."cms_stores" WHERE "created_at" >= ${from} GROUP BY 1`),
+  ]);
+  const rows: MonthRow[] = [];
+  for (let i = 0; i < months; i++) {
+    const d = new Date(start);
+    d.setUTCMonth(start.getUTCMonth() + i);
+    rows.push({ month: d.toISOString().slice(0, 7), storesCreated: 0, orders: 0, orderValue: {}, planRevenue: {} });
+  }
+  const at = (m: unknown) => rows.find((r) => r.month === String(m));
+  for (const r of orders.rows as { m: string; c: string; n: number; v: number }[]) {
+    const row = at(r.m);
+    if (!row) continue;
+    row.orders += Number(r.n);
+    row.orderValue[r.c] = roundMoney((row.orderValue[r.c] ?? 0) + Number(r.v), r.c);
+  }
+  for (const r of invoices.rows as { m: string; c: string; v: number }[]) {
+    const row = at(r.m);
+    if (row) row.planRevenue[r.c] = roundMoney((row.planRevenue[r.c] ?? 0) + Number(r.v), r.c);
+  }
+  for (const r of stores.rows as { m: string; n: number }[]) {
+    const row = at(r.m);
+    if (row) row.storesCreated = Number(r.n);
+  }
+  return rows;
+}
+
+/**
+ * Integrations across all stores: how many stores use each one, and the connections whose last check or sync failed
+ * (store, integration, the error) – so support can help before a store notices. Never shows keys.
+ */
+export async function integrationsOverview(req: PayloadRequest) {
+  const docs = (await req.payload.find({ collection: "integrations" as never, limit: 5000, pagination: false, depth: 0, select: { store: true, provider: true, category: true, enabled: true, status: true, lastError: true, updatedAt: true } as never, overrideAccess: true, req })).docs as unknown as { store?: unknown; provider: string; category?: string; enabled?: boolean; status?: string; lastError?: string | null; updatedAt?: string }[];
+  const { integrationInfo } = await import("../../lib/integrations/catalog");
+  const byProvider = new Map<string, { name: string; category: string; stores: number; on: number; failing: number }>();
+  for (const d of docs) {
+    const info = integrationInfo(d.provider);
+    const row = byProvider.get(d.provider) ?? { name: info?.name ?? d.provider, category: info?.category ?? String(d.category ?? ""), stores: 0, on: 0, failing: 0 };
+    row.stores++;
+    if (d.enabled !== false) row.on++;
+    if (d.status === "error") row.failing++;
+    byProvider.set(d.provider, row);
+  }
+  const failing = docs.filter((d) => d.status === "error" && d.enabled !== false).slice(0, 50);
+  const ids = [...new Set(failing.map((d) => storeIdOf(d.store)).filter((x): x is number => x != null))];
+  const names = new Map(((await req.payload.find({ collection: "stores", where: { id: { in: ids } }, limit: 50, depth: 0, overrideAccess: true, req })).docs as unknown as StoreRow[]).map((st) => [Number(st.id), st.name ?? st.slug ?? `#${st.id}`]));
+  return {
+    connections: docs.length,
+    providers: [...byProvider.entries()].map(([id, v]) => ({ id, ...v })).sort((a, b) => b.stores - a.stores),
+    needsAttention: failing.map((d) => ({ storeId: storeIdOf(d.store), store: names.get(storeIdOf(d.store) ?? -1) ?? `#${String(storeIdOf(d.store))}`, provider: integrationInfo(d.provider)?.name ?? d.provider, error: String(d.lastError ?? "").slice(0, 200), at: d.updatedAt ?? null })),
+  };
+}
+
+const VIEW_AS_MINUTES = 30;
+const VIEW_ROLES = new Set(["store_staff", "store_manager", "store_owner"]);
+const ROLE_NAME: Record<string, string> = { store_staff: "Staff", store_manager: "Manager", store_owner: "Owner" };
+
+/**
+ * Support: a platform admin sees one store exactly as one of its roles for 30 minutes (to reproduce what a member of
+ * that store's team sees) – POST { storeId, role, reason }. Nobody's sign-in is used; the admin's own rights are set
+ * aside meanwhile. Recorded in the store's activity log and in Platform → Security events.
+ */
+const viewAs: Endpoint = {
+  path: "/platform/view-as",
+  method: "post",
+  handler: async (req) => {
+    const { isPlatformAdminUser } = await import("../tenancy");
+    const u = req.user as (TenantUserLike & { id: number; email?: string }) | null;
+    if (!u || !isPlatformAdminUser(u as never)) return bad("Platform admins only (with 2-step verification on).", 403);
+    const body = (await req.json?.().catch(() => null)) as { storeId?: unknown; role?: unknown; reason?: unknown } | null;
+    const storeId = Number(body?.storeId);
+    const role = String(body?.role ?? "");
+    const reason = String(body?.reason ?? "").trim().slice(0, 200);
+    if (!VIEW_ROLES.has(role)) return bad("Choose Staff, Manager or Owner.");
+    if (reason.length < 5) return bad("Say why (e.g. the support request) – it is written to the store's activity log.");
+    const store = (await req.payload.findByID({ collection: "stores", id: storeId, depth: 0, overrideAccess: true }).catch(() => null)) as unknown as StoreRow | null;
+    if (!store) return bad("No such store.", 404);
+    const until = new Date(Date.now() + VIEW_AS_MINUTES * 60_000).toISOString();
+    await req.payload.update({ collection: "users", id: u.id, data: { supportView: { store: storeId, role, until, reason } } as never, overrideAccess: true, depth: 0 });
+    await logActivity(req, { action: "update", entity: "stores", entityLabel: "Store", docId: String(storeId), title: store.name ?? `#${storeId}`, changes: [{ field: "support access", from: "", to: `ShopEngine support views this store as ${ROLE_NAME[role]} for ${VIEW_AS_MINUTES} minutes – ${reason}` }], storeId });
+    const [{ recordSecurityEvent }, { ipFromHeaders }] = await Promise.all([import("../../lib/security-events"), import("../../lib/client-ip")]);
+    await recordSecurityEvent(req.payload, { kind: "support-view", email: u.email, userId: u.id, ip: ipFromHeaders(req.headers), detail: `${store.name ?? `#${storeId}`} as ${ROLE_NAME[role]} – ${reason}` });
+    return Response.json({ ok: true, until });
+  },
+};
+
+const viewAsStop: Endpoint = {
+  path: "/platform/view-as/stop",
+  method: "post",
+  handler: async (req) => {
+    const { isPlatformAdminUser } = await import("../tenancy");
+    const u = req.user as (TenantUserLike & { id: number }) | null;
+    if (!u || !isPlatformAdminUser(u as never)) return bad("Platform admins only.", 403);
+    await req.payload.update({ collection: "users", id: u.id, data: { supportView: null } as never, overrideAccess: true, depth: 0 });
+    return Response.json({ ok: true });
+  },
+};
+
+type TenantUserLike = { collection?: string; role?: string; platformRole?: string; twoFactor?: { enabled?: boolean } };
+
+/** GET /cms-api/platform/history?months=12 – month by month (platform admins). */
+const history: Endpoint = {
+  path: "/platform/history",
+  method: "get",
+  handler: async (req) => {
+    if (!(await getTenant(req)).platformAdmin) return bad("Platform admins only.", 403);
+    const months = Math.min(36, Math.max(1, Number(new URL(req.url ?? "", "http://x").searchParams.get("months")) || 12));
+    return Response.json({ months: await historyFor(req, months) });
+  },
+};
+
 const overview: Endpoint = {
   path: "/platform/overview",
   method: "get",
@@ -141,4 +270,4 @@ const setStatus: Endpoint = {
   },
 };
 
-export const platformEndpoints: Endpoint[] = [mine, switchStore, overview, setStatus];
+export const platformEndpoints: Endpoint[] = [mine, switchStore, overview, history, setStatus, viewAs, viewAsStop];

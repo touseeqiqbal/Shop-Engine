@@ -42,7 +42,7 @@ export const resend = withTest(
       provider: "Resend",
       method: "POST",
       headers: resendHeaders(ctx),
-      body: { from: fromOf(ctx).header, to: mail.to, subject: mail.subject, html: mail.html, ...(mail.text ? { text: mail.text } : {}), ...(mail.replyTo ? { reply_to: mail.replyTo } : {}) },
+      body: { from: fromOf(ctx).header, to: mail.to, subject: mail.subject, html: mail.html, ...(mail.text ? { text: mail.text } : {}), ...(mail.replyTo ? { reply_to: mail.replyTo } : {}), ...(mail.headers ? { headers: mail.headers } : {}) },
     });
     if (!r.ok) throw new Error(`Resend ${r.status}: ${r.data.message ?? "not sent"}`);
   },
@@ -70,7 +70,7 @@ export const brevo = withTest(
       provider: "Brevo",
       method: "POST",
       headers: { "api-key": ctx.connection.secrets.apiKey ?? "" },
-      body: { sender: { email: from.email, ...(from.name ? { name: from.name } : {}) }, to: mail.to.map((email) => ({ email })), subject: mail.subject, htmlContent: mail.html, ...(mail.text ? { textContent: mail.text } : {}), ...(mail.replyTo ? { replyTo: { email: mail.replyTo } } : {}) },
+      body: { sender: { email: from.email, ...(from.name ? { name: from.name } : {}) }, to: mail.to.map((email) => ({ email })), subject: mail.subject, htmlContent: mail.html, ...(mail.text ? { textContent: mail.text } : {}), ...(mail.replyTo ? { replyTo: { email: mail.replyTo } } : {}), ...(mail.headers ? { headers: mail.headers } : {}) },
     });
     if (!r.ok) throw new Error(`Brevo ${r.status}: ${r.data.message ?? "not sent"}`);
   },
@@ -100,7 +100,7 @@ async function transport(ctx: Ctx) {
 export const smtp = withTest(
   async (ctx, mail) => {
     const t = await transport(ctx);
-    await t.sendMail({ from: fromOf(ctx).header, to: mail.to, subject: mail.subject, html: mail.html, text: mail.text, replyTo: mail.replyTo });
+    await t.sendMail({ from: fromOf(ctx).header, to: mail.to, subject: mail.subject, html: mail.html, text: mail.text, replyTo: mail.replyTo, ...(mail.headers ? { headers: mail.headers } : {}) });
   },
   async (ctx) => {
     try {

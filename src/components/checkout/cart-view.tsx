@@ -55,7 +55,7 @@ export function CartView({ settings }: { settings: StoreSettings }) {
   }
 
   const subtotal = cartSubtotal(lines);
-  const totals = orderTotals({ subtotal, discount: coupon.discount, city, method: "", settings, freeShipping: coupon.freeShipping });
+  const totals = orderTotals({ subtotal, discount: coupon.discount, city, method: "", settings, freeShipping: coupon.freeShipping, lines: lines.map((l) => ({ amount: l.unitPrice * l.qty, taxClass: l.taxClass })) });
   const { discount, delivery } = totals;
   // free-delivery amount for the chosen city's zone (0 = that zone never ships free)
   const freeAbove = city ? freeDeliveryAbove(city, settings) : settings.freeDeliveryThreshold;

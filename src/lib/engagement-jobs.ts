@@ -4,6 +4,7 @@ import { getConversionSettings } from "@/lib/cms/engagement";
 import { canReach, queueNotification } from "@/lib/notify";
 import { storeDirectory, storeOrigin } from "@/lib/tenant";
 import { log } from "@/lib/log";
+import { isOptedOut } from "@/payload/optouts";
 
 /**
  * Housekeeping tasks: back-in-stock / price-drop alerts and abandoned-cart reminders – each store with its own settings
@@ -99,6 +100,11 @@ export async function sendCartReminders(): Promise<number> {
     const idleH = (now - Date.parse(str(c.lastActivityAt))) / 3600e3;
     const due = (count === 0 && idleH >= s.cartFirstHours) || (count === 1 && s.cartSecondHours > 0 && idleH >= s.cartSecondHours);
     if (!due || !(await canReach(str(c.contact), "WHATSAPP_TEMPLATE_CART", storeId))) continue;
+    // they asked this store for no more reminders (an earlier cart's link, their email app's Unsubscribe)
+    if (await isOptedOut(payload, storeId, [c.email, c.phone, c.contact])) {
+      await payload.update({ collection: "abandoned-carts", id: Number(c.id), data: { status: "stopped" } as never, overrideAccess: true, context: { system: true } });
+      continue;
+    }
     const items = (Array.isArray(c.items) ? c.items : []) as { name?: string; qty?: number }[];
     try {
       await queueNotification(
@@ -111,6 +117,8 @@ export async function sendCartReminders(): Promise<number> {
           items: items.map((i) => ({ name: str(i.name), qty: num(i.qty) || 1 })),
           total: num(c.total),
           restoreUrl: `${originOf(storeId)}/cart/restore/${str(c.token)}`,
+          // the email app's one-click Unsubscribe (List-Unsubscribe)
+          unsubscribeUrl: `${originOf(storeId)}/api/unsubscribe/cart/${str(c.token)}`,
           subject: s.cartSubject,
           message: s.cartMessage,
           coupon: s.cartCoupon || undefined,

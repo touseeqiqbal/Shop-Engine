@@ -99,6 +99,7 @@ import { Dashboard as Dashboard_fc7b3c28f7af7a7ce2ddde1f00b6dd10 } from '../../.
 import { PosView as PosView_3f7d49b9e203a9226ce0ec2bf7324c62 } from '../../../payload/admin/pos/PosView'
 import { RtoView as RtoView_340476181de91a758d44d077dbbf8070 } from '../../../payload/admin/reports/RtoView'
 import { SalesView as SalesView_d122ce15547b7bbd6cbbc86785e766ec } from '../../../payload/admin/reports/SalesView'
+import { StockValueView as StockValueView_3fca30c79337cb2f55b86cb124406908 } from '../../../payload/admin/reports/StockValueView'
 import { SecurityView as SecurityView_34b2475b77632088cc7cec9afc151f77 } from '../../../payload/admin/security/SecurityView'
 import { PrivacyView as PrivacyView_c4d14d13a2017a0aef31ddf52794ad38 } from '../../../payload/admin/privacy/PrivacyView'
 import { StockCountView as StockCountView_113950c8ba2e4d64ee293bb9fa41119e } from '../../../payload/admin/inventory/StockCountView'
@@ -212,6 +213,7 @@ export const importMap = {
   "/payload/admin/pos/PosView#PosView": PosView_3f7d49b9e203a9226ce0ec2bf7324c62,
   "/payload/admin/reports/RtoView#RtoView": RtoView_340476181de91a758d44d077dbbf8070,
   "/payload/admin/reports/SalesView#SalesView": SalesView_d122ce15547b7bbd6cbbc86785e766ec,
+  "/payload/admin/reports/StockValueView#StockValueView": StockValueView_3fca30c79337cb2f55b86cb124406908,
   "/payload/admin/security/SecurityView#SecurityView": SecurityView_34b2475b77632088cc7cec9afc151f77,
   "/payload/admin/privacy/PrivacyView#PrivacyView": PrivacyView_c4d14d13a2017a0aef31ddf52794ad38,
   "/payload/admin/inventory/StockCountView#StockCountView": StockCountView_113950c8ba2e4d64ee293bb9fa41119e,

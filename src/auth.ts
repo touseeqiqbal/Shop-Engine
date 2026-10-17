@@ -5,6 +5,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import { isCmsConfigured, isDatabaseConfigured } from "@/lib/db/config";
 import { verifyPasswordCms } from "@/lib/cms/sales";
+import { log } from "@/lib/log";
 
 /**
  * Auth.js (NextAuth v5) – email/password credentials for admins, staff and customers.
@@ -20,12 +21,13 @@ class InvalidLogin extends CredentialsSignin {
 export const { handlers, auth, signIn, signOut } = NextAuth({
   secret: process.env.AUTH_SECRET || (process.env.NODE_ENV !== "production" ? "dev-only-insecure-secret-change-me" : undefined),
   trustHost: true,
-  session: { strategy: "jwt", maxAge: 30 * 24 * 3600 },
+  // shoppers stay signed in while they come back within SHOPPER_SESSION_DAYS (default 14; renewed at most once a day)
+  session: { strategy: "jwt", maxAge: Math.min(90, Math.max(1, Number(process.env.SHOPPER_SESSION_DAYS) || 14)) * 24 * 3600, updateAge: 24 * 3600 },
   // An old / foreign session cookie (e.g. after AUTH_SECRET changed) just means "signed out" – don't log it as an error
   logger: {
     error(error) {
       if ((error as { type?: string }).type === "JWTSessionError") return;
-      console.error("[auth]", error);
+      log.error("auth.error", error);
     },
   },
   pages: { signIn: "/account/login" },

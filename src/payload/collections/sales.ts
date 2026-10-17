@@ -97,9 +97,11 @@ export const FlashSales: CollectionConfig = {
     storeField(),
     { name: "title", type: "text", required: true, defaultValue: "Weekly Hot Deals" },
     { type: "row", fields: [
-      { name: "endsAt", type: "date", required: true, admin: { width: "50%", date: { pickerAppearance: "dayAndTime" } } },
-      { name: "active", type: "checkbox", defaultValue: true, admin: { width: "50%", style: { alignSelf: "center" } } },
+      { name: "startsAt", type: "date", label: "Starts", admin: { width: "34%", date: { pickerAppearance: "dayAndTime" }, description: "Empty = now." } },
+      { name: "endsAt", type: "date", required: true, label: "Ends", admin: { width: "33%", date: { pickerAppearance: "dayAndTime" } } },
+      { name: "active", type: "checkbox", defaultValue: true, admin: { width: "33%", style: { alignSelf: "center" } } },
     ] },
+    { name: "discountPercent", type: "number", min: 1, max: 90, label: "% off while it runs", admin: { description: "Optional. The products below cost this much less from the start to the end – shop, cart and checkout alike – then go back to their own price by themselves. Empty = a countdown only (set the prices yourself)." } },
     { name: "products", type: "relationship", relationTo: "products", hasMany: true, required: true, filterOptions: sameStore },
     legacyIdField,
   ],

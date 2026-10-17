@@ -9,7 +9,12 @@
  *   Cash on delivery (and a store's own "on delivery" methods) is collected by the rider.
  */
 
-type MoneyOrder = { paymentMethod?: string | null; paymentDue?: string | null; paymentStatus?: string | null; total?: number | null; advancePaid?: number | null };
+type MoneyOrder = { paymentMethod?: string | null; paymentDue?: string | null; paymentStatus?: string | null; total?: number | null; advancePaid?: number | null; giftCardAmount?: number | null };
+
+/** What a gift card already paid of the order. */
+export const giftCardPaid = (o: MoneyOrder) => Math.max(0, Number(o.giftCardAmount) || 0);
+/** What is left to pay after the gift card (online payments are for this much). */
+export const dueAfterGiftCard = (o: MoneyOrder) => Math.max(0, (o.total ?? 0) - giftCardPaid(o));
 
 /** Paid when the order arrives? Orders say so themselves (paymentDue); older orders: cash on delivery only. */
 export const paidOnDelivery = (o: MoneyOrder) => (o.paymentDue ? o.paymentDue === "on-delivery" : o.paymentMethod === "cod");
@@ -20,7 +25,7 @@ export const creditedAdvance = (o: MoneyOrder) => (o.paymentStatus === "partial"
 
 export function amountToCollect(o: MoneyOrder): number {
   if (o.paymentStatus === "paid" || o.paymentStatus === "refunded" || o.paymentStatus === "partially-refunded") return 0;
-  return Math.max(0, (o.total ?? 0) - creditedAdvance(o));
+  return Math.max(0, (o.total ?? 0) - giftCardPaid(o) - creditedAdvance(o));
 }
 
 /** Online payment not verified yet → can't be confirmed or shipped. */
@@ -28,3 +33,17 @@ export const paymentBlocksShipping = (o: MoneyOrder) => paidUpfront(o) && o.paym
 
 /** Statuses that mean "we are going ahead with this order". */
 export const PROCEED_STATUSES = new Set(["confirmed", "dispatched", "out-for-delivery", "delivered"]);
+
+/**
+ * The tax lines of an order for invoices and receipts: one per rate ("Tax 17%", or "incl. tax 17%" when the prices
+ * already included it). `added`: the tax came on top of the prices (it is shown before the total, not after).
+ */
+export function taxLines(o: { subtotal?: number; discount?: number; deliveryCharge?: number; total?: number; taxTotal?: number; taxBreakdown?: { rate: number; tax: number }[] | null }): { added: boolean; lines: { label: string; amount: number }[] } {
+  const tax = Number(o.taxTotal) || 0;
+  if (tax <= 0) return { added: false, lines: [] };
+  // added on top: the total is more than items − discount + delivery
+  const added = Math.round(((o.total ?? 0) - ((o.subtotal ?? 0) - (o.discount ?? 0) + (o.deliveryCharge ?? 0))) * 100) > 0;
+  const name = added ? "Tax" : "incl. tax";
+  const parts = (o.taxBreakdown ?? []).filter((t) => t.tax > 0);
+  return { added, lines: parts.length ? parts.map((t) => ({ label: `${name} ${t.rate}%`, amount: t.tax })) : [{ label: added ? "Tax" : "Tax included", amount: tax }] };
+}

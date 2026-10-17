@@ -9,6 +9,7 @@ import { runBillingLifecycle } from "@/lib/billing";
 let lastCleanup = 0;
 let lastBilling = 0;
 let lastCouriers = 0;
+let lastSecurityPrune = 0;
 let lastIntegrationSync = 0;
 
 /**
@@ -86,6 +87,24 @@ async function chores(reason: string): Promise<Record<string, unknown>> {
     report.cartError = String((e as Error).message ?? e);
     log.error("housekeeping.carts", e);
   }
+  // a flash sale with "% off" started or ended in the last 10 minutes: refresh the catalogs so its prices change on
+  // time (the shop, the cart and checkout read the same snapshot)
+  try {
+    const now = new Date().toISOString();
+    const since = new Date(Date.now() - 10 * 60e3).toISOString();
+    const changed = await payload.count({
+      collection: "flash-sales" as never,
+      where: { and: [{ discountPercent: { greater_than: 0 } }, { or: [{ and: [{ startsAt: { greater_than: since } }, { startsAt: { less_than_equal: now } }] }, { and: [{ endsAt: { greater_than: since } }, { endsAt: { less_than_equal: now } }] }] }] } as never,
+      overrideAccess: true,
+    });
+    if (changed.totalDocs) {
+      const { revalidate, CATALOG_TAG } = await import("@/payload/revalidate");
+      revalidate([CATALOG_TAG, "content"], ["/", "/deals"]);
+      report.flashSalePrices = changed.totalDocs;
+    }
+  } catch (e) {
+    log.error("housekeeping.flash_sales", e);
+  }
   // online payments whose webhook never came – each provider plugin asks its provider
   for (const gateway of allGateways()) {
     if (!gateway.reconcile || !gateway.configured()) continue;
@@ -94,6 +113,17 @@ async function chores(reason: string): Promise<Record<string, unknown>> {
       if (r.paid || r.cancelled) report.cardPayments = { ...(report.cardPayments as object | undefined), [gateway.id]: r };
     } catch (e) {
       log.error("housekeeping.card_reconcile", e, { provider: gateway.id });
+    }
+  }
+  // security events older than 180 days – once a day
+  if (Date.now() - lastSecurityPrune > 24 * 3600e3) {
+    lastSecurityPrune = Date.now();
+    try {
+      const { pruneSecurityEvents } = await import("@/lib/security-events");
+      const removed = await pruneSecurityEvents(payload);
+      if (removed) report.securityEventsRemoved = removed;
+    } catch (e) {
+      log.error("housekeeping.security_prune", e);
     }
   }
   // courier parcels still on their way (and cash the couriers collected) – every 15 minutes, a batch at a time

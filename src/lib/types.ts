@@ -83,6 +83,18 @@ export interface Product {
   price: number; // regular price PKR
   salePrice?: number | null; // discounted price PKR
   stock: number;
+  /** keeps taking orders when sold out: "backorder" (ships when back in stock) or "preorder" (not released yet) */
+  backorders?: "backorder" | "preorder";
+  /** taxed at the store's reduced rate, or not at all (default: the normal rate) */
+  taxClass?: "reduced" | "exempt";
+  /** in a running flash sale with a discount: when that price ends (ISO) */
+  flashEndsAt?: string | null;
+  /** pre-orders: the day it ships from (ISO) */
+  releaseDate?: string | null;
+  /** e.g. "Ships in 2–3 weeks" */
+  backorderNote?: string | null;
+  /** kg (Products → weight) – for weight-based delivery prices and courier bookings */
+  weightKg?: number;
   condition?: Condition;
   conditionNotes?: string; // e.g. "Battery health 88%, minor scratches on lid"
   warranty: string;
@@ -241,6 +253,9 @@ export interface OrderItem {
   unitPrice: number; // includes upgrades
   qty: number;
   upgrades: UpgradeOption[];
+  /** ships later: sold before the product's release, or beyond its stock (`owedQty` of `qty`) */
+  availability?: "preorder" | "backorder";
+  owedQty?: number;
 }
 
 export interface OrderCustomer {
@@ -274,6 +289,11 @@ export interface Order {
   discount: number;
   couponCode?: string | null;
   deliveryCharge: number;
+  /** the delivery method chosen at checkout ("Express" …) – only for stores that offer a choice */
+  shippingMethod?: string | null;
+  /** a gift card that paid (part of) the order, and how much */
+  giftCardCode?: string | null;
+  giftCardAmount?: number;
   total: number;
   advancePaid?: number;
   paymentMethod: PaymentMethod;
@@ -300,6 +320,10 @@ export interface Order {
   paymentReference?: string | null;
   /** tax included in the total (the store's tax rate) */
   taxTotal?: number;
+  /** tax per rate, when the order had more than one rate (Products → Tax) */
+  taxBreakdown?: TaxBreakdownLine[];
+  /** invoice made out to someone else (a company …) */
+  billing?: BillingAddress | null;
 }
 
 export interface Coupon {
@@ -331,6 +355,8 @@ export interface FlashSale {
   endsAt: string;
   productIds: string[];
   active: boolean;
+  /** % off its products while it runs (empty = a countdown only) */
+  discountPercent?: number | null;
 }
 
 /** Shipping zone (/cms → Settings → Shipping). */
@@ -349,6 +375,30 @@ export interface ShippingZone {
   freeAbove?: number | null;
   /** e.g. "Same day / Next day" (empty = built-in estimate) */
   estimate?: string;
+  /** weight pricing of the zone's own (standard) rate: + this much per kg above `includedKg` */
+  perKg?: number | null;
+  includedKg?: number | null;
+  /** other ways to deliver in this zone, offered next to the standard one (e.g. Express) */
+  methods?: ShippingMethodRate[];
+}
+
+/** A delivery method of a zone besides its standard rate (Settings → Delivery → zone → Other delivery methods). */
+export interface ShippingMethodRate {
+  name: string;
+  charge: number;
+  /** + this much per kg above the zone's included weight (empty = no weight pricing) */
+  perKg?: number | null;
+  /** free above this cart total (empty = never free) */
+  freeAbove?: number | null;
+  estimate?: string;
+}
+
+/** A delivery choice for one address and cart, as checkout offers it. `id` "standard" = the zone's own rate. */
+export interface ShippingOption {
+  id: string;
+  name: string;
+  charge: number;
+  estimate: string;
 }
 
 export interface PaymentMethodSettings {
@@ -375,6 +425,26 @@ export interface TaxSettings {
   inclusive: boolean;
   label: string;
   taxDelivery: boolean;
+  /** percent for products set to "Reduced rate" (Products → Tax); empty = the normal rate */
+  reducedRate?: number;
+}
+
+/** How a product is taxed: the store's rate (default), its reduced rate, or no tax. */
+export type TaxClass = "standard" | "reduced" | "exempt";
+
+/** An order's tax per rate (invoices show one line per rate). */
+export type TaxBreakdownLine = { rate: number; base: number; tax: number };
+
+/** Who the invoice is made out to, when that isn't the person receiving the parcel. */
+export interface BillingAddress {
+  name: string;
+  company?: string;
+  /** VAT / NTN / tax number for a business invoice */
+  taxId?: string;
+  address: string;
+  city: string;
+  postalCode?: string;
+  country?: string;
 }
 
 export interface StoreSettings {

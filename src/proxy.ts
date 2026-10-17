@@ -3,6 +3,7 @@ import { getRedirectMap, storeIdForHost } from "@/lib/repo/redirects";
 import { isStaging, stagingAuthorized } from "@/lib/staging";
 import { ipFromHeaders } from "@/lib/client-ip";
 import { isMarketingHost, MARKETING_PREFIX, PASS_THROUGH } from "@/lib/marketing/hosts";
+import { log } from "@/lib/log";
 
 /**
  * Next.js 16 Proxy (formerly Middleware) – runs on the Node.js runtime before every matched request.
@@ -172,7 +173,7 @@ export async function proxy(request: NextRequest) {
       }
     } catch (err) {
       // Never block the storefront because the redirect table is unreachable.
-      console.error("[proxy] redirect lookup failed", err);
+      log.error("proxy.redirect_lookup_failed", err);
     }
   }
 
