@@ -55,7 +55,8 @@ export const Pages: CollectionConfig = {
   },
   access: {
     read: publicOrStore("store_staff", { _status: { equals: "published" } }),
-    readVersions: readFor("store_staff"),
+    // versions keep the fields under "version." – a plain "store" filter can't be queried there (blank edit page)
+    readVersions: readFor("store_staff", { field: "version.store" }),
     create: createFor("store_staff"),
     update: writeFor("store_staff"),
     delete: writeFor("store_manager"),

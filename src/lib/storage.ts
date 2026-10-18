@@ -35,6 +35,8 @@ function s3() {
       endpoint: env.endpoint,
       forcePathStyle: env.forcePathStyle,
       credentials: { accessKeyId: env.accessKeyId!, secretAccessKey: env.secretAccessKey! },
+      // a bucket that stops answering fails the request instead of holding it (and a page render) open for ever
+      requestHandler: { connectionTimeout: 5_000, requestTimeout: 60_000 },
     });
   }
   return g.__urkoS3;

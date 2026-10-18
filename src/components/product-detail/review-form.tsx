@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { Turnstile } from "@/components/ui/turnstile";
 import { compressImage } from "@/lib/compress-image";
 import { honeypotProps } from "@/lib/honeypot";
+import { FilePreview } from "@/components/ui/file-preview";
 
 const LABELS = ["Poor", "Fair", "Good", "Very good", "Excellent"];
 const initial: ReviewFormState = { ok: false, message: "" };
@@ -164,8 +165,7 @@ export function ReviewForm({ productId, productName }: { productId: string; prod
               <div className="mt-1 flex flex-wrap gap-2">
                 {photos.map((f, i) => (
                   <span key={i} className="relative size-16 overflow-hidden rounded-xl border border-border bg-surface">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={URL.createObjectURL(f)} alt="" className="size-full object-cover" />
+                    <FilePreview file={f} className="size-full object-cover" />
                     <button type="button" aria-label="Remove photo" onClick={() => setPhotos(photos.filter((_, j) => j !== i))} className="absolute right-0.5 top-0.5 rounded-full bg-black/70 px-1.5 text-xs">
                       ×
                     </button>

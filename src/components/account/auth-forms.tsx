@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { startTransition, useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { AlertCircle, CheckCircle2, Eye, EyeOff, Loader2, MailCheck } from "lucide-react";
 import {
@@ -19,6 +19,17 @@ import { honeypotProps } from "@/lib/honeypot";
 import { phonePlaceholder } from "@/lib/phone";
 import { Turnstile } from "@/components/ui/turnstile";
 
+/**
+ * onSubmit for these forms: sends the form in a transition, so React doesn't empty what was typed when the server
+ * answers with an error. The `action` prop stays on the form for browsers without JavaScript (and still a POST, so
+ * nothing typed ends up in the address).
+ */
+const keepTyped = (action: (fd: FormData) => void) => (e: React.FormEvent<HTMLFormElement>) => {
+  e.preventDefault();
+  const fd = new FormData(e.currentTarget);
+  startTransition(() => action(fd));
+};
+
 function Submit({ children }: { children: React.ReactNode }) {
   const { pending } = useFormStatus();
   return (
@@ -33,7 +44,7 @@ function FormError({ state }: { state: { error?: string } }) {
   return (
     <div aria-live="assertive">
       {state.error && (
-        <p role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        <p role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 light:text-rose-700">
           <AlertCircle className="mt-0.5 size-4 shrink-0 text-rose-400" aria-hidden="true" /> {state.error}
         </p>
       )}
@@ -63,7 +74,7 @@ export function LoginForm({ next }: { next?: string }) {
   const [state, action] = useActionState<AuthFormState, FormData>(loginAction, {});
   const fe = state.fieldErrors ?? {};
   return (
-    <form action={action} className="space-y-4" noValidate>
+    <form action={action} onSubmit={keepTyped(action)} className="space-y-4" noValidate>
       <FormError state={state} />
       <input type="hidden" name="next" value={next ?? "/account"} />
       <Field id="login-email" label="Email" required error={fe.email}>
@@ -96,7 +107,7 @@ export function RegisterForm({ next, askPhone = true }: { next?: string; askPhon
   const pk = country === "PK"; // other countries type the number with its +code
   const fe = state.fieldErrors ?? {};
   return (
-    <form action={action} className="space-y-4" noValidate>
+    <form action={action} onSubmit={keepTyped(action)} className="space-y-4" noValidate>
       <FormError state={state} />
       <input type="hidden" name="next" value={next ?? "/account"} />
       <div aria-hidden="true" className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
@@ -154,7 +165,7 @@ export function ForgotPasswordForm() {
     );
   }
   return (
-    <form action={action} className="space-y-4" noValidate>
+    <form action={action} onSubmit={keepTyped(action)} className="space-y-4" noValidate>
       <FormError state={state} />
       <Field id="forgot-email" label="Email" required>
         <input {...fieldAria("forgot-email")} name="email" type="email" autoComplete="email" required />
@@ -174,7 +185,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
   const [state, action] = useActionState<AuthFormState, FormData>(resetPasswordAction, {});
   const fe = state.fieldErrors ?? {};
   return (
-    <form action={action} className="space-y-4" noValidate>
+    <form action={action} onSubmit={keepTyped(action)} className="space-y-4" noValidate>
       <FormError state={state} />
       <input type="hidden" name="token" value={token} />
       <Field id="reset-password" label="New password" required error={fe.password} hint="At least 8 characters">
@@ -208,7 +219,7 @@ export function ConfirmEmailNotice({ email, text }: { email: string; text?: stri
         <p className="mt-1 text-sm text-muted">
           We sent a link to <span className="font-semibold text-fg">{email}</span>. {text ?? "Confirming makes sure order updates and password resets reach you."}
         </p>
-        <p aria-live="polite" className={`mt-2 text-sm ${result?.ok ? "text-emerald-300" : "text-rose-300"}`}>
+        <p aria-live="polite" className={`mt-2 text-sm ${result?.ok ? "text-emerald-300 light:text-emerald-700" : "text-rose-300 light:text-rose-700"}`}>
           {result?.ok && <CheckCircle2 className="mr-1 inline size-4" aria-hidden="true" />}
           {result?.message}
         </p>

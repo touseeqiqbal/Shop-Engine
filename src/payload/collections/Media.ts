@@ -2,7 +2,7 @@ import path from "node:path";
 import type { CollectionConfig } from "payload";
 import { assignStore, createFor, publicOrStore, storeField, writeFor } from "../tenancy";
 import { dbName } from "../fields";
-import { CATALOG_TAG, CHROME_TAG, PAGES_TAG, revalidate } from "../revalidate";
+import { catalogTagOf, CHROME_TAG, PAGES_TAG, revalidate } from "../revalidate";
 import { userError } from "../errors";
 import { storageLimit } from "../entitlements";
 import { cleanFileName } from "@/lib/media";
@@ -41,8 +41,9 @@ export const Media: CollectionConfig = {
       },
     ],
     // new alt text / crop / replaced file → the shop shows it straight away
-    afterChange: [({ doc, operation }) => (operation === "update" && revalidate([CATALOG_TAG, PAGES_TAG, CHROME_TAG]), doc)],
-    afterDelete: [({ doc }) => (revalidate([CATALOG_TAG, PAGES_TAG, CHROME_TAG]), doc)],
+    // the photo's own store's catalogue (not every store's); pages and the header have no per-store tag yet
+    afterChange: [({ doc, operation }) => (operation === "update" && revalidate([catalogTagOf(doc.store), PAGES_TAG, CHROME_TAG]), doc)],
+    afterDelete: [({ doc }) => (revalidate([catalogTagOf(doc.store), PAGES_TAG, CHROME_TAG]), doc)],
     // Clean file names on upload ("WhatsApp Image … (1).jpg" → "whatsapp-image-….webp"): tidy URLs and better image SEO.
     // Production never stores uploads on the container's disk (they'd vanish on the next deploy).
     beforeOperation: [

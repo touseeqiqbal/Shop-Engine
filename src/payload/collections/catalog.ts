@@ -461,7 +461,8 @@ export const Products: CollectionConfig = {
   // readVersions: drafts and old versions are for the store's team only. Deleting: managers.
   access: {
     read: publicOrStore("store_staff", { and: [{ status: { equals: "active" } }, { _status: { not_equals: "draft" } }] }),
-    readVersions: readFor("store_staff"),
+    // versions keep the fields under "version." – a plain "store" filter can't be queried there (blank edit page)
+    readVersions: readFor("store_staff", { field: "version.store" }),
     create: createFor("store_staff"),
     update: writeFor("store_staff"),
     delete: writeFor("store_manager"),
@@ -538,6 +539,21 @@ export const Products: CollectionConfig = {
               { name: "releaseDate", type: "date", label: "Ships from", admin: { width: "33%", condition: (d) => d?.backorders === "preorder", date: { pickerAppearance: "dayOnly" }, description: "Shown as “Pre-order · ships from …”. Until then every order is a pre-order." } },
               { name: "backorderNote", type: "text", label: "Note for shoppers", maxLength: 80, admin: { width: "33%", condition: (d) => d?.backorders === "backorder" || d?.backorders === "preorder", description: "e.g. Ships in 2–3 weeks. Optional." } },
             ] },
+            // digital products: files the customer downloads once the order is paid (Catalog → Digital files)
+            {
+              name: "digital",
+              type: "group",
+              label: "Digital product (download)",
+              admin: { description: "Sell e-books, software, courses … The customer gets signed download links on their order page and by email once the order is paid." },
+              fields: [
+                { name: "files", type: "relationship", relationTo: "digital-files", hasMany: true, filterOptions: sameStore, label: "Files the customer downloads", admin: { description: "Upload them first in Catalog → Digital files." } },
+                { type: "row", fields: [
+                  { name: "noShipping", type: "checkbox", label: "Nothing to ship (download only)", admin: { width: "34%", style: { alignSelf: "center" }, description: "A cart of only such products pays no delivery." } },
+                  { name: "downloadLimit", type: "number", min: 1, max: 100, defaultValue: 5, label: "Downloads per file", admin: { width: "33%" } },
+                  { name: "downloadDays", type: "number", min: 1, max: 3650, defaultValue: 30, label: "Days to download", admin: { width: "33%", description: "Counted from the order." } },
+                ] },
+              ],
+            },
             { type: "row", fields: [
               // what a scanner reads at the counter (EAN / UPC / GTIN); optional, unique within the store
               { name: "barcode", type: "text", index: true, label: "Barcode", validate: async (v: unknown, opts: unknown) => (v == null || v === "" ? true : typeof v === "string" ? uniqueInStore("barcode", "Another product in this store already has this barcode.")(v, opts as never) : "Enter the number under the barcode."), admin: { width: "50%", description: "EAN / UPC / GTIN – scan it at the shop counter. Optional." } },

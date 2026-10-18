@@ -182,10 +182,11 @@ export const StoreMemberships: CollectionConfig = {
       admin: { description: "Suspended: keeps the record, removes all access at once." },
     },
     { name: "invitedBy", type: "relationship", relationTo: "users", access: { update: () => false }, admin: { readOnly: true } },
+    // set by the invitation hook and the server (accepting) – never through /cms or the API (an expiry could be stretched)
     { type: "row", fields: [
-      { name: "invitedAt", type: "date", admin: { width: "33%", readOnly: true } },
-      { name: "inviteExpiresAt", type: "date", admin: { width: "33%", readOnly: true } },
-      { name: "acceptedAt", type: "date", admin: { width: "34%", readOnly: true } },
+      { name: "invitedAt", type: "date", access: { create: () => false, update: () => false }, admin: { width: "33%", readOnly: true } },
+      { name: "inviteExpiresAt", type: "date", access: { create: () => false, update: () => false }, admin: { width: "33%", readOnly: true } },
+      { name: "acceptedAt", type: "date", access: { create: () => false, update: () => false }, admin: { width: "34%", readOnly: true } },
     ] },
     // sha256 of the emailed invitation token – the token itself is never stored
     { name: "inviteTokenHash", type: "text", index: true, access: { read: () => false, create: () => false, update: () => false }, admin: { hidden: true } },

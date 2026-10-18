@@ -90,8 +90,8 @@ export const smsHttp = withTest(async (ctx, to, text) => {
   if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("The send address must be a web address.");
   const r =
     ctx.connection.config.method === "POST"
-      ? await http(`${u.origin}${u.pathname}`, { provider: "SMS provider", method: "POST", body: new URLSearchParams(u.searchParams) })
-      : await http(url, { provider: "SMS provider" });
+      ? await http(`${u.origin}${u.pathname}`, { provider: "SMS provider", method: "POST", body: new URLSearchParams(u.searchParams), storeSupplied: true })
+      : await http(url, { provider: "SMS provider", storeSupplied: true });
   const want = String(ctx.connection.config.successText ?? "").trim();
   if (!r.ok || (want && !r.text.includes(want))) throw new Error(`SMS provider answered ${r.status}: ${r.text.slice(0, 200)}`);
 });

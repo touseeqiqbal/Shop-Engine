@@ -1,7 +1,7 @@
 "use server";
 import { createHash, randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
-import { updateTag } from "next/cache";
+import { revalidateTag } from "next/cache";
 import { after } from "next/server";
 import { z } from "zod";
 import { priceCart } from "@/lib/cart-pricing";
@@ -19,7 +19,8 @@ import { canAskForConfirmation, notifyFromStorefront } from "@/lib/notify";
 import { rateLimit, rateLimitKey, rateLimitPeek } from "@/lib/rate-limit";
 import { getOne, upsert } from "@/lib/repo/db";
 import { generateOrderNumber, getOrderByNumber, insertOrder } from "@/lib/repo/orders";
-import { getStoreSettings, TAGS } from "@/lib/repo/catalog";
+import { getStoreSettings } from "@/lib/repo/catalog";
+import { catalogTagOf } from "@/lib/cache-tags";
 import { isCmsConfigured, isDatabaseConfigured } from "@/lib/db/config";
 import { deleteObject, uploadObject } from "@/lib/storage";
 import type { Order, OrderConfirmation, OrderRisk } from "@/lib/types";
@@ -279,15 +280,17 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   const weights = new Map(priced.products.map((p) => [p.id, p.weightKg ?? 0]));
   const weightKg = priced.items.reduce((s, i) => s + (weights.get(i.productId) ?? 0) * i.qty, 0);
   const shippingChoice = str(fd, "shipping").trim().slice(0, 60) || "standard";
-  const offered = shippingOptions(data.city, subtotal - discount, settings, data.postalCode, shipCountry, weightKg);
-  if (!offered.some((o) => o.id === shippingChoice))
+  // downloads only: nothing to deliver (no delivery charge, no method to choose)
+  const downloadsOnly = priced.items.length > 0 && priced.items.every((i) => priced.products.find((p) => p.id === i.productId)?.shipsNothing);
+  const offered = downloadsOnly ? [] : shippingOptions(data.city, subtotal - discount, settings, data.postalCode, shipCountry, weightKg);
+  if (!downloadsOnly && !offered.some((o) => o.id === shippingChoice))
     return { ok: false, message: "That delivery method isn't available for this address – please choose again.", fieldErrors: { city: "Choose a delivery method" }, ts };
 
   // COD handling fee (/cms → Settings → Payments) is recorded as part of the delivery charge
   // each line taxed at its product's rate (Products → Tax)
   const taxClasses = new Map(priced.products.map((p) => [p.id, p.taxClass]));
   const taxLines = priced.items.map((i) => ({ amount: i.unitPrice * i.qty, taxClass: taxClasses.get(i.productId) }));
-  const totals = orderTotals({ subtotal, discount, city: data.city, postalCode: data.postalCode, country: shipCountry, method: data.paymentMethod, settings, freeShipping: discounts.freeShipping, shipping: shippingChoice, weightKg, lines: taxLines });
+  const totals = orderTotals({ subtotal, discount, city: data.city, postalCode: data.postalCode, country: shipCountry, method: data.paymentMethod, settings, freeShipping: discounts.freeShipping, shipping: shippingChoice, weightKg, lines: taxLines, noShipping: downloadsOnly });
   const delivery = (totals.delivery ?? 0) + totals.fee;
   const total = totals.total;
   const expected = Number(str(fd, "expectedTotal"));
@@ -354,7 +357,9 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   }
 
   // ── Payment proof (wallet / bank transfer / the store's own methods: screenshot + transaction id; cards are checked by the provider) ──
-  const advanceEligible = payOnDelivery && ((total >= settings.advanceThreshold && settings.advanceAmount > 0) || Boolean(advanceNeeded));
+  // the advance is part of what is still DUE (after a gift card) – never more than that (it used to ask for the
+  // advance on the whole total, so a gift-card shopper sent more than they owed)
+  const advanceEligible = payOnDelivery && ((due >= settings.advanceThreshold && settings.advanceAmount > 0) || Boolean(advanceNeeded));
   const rawFile = fd.get("screenshot");
   const file = rawFile instanceof File && rawFile.size > 0 ? rawFile : null;
   const needsProof = method.proof;
@@ -366,7 +371,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     return {
       ok: false,
       requireAdvance: true,
-      message: `For ${method.id === "cod" ? "cash on delivery" : `${method.label} on delivery`}, ${advanceNeeded}: please pay ${money(Math.min(settings.advanceAmount, total))} in advance and upload the screenshot. The rest is paid on delivery.`,
+      message: `For ${method.id === "cod" ? "cash on delivery" : `${method.label} on delivery`}, ${advanceNeeded}: please pay ${money(Math.min(settings.advanceAmount, due))} in advance and upload the screenshot. The rest is paid on delivery.`,
       fieldErrors: { screenshot: "Upload the screenshot of your advance payment" },
       ts,
     };
@@ -393,7 +398,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     }
   }
 
-  const advancePaid = advanceEligible && screenshotUrl ? Math.min(settings.advanceAmount, total) : undefined;
+  const advancePaid = advanceEligible && screenshotUrl ? Math.min(settings.advanceAmount, due) : undefined;
 
   // COD orders the customer must confirm (link / code) before we pack them
   let confirmation: OrderConfirmation | null = null;
@@ -487,12 +492,16 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
           order.orderNumber = generateOrderNumber(now, prefix, loc.timezone);
           continue;
         }
+        // the same transaction id saved by another order at the same moment (the check before the save can't see it)
+        if (/unique|duplicate key|invalid/i.test(String((err as Error)?.message)) && /payment_?reference/i.test(String((err as Error)?.message)))
+          return failed("This transaction ID was already used for another order. Please check it – one payment pays for one order.", { fieldErrors: { paymentReference: "This transaction ID was already used" } });
         log.error("checkout.save_failed", err, { order: order.orderNumber });
         return failed("Something went wrong while placing your order. Please try again or order on WhatsApp.");
       }
     }
     if (!placed) return failed("Something went wrong while placing your order. Please try again or order on WhatsApp.");
     if (!placed.ok) {
+      if (placed.reason === "attempt-reused") return failed("Your cart changed since the last try (or that try was cancelled) – please press Place order again.");
       if (placed.reason === "coupon") return failed(`The coupon ${couponCode} has just run out or expired. Remove it and place the order again.`, { couponError: "This coupon can't be used any more" });
       if (placed.reason === "gift-card") return failed("The gift card's balance changed meanwhile (used in another order?). Check it and place the order again.", { fieldErrors: { giftCard: "Check the gift card again" } });
       if (placed.reason === "payment-reference")
@@ -574,7 +583,10 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   }
   if (stockChanged) {
     try {
-      updateTag(TAGS.catalog);
+      // this store's catalog only (src/lib/cache-tags.ts) – in the background: stock shown on product pages may lag a
+      // moment, the cart and checkout always check live stock; expiring it at once made every order's next visitors
+      // rebuild the whole catalogue together
+      revalidateTag(catalogTagOf(storeId), "max");
     } catch (err) {
       log.error("checkout.revalidate", err);
     }

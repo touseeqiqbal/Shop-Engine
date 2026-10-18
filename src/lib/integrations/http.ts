@@ -1,4 +1,5 @@
 import { IntegrationError } from "./types";
+import { PrivateAddressError, publicRequest } from "@/lib/net/public-request";
 
 /**
  * Calls to providers: a time limit, JSON in and out, and the provider's own error message passed on (never our keys).
@@ -12,6 +13,11 @@ export type HttpOptions = {
   timeoutMs?: number;
   /** the provider's name for error messages */
   provider: string;
+  /**
+   * The address was typed in by the STORE ("any SMS provider" send link …), not one of ours: never to an internal
+   * address (checked on the address connected to), no redirects followed.
+   */
+  storeSupplied?: boolean;
 };
 
 export type HttpResult<T> = { status: number; ok: boolean; data: T; headers: Headers; text: string };
@@ -28,14 +34,17 @@ export async function http<T = Record<string, unknown>>(url: string, opts: HttpO
     body = JSON.stringify(opts.body);
     headers["content-type"] ??= "application/json";
   }
-  let res: Response;
+  let res: Response | Awaited<ReturnType<typeof publicRequest>>;
   try {
-    res = await fetch(url, { method: opts.method ?? (body ? "POST" : "GET"), headers, body, redirect: "follow", signal: AbortSignal.timeout(opts.timeoutMs ?? 20_000) });
+    res = opts.storeSupplied
+      ? await publicRequest(url, { method: opts.method ?? (body ? "POST" : "GET"), headers, body: typeof body === "string" ? body : undefined, timeoutMs: opts.timeoutMs ?? 20_000 })
+      : await fetch(url, { method: opts.method ?? (body ? "POST" : "GET"), headers, body, redirect: "follow", signal: AbortSignal.timeout(opts.timeoutMs ?? 20_000) });
   } catch (e) {
+    if (e instanceof PrivateAddressError) throw new IntegrationError(`${opts.provider}: that address points to a private network – use the provider's public web address.`, 400);
     const timedOut = (e as Error)?.name === "TimeoutError";
     throw new IntegrationError(timedOut ? `${opts.provider} didn’t answer in time – please try again.` : `Couldn’t reach ${opts.provider} – please try again.`, 502);
   }
-  const text = await res.text();
+  const text = typeof res.text === "string" ? res.text : await res.text();
   let data: unknown = text;
   try {
     data = text ? JSON.parse(text) : {};

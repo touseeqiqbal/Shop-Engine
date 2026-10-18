@@ -26,22 +26,35 @@ function settingsCache() {
   };
 }
 
+/** At most this many pages of candidates per run (each job's own page size). */
+const MAX_PAGES = 10;
+
 export async function sendStockAndPriceAlerts(): Promise<number> {
   const payload = await payloadClient();
   const settingsOf = settingsCache();
   // Only alerts that can be due (product back in stock, or price alerts), oldest first – so alerts for products
   // that stay sold out can't fill every run and hide the ones that are due.
-  const res = await payload.find({
-    collection: "stock-alerts",
-    where: { and: [{ status: { equals: "waiting" } }, { or: [{ kind: { equals: "price" } }, { "product.stock": { greater_than: 0 } }] }] },
-    sort: "createdAt",
-    limit: 200,
-    depth: 2,
-    populate: { products: { title: true, slug: true, status: true, price: true, stock: true, category: true, store: true }, categories: { slug: true } } as never,
-    overrideAccess: true,
-  });
+  // page on through the candidates (a cursor on createdAt): alerts that aren't due (price not low enough, the store
+  // has alerts off, no way to reach the person) are skipped, not changed – with one batch only, 200 of them would
+  // hide every due alert behind them for good
+  const docs: Doc[] = [];
+  let after = "";
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const res = await payload.find({
+      collection: "stock-alerts",
+      where: { and: [{ status: { equals: "waiting" } }, { or: [{ kind: { equals: "price" } }, { "product.stock": { greater_than: 0 } }] }, ...(after ? [{ createdAt: { greater_than: after } }] : [])] },
+      sort: "createdAt",
+      limit: 200,
+      depth: 2,
+      populate: { products: { title: true, slug: true, status: true, price: true, stock: true, category: true, store: true }, categories: { slug: true } } as never,
+      overrideAccess: true,
+    });
+    docs.push(...(res.docs as unknown as Doc[]));
+    if (!res.hasNextPage || !res.docs.length) break;
+    after = str((res.docs[res.docs.length - 1] as unknown as Doc).createdAt);
+  }
   let sent = 0;
-  for (const a of res.docs as unknown as Doc[]) {
+  for (const a of docs) {
     const p = a.product as Doc | null;
     if (!p || p.status !== "active") continue;
     const storeId = relId(a.store) ?? relId(p.store);
@@ -82,17 +95,26 @@ export async function sendCartReminders(): Promise<number> {
   };
   const now = Date.now();
   // the earliest any store reminds (1 hour); each store's own timing is checked per cart below
-  const res = await payload.find({
-    collection: "abandoned-carts",
-    // carts that already got both reminders are done – they must not use up the batch
-    where: { and: [{ status: { in: ["open", "reminded"] } }, { lastActivityAt: { less_than: new Date(now - 3600e3).toISOString() } }, { or: [{ remindersSent: { less_than: 2 } }, { remindersSent: { exists: false } }] }] },
-    sort: "lastActivityAt",
-    limit: 100,
-    depth: 0,
-    overrideAccess: true,
-  });
+  // carts that already got both reminders are done – they must not use up the batch; carts that are skipped (the store
+  // has reminders off or not on its plan, no way to reach the person, not due yet) aren't changed, so page on through
+  // them (a cursor on lastActivityAt) instead of always looking at the same oldest 100
+  const carts: Doc[] = [];
+  let after = "";
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const res = await payload.find({
+      collection: "abandoned-carts",
+      where: { and: [{ status: { in: ["open", "reminded"] } }, { lastActivityAt: { less_than: new Date(now - 3600e3).toISOString() } }, { or: [{ remindersSent: { less_than: 2 } }, { remindersSent: { exists: false } }] }, ...(after ? [{ lastActivityAt: { greater_than: after } }] : [])] },
+      sort: "lastActivityAt",
+      limit: 100,
+      depth: 0,
+      overrideAccess: true,
+    });
+    carts.push(...(res.docs as unknown as Doc[]));
+    if (!res.hasNextPage || !res.docs.length) break;
+    after = str((res.docs[res.docs.length - 1] as unknown as Doc).lastActivityAt);
+  }
   let sent = 0;
-  for (const c of res.docs as unknown as Doc[]) {
+  for (const c of carts) {
     const storeId = relId(c.store);
     const s = await settingsOf(storeId);
     if (!s.cartEnabled || !(await cartsAllowed(storeId))) continue;

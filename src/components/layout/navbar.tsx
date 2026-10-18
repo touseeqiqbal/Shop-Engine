@@ -38,6 +38,8 @@ export function CartButton({ className }: { className?: string }) {
 }
 
 const linkProps = (l: NavLink) => (l.newTab ? { target: "_blank", rel: "noopener noreferrer" } : {});
+/** Is `el` inside one of `areas`? (the open menu is its <li> plus the mega panel, which sits outside the bar) */
+const within = (el: EventTarget | null, ...areas: (Element | null | undefined)[]) => el instanceof Node && areas.some((a) => a?.contains(el));
 
 /** Main navigation – items come from the menu chosen in /cms → Online store → Header (built-in default otherwise). */
 export function Navbar({ menu, mobileMenu }: { menu: NavLink[]; mobileMenu?: NavLink[] | null }) {
@@ -51,6 +53,9 @@ export function Navbar({ menu, mobileMenu }: { menu: NavLink[]; mobileMenu?: Nav
   const hydrated = useHydrated();
   const pathname = usePathname();
   const closeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const navRef = useRef<HTMLElement>(null);
+  const megaRef = useRef<HTMLDivElement>(null);
+  const triggers = useRef<(HTMLButtonElement | null)[]>([]);
   const label = (l: NavLink) => (lang === "ur" && l.labelUr ? l.labelUr : l.label);
 
   useEffect(() => {
@@ -80,12 +85,65 @@ export function Navbar({ menu, mobileMenu }: { menu: NavLink[]; mobileMenu?: Nav
     return () => window.removeEventListener("keydown", onKey);
   }, [setSearchOpen, header.showSearch]);
 
+  // an open dropdown / mega menu: Escape closes it (focus back on its button), so does a click anywhere else
+  useEffect(() => {
+    if (openIndex == null) return;
+    const area = () => [triggers.current[openIndex]?.closest("li"), megaRef.current];
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const hadFocus = within(document.activeElement, ...area());
+      setOpenIndex(null);
+      if (hadFocus) triggers.current[openIndex]?.focus();
+    };
+    const onPointer = (e: PointerEvent) => {
+      if (!within(e.target, ...area())) setOpenIndex(null);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+    };
+  }, [openIndex]);
+
   const open = (i: number) => {
     clearTimeout(closeTimer.current);
     setOpenIndex(i);
   };
   const close = () => {
     closeTimer.current = setTimeout(() => setOpenIndex(null), 150);
+  };
+  // focus moved on to something outside the open menu (Tab): close it. No `relatedTarget` = a click or the window
+  // losing focus – the pointer handler above deals with clicks.
+  const closeOnFocusOut = (e: React.FocusEvent) => {
+    if (openIndex == null || !e.relatedTarget) return;
+    if (!within(e.relatedTarget, triggers.current[openIndex]?.closest("li"), megaRef.current)) setOpenIndex(null);
+  };
+  // The mega panel comes after the whole bar in the page, so Tab is bridged by hand: from its button into the panel,
+  // and from the panel's last link on to whatever follows the button in the bar.
+  const focusables = (root: Element | null | undefined) => Array.from(root?.querySelectorAll<HTMLElement>("a[href], button:not([disabled])") ?? []).filter((el) => el.offsetParent !== null);
+  const tabIntoMega = (i: number) => (e: React.KeyboardEvent) => {
+    if (e.key !== "Tab" || e.shiftKey || openIndex !== i || !menu[i]?.mega) return;
+    const first = focusables(megaRef.current)[0];
+    if (!first) return;
+    e.preventDefault();
+    first.focus();
+  };
+  const tabOutOfMega = (e: React.KeyboardEvent) => {
+    if (e.key !== "Tab" || openIndex == null) return;
+    const links = focusables(megaRef.current);
+    const trigger = triggers.current[openIndex];
+    if (e.shiftKey && e.target === links[0]) {
+      e.preventDefault();
+      trigger?.focus();
+    } else if (!e.shiftKey && e.target === links[links.length - 1]) {
+      const inBar = focusables(navRef.current);
+      const next = trigger ? inBar[inBar.indexOf(trigger) + 1] : undefined;
+      if (!next) return;
+      e.preventDefault();
+      setOpenIndex(null);
+      next.focus();
+    }
   };
   const active = (href: string) => href !== "/" && pathname.startsWith(href.split("?")[0]);
   const openItem = openIndex != null ? menu[openIndex] : null;
@@ -98,7 +156,7 @@ export function Navbar({ menu, mobileMenu }: { menu: NavLink[]; mobileMenu?: Nav
           scrolled && header.sticky ? "glass border-x-0 border-t-0 shadow-[0_10px_40px_-20px_rgba(0,0,0,0.6)]" : "border-b border-transparent bg-bg/60 backdrop-blur-md"
         )}
       >
-        <nav aria-label="Main" className={cn("container-x flex items-center gap-3 transition-all duration-300", scrolled && header.sticky ? "h-14" : "h-16 lg:h-[4.5rem]")}>
+        <nav ref={navRef} aria-label="Main" className={cn("container-x flex items-center gap-3 transition-all duration-300", scrolled && header.sticky ? "h-14" : "h-16 lg:h-[4.5rem]")}>
           <button type="button" className="btn btn-ghost btn-icon -ml-2 lg:hidden" onClick={() => setMenuOpen(true)} aria-label="Open menu" aria-expanded={menuOpen}>
             <Menu className="size-5" aria-hidden="true" />
           </button>
@@ -108,13 +166,18 @@ export function Navbar({ menu, mobileMenu }: { menu: NavLink[]; mobileMenu?: Nav
           <ul className="ml-3 hidden shrink-0 items-center gap-1 lg:flex xl:ml-6">
             {menu.map((item, i) =>
               item.children.length ? (
-                <li key={`${item.href}-${i}`} onMouseEnter={() => open(i)} onMouseLeave={close} className="relative">
+                <li key={`${item.href}-${i}`} onMouseEnter={() => open(i)} onMouseLeave={close} onBlur={closeOnFocusOut} className="relative">
                   <button
+                    ref={(el) => {
+                      triggers.current[i] = el;
+                    }}
                     type="button"
                     className="btn btn-ghost btn-sm gap-1"
                     aria-expanded={openIndex === i}
-                    aria-controls={`nav-panel-${i}`}
+                    // the panel only exists while it's open
+                    aria-controls={openIndex === i ? `nav-panel-${i}` : undefined}
                     onClick={() => setOpenIndex(openIndex === i ? null : i)}
+                    onKeyDown={tabIntoMega(i)}
                   >
                     {item.mega && <LayoutGrid className="size-4" aria-hidden="true" />}
                     {label(item)}
@@ -232,6 +295,7 @@ export function Navbar({ menu, mobileMenu }: { menu: NavLink[]; mobileMenu?: Nav
       <AnimatePresence>
         {openItem?.mega && (
           <motion.div
+            ref={megaRef}
             id={`nav-panel-${openIndex}`}
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -239,6 +303,8 @@ export function Navbar({ menu, mobileMenu }: { menu: NavLink[]; mobileMenu?: Nav
             transition={{ duration: 0.18 }}
             onMouseEnter={() => open(openIndex!)}
             onMouseLeave={close}
+            onBlur={closeOnFocusOut}
+            onKeyDown={tabOutOfMega}
             className="absolute inset-x-0 top-full hidden lg:block"
           >
             <div className="container-x">

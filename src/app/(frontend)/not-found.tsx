@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Logo } from "@/components/layout/logo";
 import { NotFoundContent } from "@/components/content/not-found-content";
+import { storeNotFoundCategories } from "@/components/content/store-not-found-categories";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { currentAvailability } from "@/lib/tenant";
 
@@ -15,6 +16,8 @@ export default async function RootNotFound() {
   // an address no store owns: no store's name, address or phones
   const unknown = !availability.open && availability.reason === "missing";
   const contact = unknown ? [] : [site.name, site.address.full, ...site.phones.map((p) => p.display)].filter(Boolean);
+  // an address no store owns suggests no categories
+  const categories = unknown ? [] : await storeNotFoundCategories();
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="border-b border-border">
@@ -23,7 +26,7 @@ export default async function RootNotFound() {
         </div>
       </header>
       <main id="main" className="flex-1">
-        <NotFoundContent />
+        <NotFoundContent categories={categories} />
       </main>
       {contact.length > 0 && <footer className="border-t border-border py-6 text-center text-xs text-muted">{contact.join(" · ")}</footer>}
     </div>

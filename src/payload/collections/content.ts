@@ -18,7 +18,8 @@ export const Posts: CollectionConfig = {
   admin: { useAsTitle: "title", group: "Content", defaultColumns: ["title", "category", "publishedAt", "_status"] },
   access: {
     read: publicOrStore("store_staff", { _status: { equals: "published" } }),
-    readVersions: readFor("store_staff"),
+    // versions keep the fields under "version." – a plain "store" filter can't be queried there (blank edit page)
+    readVersions: readFor("store_staff", { field: "version.store" }),
     create: createFor("store_staff"),
     update: writeFor("store_staff"),
     delete: writeFor("store_manager"),
@@ -170,6 +171,26 @@ const orderGuards: CollectionBeforeChangeHook = async ({ data, originalDoc, oper
           : `Staff can't move an order from “${prevStatus}” to “${status}” – ask a manager.`,
       403,
     );
+  // cancelling an order the customer has already PAID for (online, or an approved / claimed advance) is a money
+  // decision: an owner's or manager's – and the money must go back, so the team gets a reminder with the amount (it
+  // used to be cancelled silently, and the payment dropped out of every report)
+  const paidBefore = String(originalDoc?.paymentStatus ?? "");
+  if (operation === "update" && t && status === "cancelled" && prevStatus !== "cancelled" && ["paid", "partial", "awaiting-verification"].includes(paidBefore)) {
+    if (!manager) throw userError("This order is already paid (or has an advance) – only an owner or manager can cancel it, and the payment has to be refunded.", 403);
+    const { queueNotification } = await import("../../lib/notify");
+    const paidAmount = paidBefore === "paid" ? Number(originalDoc?.total) || 0 : Number(originalDoc?.advancePaid) || 0;
+    await queueNotification(
+      req.payload,
+      "staff",
+      storeIdOf(originalDoc?.store),
+      {
+        subject: `Refund due: paid order ${String(originalDoc?.orderNumber ?? "")} was cancelled`,
+        lines: [`${String(originalDoc?.orderNumber ?? "")} was cancelled after ${paidBefore === "paid" ? "it was paid" : "an advance was paid"}${paidAmount ? ` (${paidAmount})` : ""}.`, "Refund the customer – through the online payment on the order, or record it in Orders → Returns."],
+        link: { href: `/cms/collections/orders/${String(originalDoc?.id ?? "")}`, label: "Open the order" },
+      },
+      { req, dedupeKey: `cancel-paid:${String(originalDoc?.id ?? "")}:${String(originalDoc?.updatedAt ?? "")}` },
+    );
+  }
   const money = { paymentMethod: data.paymentMethod ?? originalDoc?.paymentMethod, paymentDue: data.paymentDue ?? originalDoc?.paymentDue, paymentStatus: data.paymentStatus ?? originalDoc?.paymentStatus };
   if ((operation === "create" || status !== prevStatus) && PROCEED_STATUSES.has(status) && paymentBlocksShipping(money))
     throw userError("Check the online payment first: approve it (payment “Paid”) – or change the payment method to cash on delivery – before confirming or shipping this order.", 400);
@@ -288,7 +309,7 @@ async function paymentMethodInfo(req: Parameters<CollectionBeforeChangeHook>[0][
 }
 
 /** Totals always match the lines: recalculated whenever items, discount or delivery change (and for orders made in /cms). */
-const orderTotals: CollectionBeforeChangeHook = ({ data, originalDoc, operation, context }) => {
+const orderTotals: CollectionBeforeChangeHook = async ({ data, originalDoc, operation, context, req }) => {
   if (context?.migrating || context?.fromStorefront) return data;
   const sig = (items: unknown, discount: unknown, delivery: unknown) =>
     JSON.stringify([((Array.isArray(items) ? items : []) as { unitPrice?: number; qty?: number }[]).map((i) => [Number(i.unitPrice) || 0, Number(i.qty) || 0]), Number(discount) || 0, Number(delivery) || 0]);
@@ -302,11 +323,37 @@ const orderTotals: CollectionBeforeChangeHook = ({ data, originalDoc, operation,
     data.total = originalDoc?.total;
     return data;
   }
+  // an order waiting for its online payment: the provider's page asks for the old amount – a changed total would make
+  // the payment "not match" and the paid order never become Paid
+  if (operation === "update" && originalDoc?.status === "awaiting-payment")
+    throw userError("This order is waiting for its online payment of the current total – its items, discount and delivery can't change now. Cancel it and place a new order instead.", 400);
   const subtotal = ((Array.isArray(items) ? items : []) as { unitPrice?: number; qty?: number }[]).reduce((s, i) => s + Math.max(0, Number(i.unitPrice) || 0) * Math.max(0, Number(i.qty) || 0), 0);
   // whole rupees, cents … – the order's own currency
   const currency = String(data.currency ?? originalDoc?.currency ?? "PKR");
+  const goods = Math.max(0, subtotal - Math.max(0, Number(discount) || 0));
+  // what the checkout added on top of goods + delivery – tax added on top and the cash-on-delivery fee – stays part of
+  // the total (it used to be dropped, so the rider collected too little); added tax follows the goods' new value
+  let extra = 0;
+  if (operation === "update" && originalDoc) {
+    const oldGoods = Math.max(0, (Number(originalDoc.subtotal) || 0) - Math.max(0, Number(originalDoc.discount) || 0));
+    const oldExtra = Math.max(0, (Number(originalDoc.total) || 0) - oldGoods - Math.max(0, Number(originalDoc.deliveryCharge) || 0));
+    const oldTax = Math.max(0, Number(originalDoc.taxTotal) || 0);
+    const ratio = oldGoods > 0 ? goods / oldGoods : 1;
+    // tax is part of the extra only when the store adds it on top of its prices (the default: prices include it)
+    const pay = oldTax > 0 ? await getStoreSettings<{ tax?: { inclusive?: boolean } }>(req.payload, "payments", storeIdOf(data.store ?? originalDoc.store), { req }).catch((): { tax?: { inclusive?: boolean } } => ({})) : {};
+    const addedTax = oldTax > 0 && pay.tax?.inclusive === false ? Math.min(oldExtra, oldTax) : 0;
+    extra = oldExtra - addedTax + addedTax * ratio;
+    if (oldTax > 0) {
+      data.taxTotal = roundMoney(oldTax * ratio, currency);
+      if (Array.isArray(originalDoc.taxBreakdown))
+        data.taxBreakdown = (originalDoc.taxBreakdown as { rate?: number; base?: number; tax?: number }[]).map((l) => ({ ...l, base: roundMoney((Number(l.base) || 0) * ratio, currency), tax: roundMoney((Number(l.tax) || 0) * ratio, currency) }));
+    }
+  }
   data.subtotal = roundMoney(subtotal, currency);
-  data.total = Math.max(0, roundMoney(subtotal - Math.max(0, Number(discount) || 0) + Math.max(0, Number(delivery) || 0), currency));
+  data.total = Math.max(0, roundMoney(goods + Math.max(0, Number(delivery) || 0) + extra, currency));
+  // a gift card can't have paid more than the order now costs
+  const gift = Math.max(0, Number(data.giftCardAmount ?? originalDoc?.giftCardAmount) || 0);
+  if (gift > data.total + 0.005) throw userError(`The gift card already paid ${gift} – the order can't cost less than that. Refund the difference to the card first (or keep an item).`, 400);
   return data;
 };
 
@@ -422,8 +469,10 @@ const orderStock: CollectionBeforeChangeHook = async ({ data, originalDoc, opera
     }
   }
   if (changed) {
-    const { revalidate, CATALOG_TAG } = await import("../revalidate");
-    revalidate([CATALOG_TAG]);
+    // this store's catalog (stock shown on its pages)
+    const { revalidate, catalogTagOf } = await import("../revalidate");
+    // stock only: refresh in the background (checkout and the cart always read live stock)
+    revalidate([catalogTagOf(data.store ?? originalDoc?.store)], [], false, { soft: true });
   }
   return data;
 };
@@ -445,15 +494,28 @@ async function restockedByReturns(req: Parameters<CollectionBeforeChangeHook>[0]
 /** Deleting an order that still holds stock gives the stock and its laptops back (managers only). */
 const orderDeleteStock: CollectionBeforeDeleteHook = async ({ id, req }) => {
   const doc = (await req.payload.findByID({ collection: "orders", id, depth: 0, overrideAccess: true, req }).catch(() => null)) as Record<string, unknown> | null;
-  if (!doc || doc.stockHeld === false || RELEASED.has(String(doc.status))) return;
+  if (!doc) return;
+  // an open order's coupon use and gift-card payment go back too, as when it is cancelled (deleting used to keep
+  // the gift card's money and the coupon's use)
+  if (!RELEASED.has(String(doc.status))) {
+    if (doc.couponCode && doc.couponConsumed) {
+      const { releaseCoupon } = await import("../stock");
+      await releaseCoupon(req.payload, String(doc.couponCode), storeIdOf(doc.store), req);
+    }
+    if (doc.giftCardCode && doc.giftCardCharged && Number(doc.giftCardAmount) > 0) {
+      const { giveBackToGiftCard } = await import("../gift-cards");
+      await giveBackToGiftCard(req.payload, { code: String(doc.giftCardCode), storeId: storeIdOf(doc.store), amount: Number(doc.giftCardAmount), orderNumber: String(doc.orderNumber ?? ""), note: "Order deleted" }, req);
+    }
+  }
+  if (doc.stockHeld === false || RELEASED.has(String(doc.status))) return;
   const { putBackStock, trackedProducts, moveOrderUnits, setStockLog } = await import("../stock");
   setStockLog(req, { reason: "order-deleted", ref: String(doc.orderNumber ?? "") });
   const lines = orderLines(doc.items);
   const tracked = await trackedProducts(req.payload, lines.map((l) => l.productId), req);
   for (const l of lines) if (!tracked.has(l.productId)) await putBackStock(req.payload, l.productId, l.qty, req);
   if (tracked.size) await moveOrderUnits(req.payload, Number(id), "in-stock", req);
-  const { revalidate, CATALOG_TAG } = await import("../revalidate");
-  revalidate([CATALOG_TAG]);
+  const { revalidate, catalogTagOf } = await import("../revalidate");
+  revalidate([catalogTagOf(doc.store)], [], false, { soft: true });
 };
 
 /** Audit trail in the logs: status, payment and courier changes (who, what, when). */
@@ -468,6 +530,47 @@ const orderAudit: CollectionAfterChangeHook = ({ doc, previousDoc, operation, re
       log.info("courier.assigned", { order: doc.orderNumber, courier: doc.courier, tracking: doc.trackingNumber, by });
   }
   return doc;
+};
+
+/** Digital products: once an order is paid, its download links go out by email (once). */
+const orderDownloadsReady: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, context, req }) => {
+  // (a payment that arrived after cancelling sends nothing – the team refunds it or re-opens the order)
+  if (context?.migrating || doc.paymentStatus !== "paid" || doc.status === "cancelled" || (operation === "update" && previousDoc?.paymentStatus === "paid")) return doc;
+  const ids = orderLines(doc.items).map((l) => l.productId);
+  if (!ids.length) return doc;
+  const digital = await req.payload.count({ collection: "products", where: { and: [{ id: { in: ids } }, { "digital.files": { exists: true } }] } as never, overrideAccess: true, req });
+  if (!digital.totalDocs) return doc;
+  const { queueNotification } = await import("../../lib/notify");
+  await queueNotification(req.payload, "downloads", storeIdOf(doc.store), { orderId: doc.id }, { req, dedupeKey: `downloads:${doc.id}` });
+  return doc;
+};
+
+/**
+ * Loyalty points (Settings → Installments & reminders → Loyalty points): a signed-in customer's order earns its points
+ * when it is DELIVERED (once); if it then comes back (returned / refused) they are taken back – in the same save.
+ */
+const orderLoyalty: CollectionBeforeChangeHook = async ({ data, originalDoc, operation, context, req }) => {
+  if (context?.migrating || operation !== "update") return data;
+  const status = String(data.status ?? originalDoc?.status ?? "");
+  const prev = String(originalDoc?.status ?? "");
+  if (status === prev) return data;
+  const user = Number(typeof (data.user ?? originalDoc?.user) === "object" ? (data.user ?? originalDoc?.user)?.id : (data.user ?? originalDoc?.user));
+  if (!Number.isFinite(user) || user <= 0) return data;
+  const storeId = storeIdOf(data.store ?? originalDoc?.store);
+  const ref = String(originalDoc?.orderNumber ?? "");
+  const loyalty = await import("../loyalty");
+  if (status === "delivered" && !(Number(originalDoc?.pointsEarned) > 0)) {
+    const settings = await loyalty.loyaltySettings(req.payload, storeId, req);
+    const points = loyalty.pointsFor({ subtotal: Number(data.subtotal ?? originalDoc?.subtotal), discount: Number(data.discount ?? originalDoc?.discount), giftCardAmount: Number(originalDoc?.giftCardAmount) || 0 }, settings);
+    if (points > 0) {
+      await loyalty.addPoints(req.payload, { storeId, userId: user, points, note: `Order ${ref} delivered`, order: ref }, req);
+      data.pointsEarned = points;
+    }
+  } else if (prev === "delivered" && RELEASED.has(status) && Number(originalDoc?.pointsEarned) > 0) {
+    await loyalty.takeBackPoints(req.payload, { storeId, userId: user, points: Number(originalDoc?.pointsEarned), note: `Order ${ref} ${status}`, order: ref }, req);
+    data.pointsEarned = 0;
+  }
+  return data;
 };
 
 /**
@@ -548,6 +651,17 @@ export const orderEventData = (doc: Record<string, unknown>) => {
   };
 };
 
+/**
+ * An order cancelled while it waited for its online payment: its payment page is closed at the provider (outbox
+ * "payments.expire"), so the shopper can't pay for an order whose stock was already put back.
+ */
+const orderCloseCheckout: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, context, req }) => {
+  if (operation !== "update" || context?.migrating || doc.status !== "cancelled" || previousDoc?.status !== "awaiting-payment") return doc;
+  const { enqueue } = await import("../../lib/outbox");
+  await enqueue(req.payload, { type: "payments.expire", storeId: storeIdOf(doc.store), data: { orderId: doc.id }, dedupeKey: `payments.expire:${doc.id}` }, req);
+  return doc;
+};
+
 /** New orders and status changes go to the store's webhooks (queued in the same transaction). */
 const orderWebhooks: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, context, req }) => {
   if (context?.migrating) return doc;
@@ -612,8 +726,8 @@ export const Orders: CollectionConfig = {
   indexes: perStoreUnique("paymentReference"),
   hooks: {
     beforeValidate: [assignStore()],
-    beforeChange: [orderCurrencyAndMethod, orderGuards, orderItemDetails, orderTotals, orderStatusHistory, orderStock],
-    afterChange: [orderUnits, orderCosts, orderAudit, orderStatusNotify, orderWebhooks],
+    beforeChange: [orderCurrencyAndMethod, orderGuards, orderItemDetails, orderTotals, orderStatusHistory, orderStock, orderLoyalty],
+    afterChange: [orderUnits, orderCosts, orderAudit, orderStatusNotify, orderWebhooks, orderCloseCheckout, orderDownloadsReady],
     beforeDelete: [orderDeleteStock],
   },
   fields: [
@@ -691,6 +805,9 @@ export const Orders: CollectionConfig = {
       { name: "giftCardAmount", type: "number", min: 0, label: "Paid by gift card", access: { update: () => false }, admin: { width: "50%", readOnly: true } },
     ] },
     // the card's balance was really taken (given back when the order is cancelled, taken again if it is re-opened)
+    // digital products: how often each file was downloaded ({ "<file id>": n }) – written by /download/<token>
+    { name: "downloadCounts", type: "json", label: "Downloads used", access: { create: () => false, update: () => false }, admin: { readOnly: true, condition: (d) => Boolean(d?.downloadCounts && Object.keys(d.downloadCounts as object).length) } },
+    { name: "pointsEarned", type: "number", label: "Loyalty points earned", access: { create: () => false, update: () => false }, admin: { readOnly: true, condition: (d) => Number(d?.pointsEarned) > 0, description: "Given to the customer when the order was delivered." } },
     { name: "giftCardCharged", type: "checkbox", defaultValue: false, access: { read: storeRoleField("store_staff"), create: () => false, update: () => false }, admin: { hidden: true } },
     { type: "row", fields: [
       { name: "couponCode", type: "text", label: "Coupon code", admin: { width: "50%" } },
@@ -840,9 +957,11 @@ export const Orders: CollectionConfig = {
       ],
     },
     { name: "user", type: "relationship", relationTo: "users", label: "Customer account", admin: { position: "sidebar", description: "The customer record this order belongs to (set automatically from the email)." } },
-    { name: "stockHeld", type: "checkbox", access: { read: storeRoleField("store_staff") }, admin: { hidden: true } },
+    // system flags – set by the order hooks and checkout only (a REST "stockHeld: false" made a later cancel skip
+    // returning the stock, coupon and gift card)
+    { name: "stockHeld", type: "checkbox", access: { read: storeRoleField("store_staff"), create: () => false, update: () => false }, admin: { hidden: true } },
     // one id per checkout attempt: a repeated submit (double click, retry) returns the same order instead of a second one
-    { name: "attemptId", type: "text", unique: true, index: true, access: { read: storeRoleField("store_staff") }, admin: { hidden: true } },
+    { name: "attemptId", type: "text", unique: true, index: true, access: { read: storeRoleField("store_staff"), create: () => false, update: () => false }, admin: { hidden: true } },
     legacyIdField,
   ],
 };

@@ -88,10 +88,13 @@ function Sell({ storeName, isManager }: { storeName: string; isManager: boolean 
   const seq = useRef(0);
   const { money, date, timezone, cents, methods } = useCounter();
 
+  // a failed load says so – "No sales yet today" after a failed request misleads the counter
+  const [recentFailed, setRecentFailed] = useState(false);
   const loadRecent = useCallback(async () => {
     const start = new Date(dayStart(todayIn(timezone), timezone)).toISOString();
-    const j = await api<{ docs: Sale[] }>(`/pos-sales?where[createdAt][greater_than_equal]=${encodeURIComponent(start)}&sort=-createdAt&limit=20&depth=0`).catch(() => ({ docs: [] }));
-    setRecent(j.docs);
+    const j = await api<{ docs: Sale[] }>(`/pos-sales?where[createdAt][greater_than_equal]=${encodeURIComponent(start)}&sort=-createdAt&limit=20&depth=0`).catch(() => null);
+    setRecentFailed(!j);
+    if (j) setRecent(j.docs);
   }, [timezone]);
   useEffect(() => {
     void loadRecent();
@@ -286,6 +289,13 @@ function Sell({ storeName, isManager }: { storeName: string; isManager: boolean 
               </li>
             ))}
           </ul>
+        ) : recentFailed ? (
+          <p className="urko-pos__msg" role="alert">
+            Couldn’t load today’s sales.{" "}
+            <button type="button" className="urko-btn" onClick={() => void loadRecent()}>
+              Try again
+            </button>
+          </p>
         ) : (
           <p className="urko-pos__msg">No sales yet today.</p>
         )}
@@ -491,7 +501,14 @@ function CashUp() {
   const [counted, setCounted] = useState("");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => setData(await api<NonNullable<typeof data>>(`/pos/cashup?day=${day}`).catch(() => null)), [day]);
+  // the day's figures must have loaded before a cash-up can be saved (zeros after a failed request would be saved
+  // as if no sale had been made)
+  const [failed, setFailed] = useState(false);
+  const load = useCallback(async () => {
+    const j = await api<NonNullable<typeof data>>(`/pos/cashup?day=${day}`).catch(() => null);
+    setFailed(!j);
+    setData(j);
+  }, [day]);
   useEffect(() => {
     void load();
   }, [load]);
@@ -588,7 +605,15 @@ function CashUp() {
           Notes
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder={`e.g. ${money(500)} taken for tea`} />
         </label>
-        <button type="button" className="urko-btn urko-btn--primary urko-pos__complete" disabled={busy || counted === ""} onClick={save}>
+        {failed && (
+          <p className="urko-pos__msg" role="alert">
+            Couldn’t load this day’s sales – the cash-up can be saved once they have loaded.{" "}
+            <button type="button" className="urko-btn" onClick={() => void load()}>
+              Try again
+            </button>
+          </p>
+        )}
+        <button type="button" className="urko-btn urko-btn--primary urko-pos__complete" disabled={busy || counted === "" || !data} onClick={save}>
           Save cash-up
         </button>
       </section>

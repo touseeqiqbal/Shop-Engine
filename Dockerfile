@@ -40,6 +40,10 @@ ARG NEXT_PUBLIC_BING_SITE_VERIFICATION
 ARG NEXT_PUBLIC_TURNSTILE_SITE_KEY
 ARG NEXT_PUBLIC_SENTRY_DSN
 ARG NEXT_PUBLIC_SENTRY_ENVIRONMENT
+ARG NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE
+# the platform's own domain: the strict HTTPS header (includeSubDomains; preload) is built for it only, not for
+# merchants' custom domains (next.config.ts)
+ARG PLATFORM_ROOT_DOMAIN
 ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
     STAGING=$STAGING \
     NEXT_PUBLIC_GA_ID=$NEXT_PUBLIC_GA_ID \
@@ -49,15 +53,17 @@ ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
     NEXT_PUBLIC_BING_SITE_VERIFICATION=$NEXT_PUBLIC_BING_SITE_VERIFICATION \
     NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY \
     NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN \
-    NEXT_PUBLIC_SENTRY_ENVIRONMENT=$NEXT_PUBLIC_SENTRY_ENVIRONMENT
+    NEXT_PUBLIC_SENTRY_ENVIRONMENT=$NEXT_PUBLIC_SENTRY_ENVIRONMENT \
+    NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE=$NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE \
+    PLATFORM_ROOT_DOMAIN=$PLATFORM_ROOT_DOMAIN
 # Regenerate the client into src/generated (never connects to the database).
 RUN npx prisma generate
 # Pages, the sitemap and the product feeds are pre-built from the shop's data in /cms. Railway's private network
 # isn't reachable while building, so set the service variable
 #   DATABASE_BUILD_URL=${{Postgres.DATABASE_PUBLIC_URL}}
 # PAYLOAD_SECRET (already a service variable) is passed in as well. Both are build ARGs of this stage only –
-# they are never copied into the final image. Payload's migrations run first (they only ever ADD things, so the
-# live site keeps working until the new version replaces it), then the build reads the up-to-date schema.
+# they are never copied into the final image. Migrations do NOT run during the build (src/payload.config.ts,
+# scripts/docker-build.sh): they run when the new server starts.
 ARG DATABASE_BUILD_URL
 ARG PAYLOAD_SECRET
 # Without them the build would pre-render pages from the built-in demo catalog – so it stops instead (the live site

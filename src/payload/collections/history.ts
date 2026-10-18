@@ -253,7 +253,7 @@ export function withGlobalActivityLog(g: GlobalConfig): GlobalConfig {
 export const LOGGED_COLLECTIONS = new Set([
   "users", "products", "categories", "brands", "laptop-models", "product-collections", "orders", "return-requests", "warranty-claims",
   "pos-sales", "cash-ups", "units", "discounts", "flash-sales", "pages", "posts", "menus", "suppliers", "purchases", "stock-counts",
-  "reviews", "media", "trade-ins", "wholesale-inquiries", "contact-messages", "blocked-phones", "gift-cards", "email-optouts",
+  "reviews", "media", "trade-ins", "wholesale-inquiries", "contact-messages", "blocked-phones", "gift-cards", "email-optouts", "loyalty-accounts",
   // the platform and every store's team, plan and settings
   "stores", "store-memberships", "subscription-plans", "store-subscriptions", "store-invoices",
 ]);

@@ -30,10 +30,10 @@ export function useCartSync(enabled: boolean) {
             removed++;
             return [];
           }
-          if (f.unitPrice !== l.unitPrice || f.stock !== l.stock || f.taxClass !== l.taxClass) {
+          if (f.unitPrice !== l.unitPrice || f.stock !== l.stock || f.taxClass !== l.taxClass || Boolean(f.shipsNothing) !== Boolean(l.shipsNothing)) {
             if (f.unitPrice !== l.unitPrice) changed++;
-            const { taxClass: _old, ...rest } = l;
-            return [{ ...rest, unitPrice: f.unitPrice, basePrice: f.basePrice, stock: f.stock, qty: Math.min(l.qty, Math.max(f.stock, 1)), ...(f.taxClass ? { taxClass: f.taxClass } : {}) }];
+            const { taxClass: _old, shipsNothing: _ships, ...rest } = l;
+            return [{ ...rest, unitPrice: f.unitPrice, basePrice: f.basePrice, stock: f.stock, qty: Math.min(l.qty, Math.max(f.stock, 1)), ...(f.taxClass ? { taxClass: f.taxClass } : {}), ...(f.shipsNothing ? { shipsNothing: true } : {}) }];
           }
           return [l];
         });

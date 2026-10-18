@@ -150,7 +150,7 @@ try {
   const cardOrder = await placeOrderCms(orderOf("C", { status: "awaiting-payment", paymentMethod: "card", giftCardCode: code, giftCardAmount: 30 }), lines, { attemptId: `gc-${tag}-c`, giftCard: { code, amount: 30 } });
   if (!cardOrder.ok) throw new Error("could not place the card test order");
   const cardOrderId = Number(cardOrder.order.id);
-  cleanup.unshift(() => payload.delete({ collection: "orders", id: cardOrderId, overrideAccess: true, context: { system: true } }));
+  cleanup.unshift(() => payload.delete({ collection: "orders", id: cardOrderId, overrideAccess: true, context: { system: true } }).catch(() => null)); // (deleted by the test itself)
   const ref = `cs_test_gc_${tag}`;
   const charge = (await payload.create({ collection: "payment-transactions", data: { store, order: cardOrderId, kind: "charge", status: "pending", provider: "stripe", providerRef: ref, amount: 70, currency: "PKR" } as never, ...sys })) as unknown as Doc;
   cleanup.unshift(() => payload.delete({ collection: "payment-transactions", where: { order: { equals: cardOrderId } }, overrideAccess: true }));
@@ -158,6 +158,11 @@ try {
   o = await readOrder(cardOrderId);
   check(paid === "paid" && o.paymentStatus === "paid", `70 paid by card for a 100 order with 30 on a gift card → Paid (${paid})`);
   check(Number(charge.id) > 0 && (await balanceOf(cardId)) === 0, "the card is used up");
+
+  // ── deleting an open order gives its gift-card payment back, as cancelling does (it used to keep the money) ──
+  await payload.delete({ collection: "payment-transactions", where: { order: { equals: cardOrderId } }, overrideAccess: true });
+  await payload.delete({ collection: "orders", id: cardOrderId, overrideAccess: true, context: { system: true } });
+  check((await balanceOf(cardId)) === 30, `deleting an open order puts its 30 back on the card (balance ${await balanceOf(cardId)})`);
 
   // ── switched off / expired ──
   await payload.update({ collection: "gift-cards" as never, id: cardId, data: { status: "disabled" } as never, user: M, overrideAccess: false, depth: 0 });

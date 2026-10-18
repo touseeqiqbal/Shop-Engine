@@ -86,6 +86,9 @@ export const ProductCollections: CollectionConfig = {
       ],
     },
     { name: "published", type: "checkbox", defaultValue: true, label: "Published (page visible at /collections/<handle>)", admin: { position: "sidebar" } },
+    // a seasonal collection shows itself and goes away on its own ("Back to school" from 1 Aug to 15 Sep)
+    { name: "showFrom", type: "date", label: "Show from", admin: { position: "sidebar", date: { pickerAppearance: "dayAndTime" }, description: "Empty = now." } },
+    { name: "showUntil", type: "date", label: "Show until", admin: { position: "sidebar", date: { pickerAppearance: "dayAndTime" }, description: "Empty = always." } },
     slugField("title"),
     legacyIdField,
   ],

@@ -129,6 +129,9 @@ export interface Config {
     'security-events': SecurityEvent;
     'gift-cards': GiftCard;
     'email-optouts': EmailOptout;
+    'loyalty-accounts': LoyaltyAccount;
+    'shop-stats': ShopStat;
+    'digital-files': DigitalFile;
     'stock-movements': StockMovement;
     'activity-log': ActivityLog;
     exports: Export;
@@ -212,6 +215,9 @@ export interface Config {
     'security-events': SecurityEventsSelect<false> | SecurityEventsSelect<true>;
     'gift-cards': GiftCardsSelect<false> | GiftCardsSelect<true>;
     'email-optouts': EmailOptoutsSelect<false> | EmailOptoutsSelect<true>;
+    'loyalty-accounts': LoyaltyAccountsSelect<false> | LoyaltyAccountsSelect<true>;
+    'shop-stats': ShopStatsSelect<false> | ShopStatsSelect<true>;
+    'digital-files': DigitalFilesSelect<false> | DigitalFilesSelect<true>;
     'stock-movements': StockMovementsSelect<false> | StockMovementsSelect<true>;
     'activity-log': ActivityLogSelect<false> | ActivityLogSelect<true>;
     exports: ExportsSelect<false> | ExportsSelect<true>;
@@ -610,6 +616,19 @@ export interface Order {
    */
   giftCardCode?: string | null;
   giftCardAmount?: number | null;
+  downloadCounts?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  /**
+   * Given to the customer when the order was delivered.
+   */
+  pointsEarned?: number | null;
   giftCardCharged?: boolean | null;
   couponCode?: string | null;
   /**
@@ -841,6 +860,24 @@ export interface Product {
    * e.g. Ships in 2–3 weeks. Optional.
    */
   backorderNote?: string | null;
+  /**
+   * Sell e-books, software, courses … The customer gets signed download links on their order page and by email once the order is paid.
+   */
+  digital?: {
+    /**
+     * Upload them first in Catalog → Digital files.
+     */
+    files?: (number | DigitalFile)[] | null;
+    /**
+     * A cart of only such products pays no delivery.
+     */
+    noShipping?: boolean | null;
+    downloadLimit?: number | null;
+    /**
+     * Counted from the order.
+     */
+    downloadDays?: number | null;
+  };
   /**
    * EAN / UPC / GTIN – scan it at the shop counter. Optional.
    */
@@ -1156,6 +1193,36 @@ export interface Category {
   createdAt: string;
 }
 /**
+ * Files sold as downloads. Attach them to a product (Product → Downloads). Customers get their links once the order is paid.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "digital-files".
+ */
+export interface DigitalFile {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  /**
+   * What the customer sees, e.g. “Photography course – part 1 (PDF)”.
+   */
+  title: string;
+  prefix?: string | null;
+  _objectKey?: string | null;
+  updatedAt: string;
+  createdAt: string;
+  url?: string | null;
+  thumbnailURL?: string | null;
+  filename?: string | null;
+  mimeType?: string | null;
+  filesize?: number | null;
+  width?: number | null;
+  height?: number | null;
+  focalX?: number | null;
+  focalY?: number | null;
+}
+/**
  * Models used by the “Find parts for your laptop” compatibility finder.
  *
  * This interface was referenced by `Config`'s JSON-Schema
@@ -1389,6 +1456,14 @@ export interface ProductCollection {
    */
   limit?: number | null;
   published?: boolean | null;
+  /**
+   * Empty = now.
+   */
+  showFrom?: string | null;
+  /**
+   * Empty = always.
+   */
+  showUntil?: string | null;
   /**
    * Made from the name automatically (lowercase letters, numbers and dashes). If you change it later, the old address forwards to the new one.
    */
@@ -3512,6 +3587,21 @@ export interface StoreConversion {
    * Create it first in Marketing → Discount codes.
    */
   cartCoupon?: string | null;
+  loyalty?: {
+    /**
+     * They turn their points into a voucher on their account page and pay with it at checkout. A returned or refused order takes its points back.
+     */
+    enabled?: boolean | null;
+    /**
+     * On the items (after discounts), not delivery.
+     */
+    pointsPer100?: number | null;
+    /**
+     * In your currency, e.g. 1 = Rs 1 off.
+     */
+    pointValue?: number | null;
+    minRedeem?: number | null;
+  };
   alertsEnabled?: boolean | null;
   priceDropPercent?: number | null;
   updatedAt: string;
@@ -3802,6 +3892,8 @@ export interface GiftCard {
   message?: string | null;
   sendEmail?: boolean | null;
   issuedFor?: (number | null) | Order;
+  customer?: (number | null) | User;
+  fromPoints?: number | null;
   ledger?:
     | {
         [k: string]: unknown;
@@ -3831,6 +3923,59 @@ export interface EmailOptout {
    * cart-reminder = the link in a reminder · one-click = their email app · staff = added here
    */
   source?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Points customers earned on delivered orders (Settings → Installments & reminders → Loyalty points). They turn them into a voucher on their account page.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "loyalty-accounts".
+ */
+export interface LoyaltyAccount {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  customer?: (number | null) | User;
+  customerEmail?: string | null;
+  balance?: number | null;
+  earned?: number | null;
+  /**
+   * e.g. 200 or -50 – applied when you save.
+   */
+  adjustBy?: number | null;
+  /**
+   * Shown in the history, e.g. “Sorry for the late delivery”.
+   */
+  adjustNote?: string | null;
+  ledger?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "shop-stats".
+ */
+export interface ShopStat {
+  id: number;
+  /**
+   * The store this belongs to (set automatically).
+   */
+  store?: (number | null) | Store;
+  day: string;
+  kind: 'view' | 'cart' | 'checkout';
+  ref?: string | null;
+  count?: number | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -4393,6 +4538,18 @@ export interface PayloadLockedDocument {
         value: number | EmailOptout;
       } | null)
     | ({
+        relationTo: 'loyalty-accounts';
+        value: number | LoyaltyAccount;
+      } | null)
+    | ({
+        relationTo: 'shop-stats';
+        value: number | ShopStat;
+      } | null)
+    | ({
+        relationTo: 'digital-files';
+        value: number | DigitalFile;
+      } | null)
+    | ({
         relationTo: 'stock-movements';
         value: number | StockMovement;
       } | null)
@@ -4712,6 +4869,14 @@ export interface ProductsSelect<T extends boolean = true> {
   backorders?: T;
   releaseDate?: T;
   backorderNote?: T;
+  digital?:
+    | T
+    | {
+        files?: T;
+        noShipping?: T;
+        downloadLimit?: T;
+        downloadDays?: T;
+      };
   barcode?: T;
   productType?: T;
   unit?: T;
@@ -4810,6 +4975,8 @@ export interface ProductCollectionsSelect<T extends boolean = true> {
   sort?: T;
   limit?: T;
   published?: T;
+  showFrom?: T;
+  showUntil?: T;
   slug?: T;
   legacyId?: T;
   meta?:
@@ -4993,6 +5160,8 @@ export interface OrdersSelect<T extends boolean = true> {
   shippingMethod?: T;
   giftCardCode?: T;
   giftCardAmount?: T;
+  downloadCounts?: T;
+  pointsEarned?: T;
   giftCardCharged?: T;
   couponCode?: T;
   taxTotal?: T;
@@ -6261,6 +6430,14 @@ export interface StoreConversionSelect<T extends boolean = true> {
   cartSubject?: T;
   cartMessage?: T;
   cartCoupon?: T;
+  loyalty?:
+    | T
+    | {
+        enabled?: T;
+        pointsPer100?: T;
+        pointValue?: T;
+        minRedeem?: T;
+      };
   alertsEnabled?: T;
   priceDropPercent?: T;
   updatedAt?: T;
@@ -6416,6 +6593,8 @@ export interface GiftCardsSelect<T extends boolean = true> {
   message?: T;
   sendEmail?: T;
   issuedFor?: T;
+  customer?: T;
+  fromPoints?: T;
   ledger?: T;
   updatedAt?: T;
   createdAt?: T;
@@ -6430,6 +6609,56 @@ export interface EmailOptoutsSelect<T extends boolean = true> {
   source?: T;
   updatedAt?: T;
   createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "loyalty-accounts_select".
+ */
+export interface LoyaltyAccountsSelect<T extends boolean = true> {
+  store?: T;
+  customer?: T;
+  customerEmail?: T;
+  balance?: T;
+  earned?: T;
+  adjustBy?: T;
+  adjustNote?: T;
+  ledger?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "shop-stats_select".
+ */
+export interface ShopStatsSelect<T extends boolean = true> {
+  store?: T;
+  day?: T;
+  kind?: T;
+  ref?: T;
+  count?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "digital-files_select".
+ */
+export interface DigitalFilesSelect<T extends boolean = true> {
+  store?: T;
+  title?: T;
+  prefix?: T;
+  _objectKey?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  url?: T;
+  thumbnailURL?: T;
+  filename?: T;
+  mimeType?: T;
+  filesize?: T;
+  width?: T;
+  height?: T;
+  focalX?: T;
+  focalY?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -7534,6 +7763,21 @@ export interface Conversion {
    * Create it first in Marketing → Discount codes.
    */
   cartCoupon?: string | null;
+  loyalty?: {
+    /**
+     * They turn their points into a voucher on their account page and pay with it at checkout. A returned or refused order takes its points back.
+     */
+    enabled?: boolean | null;
+    /**
+     * On the items (after discounts), not delivery.
+     */
+    pointsPer100?: number | null;
+    /**
+     * In your currency, e.g. 1 = Rs 1 off.
+     */
+    pointValue?: number | null;
+    minRedeem?: number | null;
+  };
   alertsEnabled?: boolean | null;
   priceDropPercent?: number | null;
   updatedAt?: string | null;
@@ -8054,6 +8298,14 @@ export interface ConversionSelect<T extends boolean = true> {
   cartSubject?: T;
   cartMessage?: T;
   cartCoupon?: T;
+  loyalty?:
+    | T
+    | {
+        enabled?: T;
+        pointsPer100?: T;
+        pointValue?: T;
+        minRedeem?: T;
+      };
   alertsEnabled?: T;
   priceDropPercent?: T;
   updatedAt?: T;
@@ -8160,6 +8412,9 @@ export interface TaskCreateCollectionExport {
       | 'security-events'
       | 'gift-cards'
       | 'email-optouts'
+      | 'loyalty-accounts'
+      | 'shop-stats'
+      | 'digital-files'
       | 'stock-movements'
       | 'activity-log'
       | 'exports'

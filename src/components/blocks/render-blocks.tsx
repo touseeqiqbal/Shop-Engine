@@ -25,6 +25,7 @@ import {
   getTopCategories,
 } from "@/lib/repo/catalog";
 import { getSiteInfo } from "@/lib/repo/site-content";
+import { paymentEnabled } from "@/lib/cities";
 import { getCurrentStore } from "@/lib/tenant";
 import { getMoney } from "@/lib/store-locale";
 import { DEFAULT_HOME, DEFAULT_HOME_SEO_COPY, NEUTRAL_SECTION_TEXT, SECTION_DEFAULTS, type HomeSectionType } from "@/lib/content/home";
@@ -48,7 +49,8 @@ const none = <T,>(v: T) => Promise.resolve(v);
 export async function RenderBlocks({ page }: { page: PageData }) {
   const blocks = page.blocks;
   const needsProducts = has(blocks, "deals", "products", "categories");
-  const [info, store, storeSettings, money] = await Promise.all([getSiteInfo(), getCurrentStore(), has(blocks, "richText") ? getStoreSettings() : none(null), getMoney()]);
+  // settings: rich text tokens, and whether the hero may promise Cash on Delivery
+  const [info, store, storeSettings, money] = await Promise.all([getSiteInfo(), getCurrentStore(), has(blocks, "richText", "hero") ? getStoreSettings() : none(null), getMoney()]);
   const original = !store || store.isDefault;
   // {{freeDelivery}} and friends in the store's own currency
   const tokens = tokenValues(info, storeSettings, money);
@@ -160,7 +162,7 @@ export async function RenderBlocks({ page }: { page: PageData }) {
         out.push(
           <section key={key} className="container-x">
             {!h1Rendered && h1}
-            <HeroSlider slides={slides} />
+            <HeroSlider slides={slides} cod={storeSettings ? paymentEnabled("cod", storeSettings) : false} />
             {/* right under the hero – on screen when the page opens */}
             {trust && <TrustBadges className="mt-4" items={trust.badges} instant />}
           </section>

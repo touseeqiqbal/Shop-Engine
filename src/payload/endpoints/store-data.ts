@@ -22,6 +22,8 @@ const COLLECTIONS = [
   "discounts", "flash-sales", "reviews", "product-questions", "stock-alerts", "abandoned-carts",
   "pages", "posts", "menus", "contact-messages", "wholesale-inquiries", "trade-ins", "blocked-phones",
   "store-memberships", "integrations", "api-keys", "webhook-endpoints",
+  // added with gift cards, loyalty points, unsubscribes and digital products (file details – the files stay in storage)
+  "gift-cards", "loyalty-accounts", "email-optouts", "digital-files",
 ] as const;
 
 /** Never exported, whatever a collection holds. */

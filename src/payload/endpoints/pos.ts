@@ -131,8 +131,12 @@ const sale: Endpoint = {
     if (paid > total && !payments.some((p) => p.method === "cash")) return bad("Only cash can be overpaid (for change).");
     const cashPart = money.round(payments.filter((p) => p.method === "cash").reduce((s, p) => s + p.amount, 0));
     const change = money.round(paid - total);
-    // store what was actually kept: cash minus change
-    const kept = payments.map((p) => (p.method === "cash" ? { ...p, amount: money.round(p.amount - change) } : p)).filter((p) => p.amount > 0);
+    // change comes out of the cash handed over – never more than that (card 1000 + cash 200 on a 900 sale would give
+    // 300 change from 200 cash, and the drawer wouldn't add up)
+    if (change > cashPart) return bad(`Change (${money(change)}) can't be more than the cash received (${money(cashPart)}) – lower the card or wallet amount.`);
+    // store what was actually kept: the cash lines as ONE line (cash minus change, taken off once), the rest as paid
+    const keptCash = money.round(cashPart - change);
+    const kept = [...payments.filter((p) => p.method !== "cash"), ...(keptCash > 0 ? [{ method: "cash", amount: keptCash }] : [])];
 
     // Stock, serial numbers and the receipt in ONE transaction – all or nothing (also after a crash)
     const { takeStock, sellUnit, linkUnitsToSale, setStockLog, lockProducts } = await import("../stock");
@@ -199,8 +203,9 @@ const sale: Endpoint = {
       return bad("The sale could not be saved. Nothing was taken from stock – please try again.", 500);
     }
     if (overrides.length) log.warn("pos.price_override", { receipt: saved.receiptNumber, by: (req.user as { id: number }).id, lines: overrides });
-    const { revalidate, CATALOG_TAG } = await import("../revalidate");
-    revalidate([CATALOG_TAG]);
+    const { revalidate, catalogTagOf } = await import("../revalidate");
+    // stock only: refreshed in the background
+    revalidate([catalogTagOf(gate.store)], [], false, { soft: true });
     log.info("pos.sale", { receipt: saved.receiptNumber, total, lines: lines.length, cashier: (req.user as { id: number }).id });
     return Response.json({ sale: saved });
   },
@@ -266,8 +271,8 @@ const voidSale: Endpoint = {
       log.error("pos.void_failed", e);
       return bad("The sale could not be voided – nothing was changed. Please try again.", 500);
     }
-    const { revalidate, CATALOG_TAG } = await import("../revalidate");
-    revalidate([CATALOG_TAG]);
+    const { revalidate, catalogTagOf } = await import("../revalidate");
+    revalidate([catalogTagOf(gate.store)]);
     log.info("pos.void", { receipt: s.receiptNumber, by: (req.user as { id: number }).id, reason });
     const v = updated as Doc;
     return Response.json({ sale: { id: v.id, receiptNumber: v.receiptNumber, status: v.status } });

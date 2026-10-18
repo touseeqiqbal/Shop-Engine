@@ -43,6 +43,10 @@ import * as migration_20261017_131404_preorders from './20261017_131404_preorder
 import * as migration_20261017_133534_email_optouts from './20261017_133534_email_optouts';
 import * as migration_20261017_134900_flash_sale_discount from './20261017_134900_flash_sale_discount';
 import * as migration_20261017_142121_tax_classes_billing from './20261017_142121_tax_classes_billing';
+import * as migration_20261017_144531_loyalty_points from './20261017_144531_loyalty_points';
+import * as migration_20261017_150657_shop_stats from './20261017_150657_shop_stats';
+import * as migration_20261017_153016_collection_schedule from './20261017_153016_collection_schedule';
+import * as migration_20261017_155031_digital_products from './20261017_155031_digital_products';
 
 export const migrations = [
   {
@@ -268,6 +272,26 @@ export const migrations = [
   {
     up: migration_20261017_142121_tax_classes_billing.up,
     down: migration_20261017_142121_tax_classes_billing.down,
-    name: '20261017_142121_tax_classes_billing'
+    name: '20261017_142121_tax_classes_billing',
+  },
+  {
+    up: migration_20261017_144531_loyalty_points.up,
+    down: migration_20261017_144531_loyalty_points.down,
+    name: '20261017_144531_loyalty_points',
+  },
+  {
+    up: migration_20261017_150657_shop_stats.up,
+    down: migration_20261017_150657_shop_stats.down,
+    name: '20261017_150657_shop_stats',
+  },
+  {
+    up: migration_20261017_153016_collection_schedule.up,
+    down: migration_20261017_153016_collection_schedule.down,
+    name: '20261017_153016_collection_schedule',
+  },
+  {
+    up: migration_20261017_155031_digital_products.up,
+    down: migration_20261017_155031_digital_products.down,
+    name: '20261017_155031_digital_products'
   },
 ];

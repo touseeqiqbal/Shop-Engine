@@ -1,19 +1,17 @@
 import Link from "next/link";
-import { ArrowRight, BatteryCharging, HardDrive, Home, Keyboard, Laptop, Mouse, PlugZap, Search, Wrench } from "lucide-react";
+import { ArrowRight, Home, Search, Wrench } from "lucide-react";
+import { CategoryIcon } from "@/components/ui/category-icon";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
 import { WhatsAppLink } from "@/components/content/whatsapp-link";
 
-const POPULAR = [
-  { href: "/category/laptops", label: "Laptops", icon: Laptop },
-  { href: "/category/chargers", label: "Chargers", icon: PlugZap },
-  { href: "/category/batteries", label: "Batteries", icon: BatteryCharging },
-  { href: "/category/mouse", label: "Mouse", icon: Mouse },
-  { href: "/category/keyboards", label: "Keyboards", icon: Keyboard },
-  { href: "/category/storage", label: "SSD & Storage", icon: HardDrive },
-];
+/** A category to suggest on the 404 page (the store's own – see store-not-found-categories.ts). */
+export type NotFoundCategory = { href: string; label: string; icon?: string };
 
-/** Premium 404 body: big gradient code, search box, popular categories and helpful links. */
-export function NotFoundContent() {
+/**
+ * Premium 404 body: big gradient code, search box, the store's popular categories and helpful links.
+ * `categories`: the store's own top categories – none when the store isn't known (never another shop's).
+ */
+export function NotFoundContent({ categories = [] }: { categories?: NotFoundCategory[] }) {
   return (
     <div className="container-x relative py-14 sm:py-20">
       <div className="pointer-events-none absolute left-1/2 top-0 size-[32rem] -translate-x-1/2 rounded-full bg-violet-600/15 blur-3xl" aria-hidden="true" />
@@ -40,21 +38,23 @@ export function NotFoundContent() {
         </form>
       </div>
 
-      <nav aria-label="Popular categories" className="relative mx-auto mt-12 max-w-4xl">
-        <h2 className="mb-4 text-center text-sm font-semibold uppercase tracking-[0.18em] text-muted">Popular categories</h2>
-        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {POPULAR.map((c) => (
-            <li key={c.href}>
-              <Link href={c.href} className="glow-hover card group flex flex-col items-center gap-2 p-4 text-center transition-transform hover:-translate-y-1">
-                <span className="grid size-11 place-items-center rounded-2xl bg-surface-strong transition-colors group-hover:bg-brand-gradient group-hover:text-white">
-                  <c.icon className="size-5" aria-hidden="true" />
-                </span>
-                <span className="text-sm font-semibold text-fg">{c.label}</span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </nav>
+      {categories.length > 0 && (
+        <nav aria-label="Popular categories" className="relative mx-auto mt-12 max-w-4xl">
+          <h2 className="mb-4 text-center text-sm font-semibold uppercase tracking-[0.18em] text-muted">Popular categories</h2>
+          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {categories.map((c) => (
+              <li key={c.href}>
+                <Link href={c.href} className="glow-hover card group flex flex-col items-center gap-2 p-4 text-center transition-transform hover:-translate-y-1">
+                  <span className="grid size-11 place-items-center rounded-2xl bg-surface-strong transition-colors group-hover:bg-brand-gradient group-hover:text-white">
+                    <CategoryIcon name={c.icon} className="size-5" />
+                  </span>
+                  <span className="text-sm font-semibold text-fg">{c.label}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
 
       <div className="relative mt-10 flex flex-wrap justify-center gap-2">
         <Link href="/" className="btn btn-secondary">

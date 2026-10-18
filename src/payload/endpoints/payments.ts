@@ -26,7 +26,9 @@ const forOrder: Endpoint = {
     const { integrationInfo } = await import("../../lib/integrations/catalog");
     const info = charge ? integrationInfo(String(charge.provider)) : null;
     const refundsHere = !info || Boolean(info.payment?.refunds);
-    return Response.json({ payments: rows, refundable: charge && refundsHere ? Number(charge.amount) - Number(charge.refundedAmount) : 0, refundElsewhere: charge && !refundsHere ? info?.name : null });
+    const { refundableOnOrder } = await import("../refunds");
+    const orderLeft = charge && refundsHere ? await refundableOnOrder(req.payload, order as { id: number; total?: unknown }) : 0;
+    return Response.json({ payments: rows, refundable: charge && refundsHere ? Math.max(0, Math.min(Number(charge.amount) - Number(charge.refundedAmount), orderLeft)) : 0, refundElsewhere: charge && !refundsHere ? info?.name : null });
   },
 };
 
@@ -46,14 +48,22 @@ const refund: Endpoint = {
     // the provider that took the payment refunds it
     const charge = (await req.payload.find({ collection: "payment-transactions", where: { and: [{ order: { equals: orderId } }, { kind: { equals: "charge" } }, { status: { in: ["succeeded", "partially_refunded"] } }] }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
     if (!charge) return Response.json({ error: "Only online payments are refunded here – record other refunds in Orders → Returns." }, { status: 400 });
+    const { getGateway } = await import("../../lib/payments/gateways");
+    const gateway = getGateway(String(charge.provider));
+    if (!gateway) return Response.json({ error: `Refunds through “${String(charge.provider)}” aren't available.` }, { status: 400 });
+    // one refund at a time per order: the order row stays locked until the refund is recorded, so two managers (or a
+    // double click) can't both pass the "what is left" check
+    const { commitTransaction, initTransaction, killTransaction } = await import("payload");
+    const { lockOrderStatus } = await import("../stock");
+    const own = await initTransaction(req);
     try {
-      const { getGateway } = await import("../../lib/payments/gateways");
-      const gateway = getGateway(String(charge.provider));
-      if (!gateway) return Response.json({ error: `Refunds through “${String(charge.provider)}” aren't available.` }, { status: 400 });
+      await lockOrderStatus(req.payload, orderId, req);
       const r = await gateway.refund(req.payload, req, { orderId, amount, reason: String(body?.reason ?? "").slice(0, 200) });
       await logActivity(req, { action: "update", entity: "orders", entityLabel: "Order", docId: String(orderId), title: String(order.orderNumber ?? orderId), changes: [{ field: `${gateway.label} refund`, from: "", to: `${amount} ${String(charge.currency ?? "")}${body?.reason ? ` – ${body.reason}` : ""}` }], storeId: gate.store });
+      if (own) await commitTransaction(req);
       return Response.json({ ok: true, ...r });
     } catch (e) {
+      if (own) await killTransaction(req);
       return Response.json({ error: (e as Error)?.message || "The refund failed." }, { status: 400 });
     }
   },

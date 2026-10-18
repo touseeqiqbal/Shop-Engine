@@ -29,7 +29,7 @@ export function Field({
       </label>
       {children}
       {error ? (
-        <p id={`${id}-error`} className="mt-1.5 text-xs font-medium text-rose-400">
+        <p id={`${id}-error`} className="mt-1.5 text-xs font-medium text-rose-400 light:text-rose-700">
           {error}
         </p>
       ) : hint ? (

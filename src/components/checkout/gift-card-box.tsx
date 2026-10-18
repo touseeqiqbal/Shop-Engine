@@ -9,6 +9,7 @@ export type AppliedGiftCard = { code: string; balance: number };
 
 /** Gift card code at checkout: checks the balance with the server, then the form shows what it pays. */
 export function GiftCardBox({
+  id: idProp,
   applied,
   used,
   error,
@@ -16,6 +17,8 @@ export function GiftCardBox({
   onRemove,
   className,
 }: {
+  /** id of the code box (or the Remove button once applied), so the form can move the focus here on an error */
+  id?: string;
   applied: AppliedGiftCard | null;
   /** what it pays of this order */
   used: number;
@@ -25,7 +28,8 @@ export function GiftCardBox({
   onRemove: () => void;
   className?: string;
 }) {
-  const id = useId();
+  const autoId = useId();
+  const id = idProp ?? autoId;
   const money = useMoney();
   const [code, setCode] = useState("");
   const [checking, setChecking] = useState(false);
@@ -45,11 +49,15 @@ export function GiftCardBox({
               </span>
             </span>
           </p>
-          <button type="button" onClick={onRemove} className="btn btn-ghost btn-sm shrink-0" aria-label="Remove the gift card">
+          <button id={id} type="button" onClick={onRemove} className="btn btn-ghost btn-sm shrink-0" aria-label="Remove the gift card" aria-describedby={error ? `${id}-msg` : undefined}>
             <X className="size-4" aria-hidden="true" /> Remove
           </button>
         </div>
-        {error && <p className="mt-1.5 text-xs font-medium text-rose-400">{error}</p>}
+        {error && (
+          <p id={`${id}-msg`} className="mt-1.5 text-xs font-medium text-rose-400 light:text-rose-700">
+            {error}
+          </p>
+        )}
       </div>
     );
   }
@@ -101,7 +109,7 @@ export function GiftCardBox({
           Apply
         </button>
       </div>
-      <p id={`${id}-msg`} aria-live="polite" className={cn("mt-1.5 min-h-4 text-xs", shown ? "text-rose-400" : "text-muted")}>
+      <p id={`${id}-msg`} aria-live="polite" className={cn("mt-1.5 min-h-4 text-xs", shown ? "text-rose-400 light:text-rose-700" : "text-muted")}>
         {shown}
       </p>
     </div>

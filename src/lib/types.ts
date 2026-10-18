@@ -85,6 +85,8 @@ export interface Product {
   stock: number;
   /** keeps taking orders when sold out: "backorder" (ships when back in stock) or "preorder" (not released yet) */
   backorders?: "backorder" | "preorder";
+  /** a download – nothing to ship (Products → Digital product) */
+  shipsNothing?: boolean;
   /** taxed at the store's reduced rate, or not at all (default: the normal rate) */
   taxClass?: "reduced" | "exempt";
   /** in a running flash sale with a discount: when that price ends (ISO) */

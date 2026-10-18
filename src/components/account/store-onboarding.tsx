@@ -83,10 +83,10 @@ function RegionInputs() {
   );
 }
 
-function SubmitButton({ label, pendingLabel, className = "btn btn-primary btn-lg w-full", icon = true }: { label: string; pendingLabel?: string; className?: string; icon?: boolean }) {
+function SubmitButton({ label, pendingLabel, className = "btn btn-primary btn-lg w-full", icon = true, disabled = false }: { label: string; pendingLabel?: string; className?: string; icon?: boolean; disabled?: boolean }) {
   const { pending } = useFormStatus();
   return (
-    <button type="submit" className={className} disabled={pending}>
+    <button type="submit" className={className} disabled={pending || disabled}>
       {pending ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : icon ? <PlusCircle className="size-4" aria-hidden="true" /> : null}
       {pending ? (pendingLabel ?? label) : label}
     </button>
@@ -100,13 +100,13 @@ function FormMessage({ state }: { state: StoreFormState }) {
   }, [state.redirectUrl, state.ts]);
   if (state.error)
     return (
-      <p role="alert" className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+      <p role="alert" className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 light:text-rose-700">
         {state.error}
       </p>
     );
   if (state.message)
     return (
-      <p role="status" className="flex items-start gap-2 rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+      <p role="status" className="flex items-start gap-2 rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200 light:text-emerald-700">
         <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" /> {state.message}
       </p>
     );
@@ -123,11 +123,11 @@ function PlanCards({ plans, selected, onSelect, trialUsed = false }: { plans: St
           role="radio"
           aria-checked={selected === plan.id}
           onClick={() => onSelect(plan.id)}
-          className={`rounded-2xl border p-4 text-left transition ${selected === plan.id ? "border-primary bg-primary/10" : "border-border bg-surface"}`}
+          className={`rounded-2xl border p-4 text-left transition ${selected === plan.id ? "border-brand bg-brand/10" : "border-border bg-surface"}`}
         >
           <span className="flex items-center justify-between gap-2">
             <span className="font-semibold">{plan.name}</span>
-            {selected === plan.id ? <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] text-primary-foreground">Selected</span> : null}
+            {selected === plan.id ? <span className="rounded-full bg-brand-gradient px-2 py-0.5 text-[10px] font-semibold text-white">Selected</span> : null}
           </span>
           {plan.description ? <span className="mt-2 block text-sm text-muted">{plan.description}</span> : null}
           <span className="mt-3 block text-xl font-bold">
@@ -172,7 +172,7 @@ export function StoreOnboardingForm({ plans = [] }: { plans?: StorePlanOption[] 
 
       {plans.length > 0 ? (
         <div>
-          <p className="mb-2 block text-sm font-medium text-foreground">Choose a plan</p>
+          <p className="mb-2 block text-sm font-medium text-fg">Choose a plan</p>
           <PlanCards plans={plans} selected={selectedPlan} onSelect={setSelectedPlan} />
         </div>
       ) : (
@@ -196,7 +196,7 @@ export function StoreInviteActions({ invitations, token }: { invitations: Invita
     <div className="space-y-3">
       <FormMessage state={state} />
       {token && !state.ok ? (
-        <form action={action} className="flex flex-col gap-2 rounded-2xl border border-primary/40 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between" noValidate>
+        <form action={action} className="flex flex-col gap-2 rounded-2xl border border-brand/40 bg-brand/5 p-4 sm:flex-row sm:items-center sm:justify-between" noValidate>
           <p className="text-sm">You opened an invitation link. Accept it to join the store with this account.</p>
           <input type="hidden" name="token" value={token} />
           <SubmitButton label="Accept invitation" pendingLabel="Accepting…" className="btn btn-primary btn-sm" icon={false} />
@@ -226,22 +226,40 @@ export function StoreInviteActions({ invitations, token }: { invitations: Invita
 const STATUS_LABEL: Record<string, string> = { draft: "Not published", active: "Live", suspended: "Suspended", closed: "Closed" };
 const PLAN_STATUS_LABEL: Record<string, string> = { trialing: "Free trial", active: "Active", past_due: "Payment due", cancelled: "Cancelled", expired: "Ended", suspended: "Suspended" };
 
-function MiniForm({ action, storeId, label, pendingLabel, children, className = "btn btn-secondary btn-sm" }: { action: (s: StoreFormState, fd: FormData) => Promise<StoreFormState>; storeId: number; label: string; pendingLabel?: string; children?: React.ReactNode; className?: string }) {
+function MiniForm({ action, storeId, label, pendingLabel, children, className = "btn btn-secondary btn-sm", twoStep = false, disabled = false }: { action: (s: StoreFormState, fd: FormData) => Promise<StoreFormState>; storeId: number; label: string; pendingLabel?: string; children?: React.ReactNode; className?: string; twoStep?: boolean; disabled?: boolean }) {
   const [state, formAction] = useActionState<StoreFormState, FormData>(action, {});
+  // owner actions ask for the 2-step code when the account has 2-step on (or the server says so)
+  const askCode = twoStep || Boolean(state.needsCode);
   return (
     <form action={formAction} className="space-y-2" noValidate>
       <FormMessage state={state} />
       <input type="hidden" name="storeId" value={storeId} />
       <div className="flex flex-wrap items-end gap-2">
         {children}
-        <SubmitButton label={label} pendingLabel={pendingLabel ?? label} className={className} icon={false} />
+        {askCode ? (
+          <input name="code" inputMode="numeric" autoComplete="one-time-code" maxLength={20} placeholder="2-step code" aria-label="2-step code from your authenticator app" className="input w-36" />
+        ) : null}
+        <SubmitButton label={label} pendingLabel={pendingLabel ?? label} className={className} icon={false} disabled={disabled} />
       </div>
     </form>
   );
 }
 
+/** Cancelling the plan is never one click: the owner ticks that they mean it first. */
+function CancelPlanForm({ storeId, twoStep }: { storeId: number; twoStep: boolean }) {
+  const [sure, setSure] = useState(false);
+  return (
+    <MiniForm action={cancelPlanAction} storeId={storeId} label="Cancel plan at period end" pendingLabel="Cancelling…" twoStep={twoStep} disabled={!sure}>
+      <label className="flex w-full cursor-pointer items-center gap-2 text-sm">
+        <input type="checkbox" checked={sure} onChange={(e) => setSure(e.target.checked)} className="size-4 accent-violet-500" />
+        Yes, cancel my plan at the end of the period
+      </label>
+    </MiniForm>
+  );
+}
+
 /** One store in Account → Stores: status, plan, payments, domain and publishing (owner tools only for the owner). */
-export function StoreCard({ store, plans, rootDomain }: { store: MyStore; plans: StorePlanOption[]; rootDomain?: string | null }) {
+export function StoreCard({ store, plans, rootDomain, twoStep = false }: { store: MyStore; plans: StorePlanOption[]; rootDomain?: string | null; twoStep?: boolean }) {
   const owner = store.role === "store_owner";
   const [plan, setPlan] = useState(String(store.planId ?? plans[0]?.id ?? ""));
   const address = store.customDomain && store.domainVerified ? store.customDomain : store.subdomain && rootDomain ? `${store.subdomain}.${rootDomain}` : null;
@@ -256,7 +274,7 @@ export function StoreCard({ store, plans, rootDomain }: { store: MyStore; plans:
             {store.subscriptionStatus === "trialing" && store.trialEndsAt ? ` until ${day(store.trialEndsAt)}` : ""}
           </p>
           {address ? (
-            <a href={`https://${address}`} className="text-xs text-primary underline" target="_blank" rel="noreferrer">
+            <a href={`https://${address}`} className="text-xs text-violet-300 underline light:text-violet-700" target="_blank" rel="noreferrer">
               {address}
             </a>
           ) : null}
@@ -267,26 +285,26 @@ export function StoreCard({ store, plans, rootDomain }: { store: MyStore; plans:
       </div>
 
       {store.subscriptionStatus === "past_due" ? (
-        <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+        <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200 light:text-amber-800">
           The plan payment is due{store.graceEndsAt ? ` – the shop goes offline on ${day(store.graceEndsAt)}` : ""}. Choose the plan again below to pay.
         </p>
       ) : null}
 
-      {owner && store.status === "draft" ? <MiniForm action={publishStoreAction} storeId={store.id} label="Publish store" pendingLabel="Publishing…" className="btn btn-primary btn-sm" /> : null}
+      {owner && store.status === "draft" ? <MiniForm action={publishStoreAction} storeId={store.id} label="Publish store" pendingLabel="Publishing…" className="btn btn-primary btn-sm" twoStep={twoStep} /> : null}
 
       {owner && plans.length > 0 ? (
         <details className="rounded-xl border border-border p-3">
           <summary className="cursor-pointer text-sm font-medium">Plan</summary>
           <div className="mt-3 space-y-3">
             <PlanCards plans={plans} selected={plan} onSelect={setPlan} trialUsed={store.trialUsed} />
-            <MiniForm action={changePlanAction} storeId={store.id} label={String(store.planId) === plan && ["active", "trialing"].includes(store.subscriptionStatus) ? "Keep this plan" : "Choose this plan"} pendingLabel="Saving…">
+            <MiniForm action={changePlanAction} storeId={store.id} label={String(store.planId) === plan && ["active", "trialing"].includes(store.subscriptionStatus) ? "Keep this plan" : "Choose this plan"} pendingLabel="Saving…" twoStep={twoStep}>
               <input type="hidden" name="planId" value={plan} />
               <select name="cycle" className="input w-auto" defaultValue="monthly" aria-label="Billing">
                 <option value="monthly">Monthly</option>
                 <option value="annual">Yearly</option>
               </select>
             </MiniForm>
-            {["active", "trialing"].includes(store.subscriptionStatus) ? <MiniForm action={cancelPlanAction} storeId={store.id} label="Cancel plan at period end" pendingLabel="Cancelling…" /> : null}
+            {["active", "trialing"].includes(store.subscriptionStatus) ? <CancelPlanForm storeId={store.id} twoStep={twoStep} /> : null}
           </div>
         </details>
       ) : null}
@@ -296,7 +314,7 @@ export function StoreCard({ store, plans, rootDomain }: { store: MyStore; plans:
           <summary className="cursor-pointer text-sm font-medium">Card payments {store.paymentsReady ? "· ready" : store.paymentsConnected ? "· being checked" : ""}</summary>
           <div className="mt-3 space-y-2 text-sm text-muted">
             <p>Customers pay by card on the payment provider&apos;s secure page; the money goes to your own payment account.</p>
-            <MiniForm action={connectPaymentsAction} storeId={store.id} label={store.paymentsConnected ? "Continue payment setup" : "Connect payments"} pendingLabel="Opening…" />
+            <MiniForm action={connectPaymentsAction} storeId={store.id} label={store.paymentsConnected ? "Continue payment setup" : "Connect payments"} pendingLabel="Opening…" twoStep={twoStep} />
             {store.paymentsConnected ? <MiniForm action={refreshPaymentsAction} storeId={store.id} label="Check status" pendingLabel="Checking…" /> : null}
           </div>
         </details>
@@ -306,7 +324,7 @@ export function StoreCard({ store, plans, rootDomain }: { store: MyStore; plans:
         <details className="rounded-xl border border-border p-3">
           <summary className="cursor-pointer text-sm font-medium">Custom domain {store.customDomain ? `· ${store.customDomain}${store.domainVerified ? " (verified)" : " (not verified)"}` : ""}</summary>
           <div className="mt-3 space-y-3 text-sm">
-            <MiniForm action={setDomainAction} storeId={store.id} label="Save domain" pendingLabel="Saving…">
+            <MiniForm action={setDomainAction} storeId={store.id} label="Save domain" pendingLabel="Saving…" twoStep={twoStep}>
               <input name="domain" defaultValue={store.customDomain ?? ""} placeholder="shop.example.com" className="input" aria-label="Domain" />
             </MiniForm>
             {store.customDomain && !store.domainVerified && store.domainToken ? (

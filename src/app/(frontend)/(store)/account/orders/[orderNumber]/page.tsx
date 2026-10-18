@@ -20,6 +20,7 @@ import { buyLimit, canOrder, cn, shipsLater } from "@/lib/utils";
 import { moneyFormatter } from "@/lib/money";
 import { getStoreLocale } from "@/lib/store-locale";
 import { formatDate, formatDateTime } from "@/lib/time";
+import { OrderDownloadsCard } from "@/components/checkout/order-downloads";
 import { loadViewableOrder } from "../load";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +68,10 @@ export default async function OrderDetailPage({ params }: Props) {
   const stopped = STOPPED.has(order.status);
   const advance = creditedAdvance(order);
   const due = amountToCollect(order);
+  // digital products: their download buttons (once the order is paid)
+  const downloads = await import("@/lib/cms/downloads")
+    .then((m) => m.downloadsForOrder(order.orderNumber, order.storeId ?? null))
+    .catch(() => null);
   const courier = courierInfo(order.courier)?.name ?? order.courier ?? null;
   const trackUrl = courierTrackingUrl(order.courier, order.trackingNumber);
   // status and time only – team notes stay private
@@ -166,6 +171,7 @@ export default async function OrderDetailPage({ params }: Props) {
         </div>
 
         <aside className="space-y-6">
+          {downloads && <OrderDownloadsCard downloads={downloads} formatDate={(iso) => formatDate(iso, loc, { dateStyle: "medium" })} />}
           <section className="card space-y-3 p-5" aria-label="Actions">
             <a href={`/account/orders/${order.orderNumber}/invoice`} className="btn btn-secondary w-full" download>
               <Download className="size-4" aria-hidden="true" /> Download invoice (PDF)

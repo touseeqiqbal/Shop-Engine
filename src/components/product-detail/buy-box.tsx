@@ -15,7 +15,7 @@ import { CITY_KEY, PAKISTAN_CITIES, deliveryEstimate, freeDeliveryAbove, type De
 import { Price } from "@/components/ui/price";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
 import { trackEvent } from "@/components/analytics";
-import { useCart } from "@/store/cart";
+import { addLimitMessage, useCart } from "@/store/cart";
 import { useLists } from "@/store/lists";
 import { useUi } from "@/store/ui";
 import { useHydrated } from "@/hooks/use-hydrated";
@@ -88,15 +88,19 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
 
   const analyticsItem = { item_id: p.sku, item_name: p.name, item_brand: p.brandName, item_category: p.categoryName, price: unit, quantity: qty };
 
-  const addToCart = (openDrawer = true) => {
+  const addToCart = (openDrawer = true, exact = false) => {
     if (outOfStock) return;
-    add(p, { qty, upgrades: chosen, openDrawer });
+    const added = add(p, { qty, upgrades: chosen, openDrawer, exact });
+    // the stock (or the per-item limit) stopped it: say so instead of quietly adding fewer
+    const limited = addLimitMessage(added);
+    if (limited) toast(limited, "error");
     trackEvent("add_to_cart", { currency: money.currency, value: total, items: [analyticsItem] });
   };
 
   const buyNow = () => {
     if (outOfStock) return;
-    addToCart(false);
+    // checkout with the quantity chosen here – not that many more on top of what's already in the cart
+    addToCart(false, true);
     trackEvent("begin_checkout", { currency: money.currency, value: total, items: [analyticsItem] });
     router.push("/checkout");
   };
@@ -141,7 +145,7 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
           <span
             className={cn(
               "inline-flex items-center gap-1.5 font-semibold",
-              stock.tone === "rose" ? "text-rose-400" : stock.tone === "amber" ? "text-amber-400" : stock.tone === "violet" ? "text-violet-300" : "text-emerald-400"
+              stock.tone === "rose" ? "text-rose-400 light:text-rose-700" : stock.tone === "amber" ? "text-amber-400 light:text-amber-700" : stock.tone === "violet" ? "text-violet-300 light:text-violet-700" : "text-emerald-400 light:text-emerald-700"
             )}
           >
             <span className="relative flex size-2.5" aria-hidden="true">
@@ -345,7 +349,7 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
             )}
             <p className="mt-2.5 text-sm text-fg" aria-live="polite">
               Delivery to <strong>{!city.trim() || city.startsWith("Other") ? "your city" : city}</strong>:{" "}
-              <span className="font-semibold text-emerald-400">{eta.label}</span>
+              <span className="font-semibold text-emerald-400 light:text-emerald-700">{eta.label}</span>
             </p>
             <ul className="mt-2 space-y-1 text-xs text-muted">
               {delivery.cod.enabled && (

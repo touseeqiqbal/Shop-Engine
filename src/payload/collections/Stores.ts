@@ -134,6 +134,13 @@ export const Stores: CollectionConfig = {
         if (store?.isDefault) throw userError("The default store can't be deleted.", 409);
         const orders = await req.payload.count({ collection: "orders", where: { store: { equals: id } }, overrideAccess: true, req });
         if (orders.totalDocs) throw userError(`This store has ${orders.totalDocs} order(s). Close it (Status → Closed) instead of deleting – its records are kept for the books.`, 409);
+        // its other money and stock records too: deleting the store would leave them with no store at all, where
+        // "no store" lookups (single-shop mode, gift-card codes) could find them
+        const kept: [string, string][] = [["pos-sales", "shop-counter sale"], ["gift-cards", "gift card"], ["payment-transactions", "online payment"], ["loyalty-accounts", "loyalty account"], ["units", "serial-numbered unit"], ["products", "product"]];
+        for (const [collection, label] of kept) {
+          const n = await req.payload.count({ collection: collection as never, where: { store: { equals: id } } as never, overrideAccess: true, req }).catch(() => ({ totalDocs: 0 }));
+          if (n.totalDocs) throw userError(`This store still has ${n.totalDocs} ${label}${n.totalDocs === 1 ? "" : "s"}. Close it (Status → Closed) instead of deleting – or remove those first.`, 409);
+        }
       },
     ],
   },

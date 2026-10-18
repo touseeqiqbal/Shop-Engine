@@ -306,9 +306,12 @@
   [data-float="cookie"] {
     transition: transform 0.3s ease;
   }
-  /* product page: its sticky "Buy" bar is shown – move the WhatsApp button and cookie notice above it */
+  /* a sticky bottom bar is shown (product page "Buy", checkout / cart "Place order") – move the WhatsApp button and
+     cookie notice above it, so they never cover its button */
   html[data-pdp-bar] [data-float="whatsapp"],
-  html[data-pdp-bar] [data-float="cookie"] {
+  html[data-pdp-bar] [data-float="cookie"],
+  html[data-sticky-bar] [data-float="whatsapp"],
+  html[data-sticky-bar] [data-float="cookie"] {
     transform: translateY(-4.75rem);
   }
 }

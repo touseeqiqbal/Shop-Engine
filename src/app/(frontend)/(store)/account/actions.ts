@@ -15,7 +15,7 @@ import {
 } from "@/lib/auth";
 import { PAKISTAN_CITIES } from "@/lib/cities";
 import { isDatabaseConfigured } from "@/lib/db/config";
-import { rateLimit, rateLimitKey } from "@/lib/rate-limit";
+import { rateLimit, rateLimitKey, rateLimitPeek } from "@/lib/rate-limit";
 import { canSendOrderLookup, notifyFromStorefront } from "@/lib/notify";
 import { currentStoreId } from "@/lib/tenant";
 import { listOrdersByPhone } from "@/lib/repo/orders";
@@ -53,8 +53,14 @@ export async function loginAction(_prev: AuthFormState, fd: FormData): Promise<A
   const parsed = loginSchema.safeParse({ email: String(fd.get("email") ?? "").trim().toLowerCase(), password: String(fd.get("password") ?? "") });
   if (!parsed.success) return { fieldErrors: issuesToFields(parsed.error.issues), ts: Date.now() };
   if (!(await rateLimit("customer-login", 10, 10 * 60_000))) return { error: "Too many attempts – please wait a few minutes.", ts: Date.now() };
+  // wrong passwords are also counted per ACCOUNT (one email guessed from many networks); the proxy does the same for /cms
+  const account = `customer-login-account:${parsed.data.email}`;
+  if (!rateLimitPeek(account, 8)) return { error: "Too many wrong passwords for this account – please wait 15 minutes, or reset your password.", ts: Date.now() };
   const res = await signInWithPassword(parsed.data.email, parsed.data.password);
-  if (!res.ok) return { error: res.error || "Incorrect email or password.", ts: Date.now() };
+  if (!res.ok) {
+    rateLimitKey(account, 8, 15 * 60_000);
+    return { error: res.error || "Incorrect email or password.", ts: Date.now() };
+  }
   redirect(safeNext(fd.get("next")));
 }
 
@@ -123,6 +129,8 @@ export async function resetPasswordAction(_prev: AuthFormState, fd: FormData): P
   if (!(await rateLimit("reset-password", 10, 30 * 60_000))) return { error: "Too many attempts – please wait a few minutes.", ts: Date.now() };
   const res = await resetPassword(parsed.data.token, parsed.data.password);
   if (!res.ok) return { error: res.error, ts: Date.now() };
+  // a store team member / platform admin: on to /cms, to sign in there with the new password (and 2-step code)
+  if (res.staff) redirect("/cms/login");
   const login = await signInWithPassword(res.email, parsed.data.password);
   redirect(login.ok ? "/account?reset=1" : "/account/login?reset=1");
 }

@@ -22,6 +22,8 @@ fi
 
 export DATABASE_URL="$DATABASE_BUILD_URL"
 export NODE_ENV=production
+# tells src/payload.config.ts this is the build: no migrations from here (they run when the new server starts)
+export SHOPENGINE_BUILD=true
 
 # The build doesn't change the live database: store pages render per request, so nothing is pre-rendered from it,
 # and pending migrations run when the NEW server starts (prodMigrations in src/payload.config.ts) – a build that

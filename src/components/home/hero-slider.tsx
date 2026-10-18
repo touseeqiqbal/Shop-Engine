@@ -10,7 +10,8 @@ import { cn } from "@/lib/utils";
 
 const INTERVAL = 6000;
 
-export function HeroSlider({ slides }: { slides: Banner[] }) {
+/** `cod`: the store offers Cash on Delivery (only then is it listed under the slide). */
+export function HeroSlider({ slides, cod }: { slides: Banner[]; cod: boolean }) {
   const pk = useStoreLocale().country === "PK";
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -107,7 +108,7 @@ export function HeroSlider({ slides }: { slides: Banner[] }) {
               </Link>
             </div>
             <ul className="mt-7 hidden flex-wrap gap-x-5 gap-y-2 text-sm text-muted sm:flex">
-              <li className="flex items-center gap-1.5"><Wallet className="size-4 text-emerald-400" aria-hidden="true" /> Cash on Delivery</li>
+              {cod && <li className="flex items-center gap-1.5"><Wallet className="size-4 text-emerald-400" aria-hidden="true" /> Cash on Delivery</li>}
               <li className="flex items-center gap-1.5"><Truck className="size-4 text-sky-400" aria-hidden="true" /> {pk ? "All over Pakistan" : "Nationwide delivery"}</li>
               <li className="flex items-center gap-1.5"><ShieldCheck className="size-4 text-violet-400" aria-hidden="true" /> Warranty</li>
             </ul>

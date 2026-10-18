@@ -101,6 +101,30 @@ try {
   const b = (await payload.findByID({ collection: "discounts", id: dupB.id, depth: 0, overrideAccess: true })) as { used?: number };
   check(usedA === true && Number(b.used) === 0, "using A's code never counts against B's");
 
+  // ── redirects stay in their own store (renaming a page in A once rewrote / deleted B's redirects) ──
+  const slugOld = `old-${tag}`;
+  const slugNew = `new-${tag}`;
+  const moving = await make<{ id: number }>("categories", { name: `Move ${tag}`, slug: slugOld, store: storeA.id }, { storeId: storeA.id });
+  type Redirect = { id: number; from?: string; to?: { url?: string } };
+  const rB = [
+    await make<Redirect>("redirects", { from: `/category/${slugOld}`, to: { type: "custom", url: "/b-own-page" }, store: storeB.id }, { storeId: storeB.id }),
+    await make<Redirect>("redirects", { from: `/category/${slugNew}`, to: { type: "custom", url: "/b-other-page" }, store: storeB.id }, { storeId: storeB.id }),
+    await make<Redirect>("redirects", { from: `/b-legacy-${tag}`, to: { type: "custom", url: `/category/${slugOld}` }, store: storeB.id }, { storeId: storeB.id }),
+  ];
+  await payload.update({ collection: "categories", id: moving.id, data: { slug: slugNew } as never, overrideAccess: true, depth: 0, context: { skipRevalidate: true } });
+  const bNow = (await payload.find({ collection: "redirects", where: { id: { in: rB.map((r) => r.id) } }, depth: 0, limit: 10, overrideAccess: true })).docs as unknown as Redirect[];
+  const urlOf = (id: number) => bNow.find((r) => Number(r.id) === id)?.to?.url;
+  check(bNow.length === 3 && urlOf(rB[0].id) === "/b-own-page" && urlOf(rB[1].id) === "/b-other-page" && urlOf(rB[2].id) === `/category/${slugOld}`, "store A renaming a page leaves store B's redirects alone");
+  const aOwn = (await payload.find({ collection: "redirects", where: { and: [{ store: { equals: storeA.id } }, { from: { equals: `/category/${slugOld}` } }] }, depth: 0, limit: 5, overrideAccess: true })).docs as unknown as Redirect[];
+  for (const r of aOwn) created.push({ collection: "redirects", id: Number(r.id) });
+  check(aOwn.length === 1 && aOwn[0].to?.url === `/category/${slugNew}`, "…and store A gets its own redirect old → new");
+
+  // ── a store that still has records can't be deleted (they'd be left with no store) ──
+  const brandA = await make<{ id: number }>("brands", { name: `Brand A ${tag}`, slug: `brand-a-${tag}`, store: storeA.id }, { storeId: storeA.id });
+  await make("products", { store: storeA.id, title: `Kept ${tag}`, slug: `kept-${tag}`, sku: `KEPT-${tag}`, price: 10, stock: 1, status: "draft", category: catA.id, brand: brandA.id }, { storeId: storeA.id });
+  const storeDelete = await payload.delete({ collection: "stores", id: storeA.id, overrideAccess: true }).then(() => "deleted").catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
+  check(/still has 1 product/.test(storeDelete), `a store with products can't be deleted (${storeDelete.slice(0, 80)})`);
+
   // ── accounts ──
   const people = await payload.find({ collection: "users", user: A, overrideAccess: false, depth: 0, limit: 500, where: { id: { in: [ownerA.id, staffB.id, shopper.id] } } }).catch(() => ({ docs: [] as { id: unknown }[] }));
   const ids = people.docs.map((d) => Number(d.id));

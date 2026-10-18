@@ -46,7 +46,8 @@ ENC=""; [ -n "${BACKUP_ENCRYPTION_KEY:-}" ] && ENC=".enc"
 KEY="${PREFIX}/${DATE}.sql.gz${ENC}"
 FILE="/tmp/${DATE}.sql.gz"
 # folders with customers' private uploads (src/lib/uploads.ts, checkout) and the public photo folders (src/lib/media.ts)
-PRIVATE_FOLDERS="payments returns warranty tradein reviews-pending"
+# downloads/ = files of digital products (what merchants sell); labels/ = courier labels
+PRIVATE_FOLDERS="payments returns warranty tradein reviews-pending downloads labels"
 PUBLIC_FOLDERS="media products banners blog reviews"
 
 # encrypts the file when a passphrase is set (adds .enc, removes the plain file); prints the resulting path

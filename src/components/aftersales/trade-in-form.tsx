@@ -1,5 +1,5 @@
 "use client";
-import { useActionState, useRef, useState } from "react";
+import { startTransition, useActionState, useRef, useState } from "react";
 import { CheckCircle2, ImagePlus, X } from "lucide-react";
 import { submitTradeIn, type TradeInState } from "@/app/(frontend)/(store)/sell-your-laptop/actions";
 import { useMoney, useStoreLocale } from "@/components/providers/locale";
@@ -7,6 +7,7 @@ import { Turnstile } from "@/components/ui/turnstile";
 import { compressImage } from "@/lib/compress-image";
 import { honeypotProps } from "@/lib/honeypot";
 import { phonePlaceholder } from "@/lib/phone";
+import { FilePreview } from "@/components/ui/file-preview";
 
 /** "Sell / trade in your laptop": brand, model, specs, condition, photos, expected price, contact. */
 export function TradeInForm() {
@@ -25,10 +26,13 @@ export function TradeInForm() {
     );
   return (
     <form
-      action={(fd) => {
+      onSubmit={(e) => {
+        // Submit via transition (instead of the `action` prop) so React doesn't clear the whole form on an error.
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget);
         fd.delete("photos");
         files.forEach((f) => fd.append("photos", f));
-        action(fd);
+        startTransition(() => action(fd));
       }}
       className="card space-y-5 p-5 sm:p-6"
     >
@@ -88,8 +92,7 @@ export function TradeInForm() {
         <div className="mt-2 flex flex-wrap gap-2">
           {files.map((f, i) => (
             <span key={i} className="relative size-20 overflow-hidden rounded-xl border border-border bg-surface">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={URL.createObjectURL(f)} alt="" className="size-full object-cover" />
+              <FilePreview file={f} className="size-full object-cover" />
               <button type="button" aria-label="Remove photo" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="absolute right-1 top-1 rounded-full bg-black/70 p-1">
                 <X className="size-3" />
               </button>
@@ -139,7 +142,7 @@ export function TradeInForm() {
       </fieldset>
       <Turnstile action="tradein" />
       {state.message && (
-        <p className="text-sm text-rose-300" role="alert">
+        <p className="text-sm text-rose-300 light:text-rose-700" role="alert">
           {state.message}
         </p>
       )}

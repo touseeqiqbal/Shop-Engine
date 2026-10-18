@@ -77,6 +77,11 @@ export const GiftCards: CollectionConfig = {
     { name: "message", type: "textarea", admin: { description: "Optional – shown in the email to the recipient." } },
     { name: "sendEmail", type: "checkbox", label: "Email the gift card to the recipient when saving", access: { update: () => false } },
     { name: "issuedFor", type: "relationship", relationTo: "orders", label: "Bought with order", admin: { readOnly: true, condition: (d) => Boolean(d?.issuedFor) } },
+    // a voucher a customer made from their loyalty points (shown on their account page)
+    { type: "row", admin: { condition: (d) => Boolean(d?.customer) }, fields: [
+      { name: "customer", type: "relationship", relationTo: "users", label: "Customer's own voucher", access: { create: serverOnly, update: () => false }, admin: { width: "50%", readOnly: true } },
+      { name: "fromPoints", type: "number", label: "Made from points", access: { create: serverOnly, update: () => false }, admin: { width: "50%", readOnly: true } },
+    ] },
     // every payment with the card and every amount given back (cancelled order), newest last – written by the server
     { name: "ledger", type: "json", label: "History", access: { create: serverOnly, update: serverOnly }, admin: { readOnly: true } },
   ],

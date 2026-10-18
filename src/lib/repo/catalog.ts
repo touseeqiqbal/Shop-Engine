@@ -7,6 +7,7 @@ import { loadApprovedReviewsFromPayload, loadCatalogFromPayload, loadProductDesc
 import { loadCommerceSettings } from "@/lib/cms/commerce";
 import { activeFlashSaleCms, discountedFlashSalesCms } from "@/lib/cms/sales";
 import { applyFlashSales } from "@/lib/flash-pricing";
+import { perStoreCache } from "@/lib/store-cache";
 import { cmsBlogPosts, cmsFaqs, cmsTestimonials } from "@/lib/cms/site";
 import { seedFaqs, seedSettings, seedTestimonials } from "@/lib/data/seed";
 import type {
@@ -32,6 +33,7 @@ import type {
 import { effectivePrice } from "@/lib/utils";
 import { isExactMatch, rank, suggest } from "@/lib/search";
 import { currentStoreId } from "@/lib/tenant";
+import { log } from "@/lib/log";
 
 /**
  * Everything here is for the store of the current request (`currentStoreId()` – the host, or `runInStore` in jobs).
@@ -119,30 +121,31 @@ async function loadRaw(storeId: number | null) {
  * The whole catalogue in one cache entry – WITHOUT the long descriptions (Next.js won't cache an entry over 2 MB,
  * so with hundreds of products every page would rebuild it). Descriptions are cached per product below.
  */
-const loadSnapshotCached = unstable_cache(
+const loadSnapshotCached = perStoreCache(
+  "catalog-snapshot-v6",
   async (storeId: number | null): Promise<CatalogSnapshot> => {
     const { categories, brands, products, models } = await loadRaw(storeId);
     categories.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
     // running flash sales with "% off" lower their products' prices here – every page, the cart and checkout read this
     // snapshot (housekeeping refreshes it when such a sale starts or ends)
     const flash = isCmsConfigured ? await discountedFlashSalesCms(storeId) : [];
-    return { categories, brands, products: applyFlashSales(groupVariants(enrich(products, categories, brands)), flash).map((p) => ({ ...p, description: "" })), models };
+    const snapshot = { categories, brands, products: applyFlashSales(groupVariants(enrich(products, categories, brands)), flash).map((p) => ({ ...p, description: "" })), models };
+    // Next.js silently skips caching an entry over 2 MB – then EVERY page reloads the whole catalogue from the
+    // database. Say so well before that happens (a store with ~1,000+ products, fewer with many variants).
+    const bytes = Buffer.byteLength(JSON.stringify(snapshot));
+    if (bytes > 1_500_000) log.warn("catalog.snapshot_large", { store: storeId, bytes, products: products.length, limit: 2_000_000 });
+    return snapshot;
   },
-  ["catalog-snapshot-v5"],
-  { tags: [TAGS.catalog], revalidate: REVALIDATE }
+  REVALIDATE,
 );
 /** Once per request (per store), however many components ask. */
 const loadSnapshotFor = cache(loadSnapshotCached);
 const loadSnapshot = async () => loadSnapshotFor(await currentStoreId());
 
-const productDescriptionCached = unstable_cache(
-  async (storeId: number | null, productId: string): Promise<string> => {
-    if (isCmsConfigured) return loadProductDescription(productId, storeId);
-    return ((await listAll("products")) as CatalogProduct[]).find((p) => p.id === productId)?.description ?? "";
-  },
-  ["product-description-v2"],
-  { tags: [TAGS.catalog], revalidate: REVALIDATE }
-);
+const productDescriptionCached = perStoreCache("product-description-v3", async (storeId: number | null, productId: string): Promise<string> => {
+  if (isCmsConfigured) return loadProductDescription(productId, storeId);
+  return ((await listAll("products")) as CatalogProduct[]).find((p) => p.id === productId)?.description ?? "";
+}, REVALIDATE);
 /** A product's full description (Markdown), cached per product. */
 export const getProductDescription = async (productId: string) => productDescriptionCached(await currentStoreId(), productId);
 

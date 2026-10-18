@@ -2,6 +2,13 @@
 
 State: **working tree after remediation (14 Oct 2026, international work 15–16 Oct 2026)**. Same 295 features, same scoring rules and evidence standard as report 01 (which stays as the audit baseline of commit
 `aab6879`). Rows that changed carry their new evidence; tests named in "Evidence" / "Notes" were actually run (see report 11 §4).
+> **Not re-scored after 16 Oct.** The 17 Oct "fix all" pass (report 11 §2.15) added gift cards, pre-orders /
+> backorders, loyalty points, digital products, tax per product and company invoices, delivery methods, flash-sale
+> discounts, collection dates, a stock value report, the shop's own funnel, an unsubscribe list, platform history /
+> support / security events, store data export and closing, and a browser test in CI. Rows such as "Gift cards",
+> "Digital products", "Pre-orders", "Loyalty", "Traffic tracking" and "Browser end-to-end tests" would now score
+> higher; the counts below are still those of 16 Oct.
+
 Status legend: **Complete** = works end to end in code · **Partial** = some requirements unmet · **Missing** = not built ·
 **Broken** = implemented with an evident defect · **Not Verified** = could not be confirmed · **N/A** = out of scope.
 

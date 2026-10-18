@@ -140,13 +140,17 @@ export async function putBackStock(payload: Payload, productId: number, qty: num
   return Number(rows[0]?.stock ?? 0);
 }
 
-/** Adds stock that was bought in (purchase received, count found more) – unlike putBackStock it doesn't touch "sold". */
+/**
+ * Adds stock that was bought in (purchase received, count found more) – unlike putBackStock it doesn't touch "sold".
+ * Units still owed to pre-orders / backorders (stock below 0) stay owed: 3 owed + 2 received = 1 still owed (it used to
+ * become 0, and the owed unit was forgotten). A count never takes stock below 0, nor below what was already owed.
+ */
 export async function addStock(payload: Payload, productId: number, qty: number, req?: PayloadRequest): Promise<number> {
   const db = await conn(payload, req);
   await refuseVariantParent(db, productId);
   const { rows } = await db.execute(sql`
     WITH old AS (SELECT COALESCE("stock", 0) AS before FROM "payload"."cms_products" WHERE "id" = ${productId} FOR UPDATE)
-    UPDATE "payload"."cms_products" p SET "stock" = GREATEST(0, old.before + ${qty}) FROM old WHERE p."id" = ${productId}
+    UPDATE "payload"."cms_products" p SET "stock" = GREATEST(LEAST(old.before, 0), old.before + ${qty}) FROM old WHERE p."id" = ${productId}
     RETURNING p."stock", p."title", old.before`);
   await refreshStatus(payload, productId, req);
   if (rows.length) await logMove(db, req, productId, rows[0].title, Number(rows[0].stock) - Number(rows[0].before), Number(rows[0].stock));

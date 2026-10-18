@@ -1,4 +1,4 @@
-import type { Payload, PayloadRequest } from "payload";
+import type { Payload, PayloadRequest, Where } from "payload";
 import type { ShipmentRow } from "@/payload/collections/content";
 import { connectionsOf, getConnection, rememberForConnection, type Connection } from "./server";
 import { providerImpl } from "./providers";
@@ -64,7 +64,13 @@ export async function parcelFor(payload: Payload, order: Doc, want: Map<number, 
   }
   const { amountToCollect } = await import("@/lib/order-money");
   const everythingLeft = num(order.total);
-  const cod = input.codAmount != null && Number.isFinite(input.codAmount) ? Math.max(0, input.codAmount) : amountToCollect({ paymentMethod: str(order.paymentMethod), paymentDue: str(order.paymentDue), paymentStatus: str(order.paymentStatus), total: everythingLeft, advancePaid: num(order.advancePaid), giftCardAmount: num(order.giftCardAmount) });
+  // the cash earlier parcels of this order already collect (or collected) – a second parcel used to be pre-filled
+  // with the WHOLE order's cash again
+  const earlierCod = ((Array.isArray(order.shipments) ? order.shipments : []) as ShipmentRow[]).filter((x) => x.status !== "cancelled" && x.status !== "returned").reduce((sum, x) => sum + num(x.codAmount), 0);
+  const cod =
+    input.codAmount != null && Number.isFinite(input.codAmount)
+      ? Math.max(0, input.codAmount)
+      : Math.max(0, amountToCollect({ paymentMethod: str(order.paymentMethod), paymentDue: str(order.paymentDue), paymentStatus: str(order.paymentStatus), total: everythingLeft, advancePaid: num(order.advancePaid), giftCardAmount: num(order.giftCardAmount) }) - earlierCod);
   const store = (await payload.findByID({ collection: "stores", id: relId(order.store), depth: 0, overrideAccess: true }).catch(() => null)) as unknown as Doc | null;
   return {
     orderId: Number(order.id),
@@ -90,7 +96,7 @@ export async function bookWithCourier(payload: Payload, req: PayloadRequest | un
   const parcel = await parcelFor(payload, order, check.want, input);
   const booking = await courier.book(ctx, parcel);
   log.info("courier.booked", { provider: input.provider, order: parcel.orderNumber, tracking: booking.trackingNumber });
-  return recordShipment(payload, req, order, check.want, {
+  const record = () => recordShipment(payload, req, order, check.want, {
     courier: booking.courierName,
     trackingNumber: booking.trackingNumber,
     provider: input.provider,
@@ -101,6 +107,23 @@ export async function bookWithCourier(payload: Payload, req: PayloadRequest | un
     codAmount: parcel.codAmount,
     codStatus: parcel.codAmount > 0 ? "pending" : null,
   });
+  // booked with the courier but not saved on the order (it changed meanwhile …): cancel the booking again, so a retry
+  // doesn't leave a second parcel at the courier collecting cash – or, when the courier can't cancel, say exactly what
+  // to cancel by hand
+  const failed = (why: string) => {
+    log.error("courier.booking_not_recorded", new Error(why), { provider: input.provider, order: parcel.orderNumber, tracking: booking.trackingNumber });
+    return courier.cancel
+      ? courier.cancel(ctx, booking.courierRef || booking.trackingNumber).then(
+          () => new IntegrationError(`The parcel couldn't be saved on the order (${why}) – its ${booking.courierName} booking was cancelled again. Please try again.`, 409),
+          () => new IntegrationError(`The parcel couldn't be saved on the order (${why}). Cancel booking ${booking.trackingNumber} in your ${booking.courierName} account before trying again.`, 409),
+        )
+      : Promise.resolve(new IntegrationError(`The parcel couldn't be saved on the order (${why}). Cancel booking ${booking.trackingNumber} in your ${booking.courierName} account before trying again.`, 409));
+  };
+  try {
+    return await record();
+  } catch (e) {
+    throw await failed((e as Error)?.message || "error");
+  }
 }
 
 /** The parcel's label: a link to open, or the PDF itself. */
@@ -133,6 +156,15 @@ export async function cancelCourierBooking(payload: Payload, req: PayloadRequest
 }
 
 const TRACK_EVERY = 90 * 60_000;
+
+/** Orders with a courier parcel that can still need asking: on the way, or its cash not paid out yet. */
+export const TRACKABLE_ORDERS: Where = {
+  and: [
+    { "shipments.provider": { exists: true } },
+    { status: { in: ["confirmed", "dispatched", "out-for-delivery", "delivered", "refused"] } },
+    { or: [{ "shipments.status": { equals: "shipped" } }, { "shipments.codStatus": { equals: "pending" } }] },
+  ],
+};
 const REMITTANCE_EVERY = 12 * 3600_000;
 
 /**
@@ -141,10 +173,12 @@ const REMITTANCE_EVERY = 12 * 3600_000;
  */
 export async function syncCourierTracking(payload: Payload, limit = 40): Promise<{ checked: number; delivered: number; returned: number; remitted: number }> {
   const out = { checked: 0, delivered: 0, returned: 0, remitted: 0 };
+  // only orders with a parcel that can still need asking (on the way, or cash not yet paid out) – finished orders used
+  // to fill the 200 oldest places for good, and then no new parcel was ever tracked again
   const orders = (
     await payload.find({
       collection: "orders",
-      where: { and: [{ "shipments.provider": { exists: true } }, { status: { in: ["confirmed", "dispatched", "out-for-delivery", "delivered", "refused"] } }] },
+      where: TRACKABLE_ORDERS,
       sort: "updatedAt",
       limit: 200,
       depth: 0,
@@ -170,6 +204,9 @@ export async function syncCourierTracking(payload: Payload, limit = 40): Promise
         if (r === "remitted") out.remitted++;
       } catch (e) {
         log.warn("courier.sync_failed", { order: str(order.orderNumber), provider: s.provider, error: (e as Error)?.message });
+        // asked: try this parcel again at the next turn, not at once – a parcel whose courier keeps failing (account
+        // disconnected …) must not keep the oldest places and stop tracking for everyone else
+        await touchTracked(payload, Number(order.id), i, s.trackingNumber).catch(() => undefined);
       }
     }
   }
@@ -186,6 +223,15 @@ const STATUS_TEXT: Record<TrackingStatus, string> = {
   failed: "Delivery attempt failed",
   unknown: "No update yet",
 };
+
+/** The parcel was asked about now (re-read just before the write; only this parcel's time changes). */
+async function touchTracked(payload: Payload, orderId: number, index: number, trackingNumber: string | null | undefined) {
+  const fresh = (await payload.findByID({ collection: "orders", id: orderId, depth: 0, overrideAccess: true })) as unknown as Doc;
+  const rows = (Array.isArray(fresh.shipments) ? fresh.shipments : []) as ShipmentRow[];
+  if (rows[index]?.trackingNumber !== trackingNumber) return;
+  const next = rows.map((x, k) => (k === index ? { ...x, lastTrackedAt: new Date().toISOString() } : x));
+  await payload.update({ collection: "orders", id: orderId, data: { shipments: next } as never, overrideAccess: true, context: { system: true, expectStatus: str(fresh.status), skipActivity: true } });
+}
 
 /** One parcel: its latest courier status (and cash collected), applied to the order. */
 export async function syncOne(payload: Payload, orderId: number, index: number): Promise<"delivered" | "returned" | "remitted" | "updated" | "unchanged"> {
@@ -205,16 +251,21 @@ export async function syncOne(payload: Payload, orderId: number, index: number):
       result = "remitted";
     }
   }
+  // the courier calls above take a while: re-read the order now, so parcels staff added or changed meanwhile aren't
+  // overwritten with the copy read before them (only this parcel's fields change)
+  const fresh = (await payload.findByID({ collection: "orders", id: orderId, depth: 0, overrideAccess: true })) as unknown as Doc;
+  const rows = (Array.isArray(fresh.shipments) ? fresh.shipments : []) as ShipmentRow[];
+  if (rows[index]?.trackingNumber !== s.trackingNumber || rows[index]?.status !== s.status) return "unchanged"; // changed meanwhile: next turn
   const { setShipmentStatus } = await import("@/payload/shipments");
   if (s.status === "shipped" && (t.status === "delivered" || t.status === "returned")) {
-    const r = await setShipmentStatus(payload, undefined, order, index, t.status, patch, t.status === "delivered" ? `Delivered (reported by ${courier.name})` : `Returned by ${courier.name} (RTO)`);
+    const r = await setShipmentStatus(payload, undefined, fresh, index, t.status, patch, t.status === "delivered" ? `Delivered (reported by ${courier.name})` : `Returned by ${courier.name} (RTO)`);
     if (r.ok && patch.codStatus === "remitted") await markCodPaid(payload, orderId, courier.name);
     return r.ok ? t.status : "unchanged";
   }
-  const next = shipments.map((x, k) => (k === index ? { ...x, ...patch } : x));
+  const next = rows.map((x, k) => (k === index ? { ...x, ...patch } : x));
   // out for delivery: the order says so too
-  const moveOut = t.status === "out_for_delivery" && str(order.status) === "dispatched";
-  await payload.update({ collection: "orders", id: orderId, data: { shipments: next, ...(moveOut ? { status: "out-for-delivery" } : {}) } as never, overrideAccess: true, context: { system: true, expectStatus: str(order.status), skipActivity: true } });
+  const moveOut = t.status === "out_for_delivery" && str(fresh.status) === "dispatched";
+  await payload.update({ collection: "orders", id: orderId, data: { shipments: next, ...(moveOut ? { status: "out-for-delivery" } : {}) } as never, overrideAccess: true, context: { system: true, expectStatus: str(fresh.status), skipActivity: true } });
   if (result === "remitted") await markCodPaid(payload, orderId, courier.name);
   return result;
 }

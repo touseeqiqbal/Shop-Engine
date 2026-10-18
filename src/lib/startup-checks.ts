@@ -16,6 +16,17 @@ export function runStartupChecks() {
       console.error(`[startup] ${missing.join(", ")} not set – refusing to start. Set them in Railway → Variables.`);
       process.exit(1);
     }
-  } else if (localProductionTest) console.error("[startup] LOCAL_PRODUCTION_TEST – local test of a production build (never on Railway).");
+  } else {
+    // a NON-production build on a hosting platform (a preview or staging deploy started without NODE_ENV=production)
+    // would sign sessions, download links and encrypt 2-step / integration secrets with the public development
+    // fallbacks – anyone could forge them. Refuse to start there without real secrets.
+    const hosted = ["RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "RENDER", "VERCEL", "FLY_APP_NAME", "K_SERVICE"].some((k) => process.env[k]);
+    const missing = ["PAYLOAD_SECRET", "AUTH_SECRET"].filter((k) => !process.env[k]);
+    if (hosted && missing.length) {
+      console.error(`[startup] ${missing.join(", ")} not set on a hosted (non-production) deploy – refusing to start with the development fallbacks. Set them in the host's variables.`);
+      process.exit(1);
+    }
+    if (localProductionTest) console.error("[startup] LOCAL_PRODUCTION_TEST – local test of a production build (never on Railway).");
+  }
   for (const w of configWarnings()) console.error(`[startup] WARNING: ${w}`);
 }

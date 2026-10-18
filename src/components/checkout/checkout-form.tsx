@@ -23,7 +23,9 @@ import {
 } from "lucide-react";
 import { placeOrder, quoteShipping, type CheckoutField, type PlaceOrderState } from "@/app/(frontend)/(store)/checkout/actions";
 import { trackEvent } from "@/components/analytics";
+import { shopStat } from "@/lib/shop-stats";
 import { useHydrated } from "@/hooks/use-hydrated";
+import { useStickyBar } from "@/hooks/use-sticky-bar";
 import { readLocalAddresses, writeLocalAddresses } from "@/lib/addresses";
 import { deliveryEstimate, freeDeliveryAbove, hasShippingChoices, shipToCountries } from "@/lib/cities";
 import { orderTotals } from "@/lib/order-totals";
@@ -47,11 +49,15 @@ import { honeypotProps } from "@/lib/honeypot";
 
 const MAX_FILE = 5 * 1024 * 1024;
 const FILE_TYPES = ["image/jpeg", "image/png", "image/webp"];
-const FIELD_ORDER: CheckoutField[] = ["name", "phone", "email", "city", "region", "postalCode", "address", "landmark", "notes", "paymentMethod", "screenshot", "paymentReference"];
+// "Invoice in another name" fields: checked here one by one (the server reports any of them as `billing`)
+type BillingField = "billingName" | "billingTaxId" | "billingPostalCode" | "billingAddress" | "billingCity";
+type FormField = CheckoutField | BillingField;
+// page order, so the first field with a problem gets the focus
+const FIELD_ORDER: FormField[] = ["name", "phone", "email", "city", "region", "postalCode", "address", "landmark", "notes", "billing", "billingName", "billingTaxId", "billingPostalCode", "billingAddress", "billingCity", "giftCard", "paymentMethod", "screenshot", "paymentReference"];
 const REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._/-]{3,59}$/;
 const METHOD_ICON: Record<PaymentIcon, React.ComponentType<{ className?: string }>> = { cash: Banknote, wallet: Smartphone, bank: Landmark, card: CreditCard, other: Wallet };
 
-type Errors = Partial<Record<CheckoutField, string>>;
+type Errors = Partial<Record<FormField, string>>;
 
 export interface CheckoutPrefill {
   name?: string;
@@ -158,6 +164,10 @@ export function CheckoutForm({
     setF((s) => ({ ...s, [k]: v }));
     if (errors[k as CheckoutField]) setErrors((er) => ({ ...er, [k]: undefined }));
   };
+  // the invoice fields are plain form fields: typing clears their message (and the server's one for the block)
+  const clearBilling = (k: BillingField) => () => {
+    if (errors[k] || errors.billing) setErrors((er) => ({ ...er, [k]: undefined, billing: undefined }));
+  };
 
   // localStorage addresses (demo mode)
   useEffect(() => {
@@ -170,6 +180,7 @@ export function CheckoutForm({
     if (!hydrated || began.current || lines.length === 0) return;
     began.current = true;
     trackEvent("begin_checkout", { currency: loc.currency, value: cartSubtotal(lines), items: lines.map((l) => ({ item_id: l.productId, item_name: l.name, price: l.unitPrice, quantity: l.qty })) });
+    shopStat("checkout");
   }, [hydrated, lines, loc.currency]);
 
   // screenshot preview URL lifecycle
@@ -183,7 +194,7 @@ export function CheckoutForm({
   const focusFirst = (errs: Errors) => {
     const first = FIELD_ORDER.find((k) => errs[k]);
     if (!first) return;
-    const el = document.getElementById(first === "paymentMethod" ? fid(`pm-${methods[0]?.id ?? "cod"}`) : fid(first));
+    const el = document.getElementById(first === "paymentMethod" ? fid(`pm-${methods[0]?.id ?? "cod"}`) : first === "billing" ? fid("billingName") : fid(first));
     el?.focus({ preventScroll: true });
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
@@ -209,6 +220,9 @@ export function CheckoutForm({
       if (state.paymentUrl) window.location.assign(state.paymentUrl);
       else router.replace(`/order-confirmation/${encodeURIComponent(state.orderNumber)}`);
     } else {
+      // nothing was placed (or the order was cancelled – its card page couldn't open): the next submit is a NEW attempt,
+      // never "the order already placed" for this id
+      attemptId.current = "";
       if (state.requireAdvance) setAdvanceRequired(true);
       if (state.newTotal) acceptedTotal.current = state.newTotal;
       if (state.couponError) coupon.remove();
@@ -225,8 +239,12 @@ export function CheckoutForm({
   const choices = hasShippingChoices(settings);
   const [quote, setQuote] = useState<{ options: ShippingOption[]; weightKg: number } | null>(null);
   const [shipping, setShipping] = useState("standard");
+  // the quote couldn't be loaded (offline, server error): say so with a Retry instead of quietly showing nothing
+  const [quoteFailed, setQuoteFailed] = useState(false);
+  const [quoteTry, setQuoteTry] = useState(0);
   const quoteKey = choices && f.city ? JSON.stringify([f.city, f.postalCode, shipTo, coupon.discount, toRequestLines(lines)]) : "";
   useEffect(() => {
+    setQuoteFailed(false);
     if (!quoteKey) return setQuote(null);
     let live = true;
     const t = setTimeout(() => {
@@ -236,16 +254,21 @@ export function CheckoutForm({
           setQuote(q);
           if (!q.options.some((o) => o.id === shipping)) setShipping("standard");
         })
-        .catch(() => undefined);
+        .catch(() => {
+          if (!live) return;
+          // the options shown were for another address – don't leave them up
+          setQuote(null);
+          setQuoteFailed(true);
+        });
     }, 350);
     return () => {
       live = false;
       clearTimeout(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quoteKey]);
+  }, [quoteKey, quoteTry]);
   // the same arithmetic the server uses (lib/order-totals.ts) – the server's total is the one that counts
-  const totalsInput = { subtotal, discount: coupon.discount, city: f.city, postalCode: f.postalCode, country: shipTo, settings, freeShipping: coupon.freeShipping, shipping, weightKg: quote?.weightKg ?? 0, lines: lines.map((l) => ({ amount: l.unitPrice * l.qty, taxClass: l.taxClass })) };
+  const totalsInput = { subtotal, discount: coupon.discount, city: f.city, postalCode: f.postalCode, country: shipTo, settings, freeShipping: coupon.freeShipping, shipping, weightKg: quote?.weightKg ?? 0, lines: lines.map((l) => ({ amount: l.unitPrice * l.qty, taxClass: l.taxClass })), noShipping: lines.length > 0 && lines.every((l) => l.shipsNothing) };
   // a gift card that pays the whole order (no cash-on-delivery fee then) becomes the way to pay
   const giftTotals = gift ? orderTotals({ ...totalsInput, method: GIFT_CARD_METHOD.id }) : null;
   const giftCovers = Boolean(gift && giftTotals && giftTotals.delivery !== null && gift.balance >= giftTotals.total);
@@ -260,7 +283,8 @@ export function CheckoutForm({
   const eta = f.city ? (chosenShipping?.estimate ? { label: chosenShipping.estimate, days: chosenShipping.estimate } : deliveryEstimate(f.city, settings, f.postalCode, shipTo)) : null;
   const codMax = settings.payments?.cod.maxOrder ?? null;
   const onDelivery = !giftCovers && current?.due === "on-delivery";
-  const advanceEligible = onDelivery && settings.advanceAmount > 0 && (total >= settings.advanceThreshold || advanceRequired);
+  // on what is still due after a gift card (the server checks the same)
+  const advanceEligible = onDelivery && settings.advanceAmount > 0 && (toPay >= settings.advanceThreshold || advanceRequired);
   const needsProof = !giftCovers && Boolean(current?.proof);
   const accountLines = current?.account ?? [];
   // where an advance for cash on delivery can be sent: every method with a receipt
@@ -284,7 +308,7 @@ export function CheckoutForm({
     setFile(picked);
   };
 
-  const validate = (): Errors => {
+  const validate = (form: FormData): Errors => {
     const e: Errors = {};
     if (f.name.trim().length < 3) e.name = "Please enter your full name";
     if (!normalizePhone(f.phone, shipTo)) e.phone = pkAddr ? "Enter a valid mobile number, e.g. 0300-1234567" : `Enter a valid phone number, e.g. ${phonePlaceholder(shipTo)}`;
@@ -293,6 +317,15 @@ export function CheckoutForm({
     if (pkAddr ? !f.city : f.city.trim().length < 2) e.city = pkAddr ? "Please choose your city from the list" : "Please enter your city";
     if (f.postalCode.trim() && !/^[A-Za-z0-9][A-Za-z0-9 -]{1,11}$/.test(f.postalCode.trim())) e.postalCode = "Enter a valid postcode";
     if (f.address.trim().length < (pkAddr ? 10 : 5)) e.address = "Please enter your complete address (house, street, area)";
+    if (billingOn) {
+      // the server's rules (checkout/actions.ts), so each invoice field gets its own message
+      const b = (k: BillingField) => String(form.get(k) ?? "").trim();
+      if (b("billingName").length < 2) e.billingName = "Enter the name for the invoice";
+      if (b("billingTaxId") && !/^[A-Z0-9][A-Z0-9 ./-]{1,39}$/.test(b("billingTaxId").toUpperCase())) e.billingTaxId = "Check the VAT / tax number";
+      if (b("billingPostalCode") && !/^[A-Z0-9][A-Z0-9 -]{1,11}$/.test(b("billingPostalCode").toUpperCase())) e.billingPostalCode = "Check the invoice postcode";
+      if (b("billingAddress").length < 5) e.billingAddress = "Enter the invoice address";
+      if (b("billingCity").length < 2) e.billingCity = "Enter the invoice city";
+    }
     if (giftCovers) {
       // nothing else to choose
     } else if (!current) e.paymentMethod = "Please choose a payment method";
@@ -310,7 +343,8 @@ export function CheckoutForm({
       setFormMessage("Checking your coupon – one moment, then place the order.");
       return;
     }
-    const errs = validate();
+    const fd = new FormData(e.currentTarget);
+    const errs = validate(fd);
     if (Object.keys(errs).length) {
       setErrors(errs);
       setFormMessage(`Please fix ${Object.keys(errs).length === 1 ? "the highlighted field" : `${Object.keys(errs).length} highlighted fields`}.`);
@@ -318,8 +352,12 @@ export function CheckoutForm({
       return;
     }
     setErrors({});
+    // delivery methods / weight pricing come from the server: don't place the order on a price we never got
+    if (quoteKey && !quote) {
+      setFormMessage(quoteFailed ? "We couldn't load the delivery options – tap Retry under your address, then place the order." : "Loading the delivery options for your address – one moment, then place the order.");
+      return;
+    }
     setFormMessage("");
-    const fd = new FormData(e.currentTarget);
     fd.set("items", JSON.stringify(toRequestLines(lines)));
     fd.set("couponCode", coupon.code && coupon.status !== "error" ? coupon.code : "");
     fd.set("paymentMethod", payMethod);
@@ -335,6 +373,9 @@ export function CheckoutForm({
     fd.set("paymentReference", needsProof ? reference.trim() : "");
     startTransition(() => formAction(fd));
   };
+
+  // the phone "Place order" bar is shown: the WhatsApp button / cookie notice move above it
+  useStickyBar(hydrated && lines.length > 0);
 
   if (!hydrated) return <CheckoutSkeleton />;
 
@@ -427,7 +468,7 @@ export function CheckoutForm({
 
         <div aria-live="assertive" aria-atomic="true">
           {formMessage && (
-            <p role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+            <p role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 light:text-rose-700">
               <AlertCircle className="mt-0.5 size-4 shrink-0 text-rose-400" aria-hidden="true" />
               {formMessage}
             </p>
@@ -435,7 +476,7 @@ export function CheckoutForm({
         </div>
 
         {syncNotice && (
-          <p role="status" className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          <p role="status" className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200 light:text-amber-800">
             {syncNotice}
           </p>
         )}
@@ -547,7 +588,7 @@ export function CheckoutForm({
               </>
             )}
             {eta && (
-              <p className="flex items-center gap-2 rounded-2xl bg-emerald-500/10 px-3.5 py-2.5 text-sm text-emerald-300 sm:col-span-2" aria-live="polite">
+              <p className="flex items-center gap-2 rounded-2xl bg-emerald-500/10 px-3.5 py-2.5 text-sm text-emerald-300 light:text-emerald-700 sm:col-span-2" aria-live="polite">
                 <Truck className="size-4 shrink-0" aria-hidden="true" />
                 Estimated delivery to {f.city}: <strong>{eta.label}</strong>
                 <span className="ml-auto font-semibold">{delivery === 0 ? "FREE" : money(delivery ?? 0)}</span>
@@ -590,32 +631,41 @@ export function CheckoutForm({
             {billingOn && (
               <fieldset className="grid gap-4 rounded-2xl border border-border p-4 sm:col-span-2 sm:grid-cols-2" aria-describedby={errors.billing ? fid("billing-error") : undefined}>
                 <legend className="px-1 text-sm font-semibold">Invoice to</legend>
-                <Field id={fid("billingName")} label="Name on the invoice" required>
-                  <input id={fid("billingName")} name="billingName" className="input w-full" autoComplete="billing name" maxLength={120} />
+                <Field id={fid("billingName")} label="Name on the invoice" required error={errors.billingName}>
+                  <input {...fieldAria(fid("billingName"), errors.billingName)} name="billingName" autoComplete="billing name" maxLength={120} required onChange={clearBilling("billingName")} />
                 </Field>
                 <Field id={fid("billingCompany")} label="Company" optional>
-                  <input id={fid("billingCompany")} name="billingCompany" className="input w-full" autoComplete="billing organization" maxLength={120} />
+                  <input {...fieldAria(fid("billingCompany"))} name="billingCompany" autoComplete="billing organization" maxLength={120} />
                 </Field>
-                <Field id={fid("billingTaxId")} label="VAT / tax number" optional>
-                  <input id={fid("billingTaxId")} name="billingTaxId" className="input w-full uppercase" autoComplete="off" maxLength={40} />
+                <Field id={fid("billingTaxId")} label="VAT / tax number" optional error={errors.billingTaxId}>
+                  <input {...fieldAria(fid("billingTaxId"), errors.billingTaxId)} name="billingTaxId" className={`${fieldAria(fid("billingTaxId"), errors.billingTaxId).className} uppercase`} autoComplete="off" maxLength={40} onChange={clearBilling("billingTaxId")} />
                 </Field>
-                <Field id={fid("billingPostalCode")} label="Postcode" optional>
-                  <input id={fid("billingPostalCode")} name="billingPostalCode" className="input w-full uppercase" autoComplete="billing postal-code" maxLength={12} />
+                <Field id={fid("billingPostalCode")} label="Postcode" optional error={errors.billingPostalCode}>
+                  <input {...fieldAria(fid("billingPostalCode"), errors.billingPostalCode)} name="billingPostalCode" className={`${fieldAria(fid("billingPostalCode"), errors.billingPostalCode).className} uppercase`} autoComplete="billing postal-code" maxLength={12} onChange={clearBilling("billingPostalCode")} />
                 </Field>
-                <Field id={fid("billingAddress")} label="Invoice address" required className="sm:col-span-2">
-                  <input id={fid("billingAddress")} name="billingAddress" className="input w-full" autoComplete="billing street-address" maxLength={300} />
+                <Field id={fid("billingAddress")} label="Invoice address" required error={errors.billingAddress} className="sm:col-span-2">
+                  <input {...fieldAria(fid("billingAddress"), errors.billingAddress)} name="billingAddress" autoComplete="billing street-address" maxLength={300} required onChange={clearBilling("billingAddress")} />
                 </Field>
-                <Field id={fid("billingCity")} label="City" required>
-                  <input id={fid("billingCity")} name="billingCity" className="input w-full" autoComplete="billing address-level2" maxLength={80} />
+                <Field id={fid("billingCity")} label="City" required error={errors.billingCity}>
+                  <input {...fieldAria(fid("billingCity"), errors.billingCity)} name="billingCity" autoComplete="billing address-level2" maxLength={80} required onChange={clearBilling("billingCity")} />
                 </Field>
                 {errors.billing && (
-                  <p id={fid("billing-error")} className="text-xs font-medium text-rose-400 sm:col-span-2" role="alert">
+                  <p id={fid("billing-error")} className="text-xs font-medium text-rose-400 light:text-rose-700 sm:col-span-2" role="alert">
                     {errors.billing}
                   </p>
                 )}
               </fieldset>
             )}
           </div>
+          {quoteKey && quoteFailed && (
+            <div role="alert" className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 light:text-rose-700">
+              <AlertCircle className="size-4 shrink-0 text-rose-400" aria-hidden="true" />
+              <span className="min-w-0 flex-1">Couldn&apos;t load delivery options for this address.</span>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setQuoteTry((n) => n + 1)}>
+                Retry
+              </button>
+            </div>
+          )}
           {quote && quote.options.length > 1 && (
             <fieldset className="mt-5">
               <legend className="mb-2 text-sm font-semibold">Delivery method</legend>
@@ -637,9 +687,10 @@ export function CheckoutForm({
           )}
         </Section>
 
-        <Section step={3} title="Payment method" subtitle={pk ? "Cash on Delivery available in every city" : methods.some((m) => m.id === "cod") ? "Cash on Delivery available" : "Choose how you'd like to pay"}>
+        <Section step={3} title="Payment method" subtitle={methods.some((m) => m.id === "cod") ? (pk ? "Cash on Delivery available in every city" : "Cash on Delivery available") : "Choose how you'd like to pay"}>
           {(giftCards || gift) && (
             <GiftCardBox
+              id={fid("giftCard")}
               className="mb-4"
               applied={gift}
               used={giftUsed}
@@ -672,7 +723,7 @@ export function CheckoutForm({
               ))}
             </div>
             {errors.paymentMethod && (
-              <p id={fid("pm-error")} className="mt-2 text-xs font-medium text-rose-400">
+              <p id={fid("pm-error")} className="mt-2 text-xs font-medium text-rose-400 light:text-rose-700">
                 {errors.paymentMethod}
               </p>
             )}
@@ -715,7 +766,7 @@ export function CheckoutForm({
                     placeholder="From your payment SMS / receipt"
                   />
                   {errors.paymentReference && (
-                    <p id={fid("paymentReference-error")} className="mt-1.5 text-xs font-medium text-rose-400">
+                    <p id={fid("paymentReference-error")} className="mt-1.5 text-xs font-medium text-rose-400 light:text-rose-700">
                       {errors.paymentReference}
                     </p>
                   )}
@@ -725,9 +776,9 @@ export function CheckoutForm({
             {advanceEligible && (
               <motion.div key="advance" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-5 space-y-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
                 <div className="text-sm">
-                  <p className="font-semibold text-amber-200">{advanceRequired ? "Advance payment needed for this order" : "Advance payment for high-value COD orders"}</p>
+                  <p className="font-semibold text-amber-200 light:text-amber-800">{advanceRequired ? "Advance payment needed for this order" : "Advance payment for high-value COD orders"}</p>
                   <p className="mt-1 text-muted">
-                    Pay {money(Math.min(settings.advanceAmount, total))} advance via{" "}
+                    Pay {money(Math.min(settings.advanceAmount, toPay))} advance via{" "}
                     {advanceTargets.join(", ").replace(/, ([^,]*)$/, " or $1")}{" "}
                     {advanceRequired ? "to confirm this order." : "to confirm high-value COD orders."} {method === "cod" ? "The rest is paid in cash on delivery." : "The rest is paid on delivery."}
                   </p>
@@ -756,7 +807,8 @@ export function CheckoutForm({
       <div className="space-y-3 lg:hidden">
         <TrustLine />
       </div>
-      <div className="glass fixed inset-x-0 bottom-16 z-30 flex items-center gap-3 border-x-0 px-4 py-3 lg:hidden">
+      {/* above the bottom menu incl. the iPhone home bar (--mobile-nav), not a fixed 4rem */}
+      <div className="glass fixed inset-x-0 bottom-[var(--mobile-nav)] z-30 flex items-center gap-3 border-x-0 px-4 py-3 lg:hidden">
         <div className="min-w-0">
           <p className="text-xs text-muted">{gift && giftUsed > 0 ? "To pay" : "Total"}</p>
           <p className="font-display text-lg font-bold tabular-nums">{money(gift ? toPay : total)}</p>
@@ -918,7 +970,7 @@ function ProofUpload({
         </label>
       )}
       {error && (
-        <p id={`${id}-error`} className="mt-1.5 text-xs font-medium text-rose-400">
+        <p id={`${id}-error`} className="mt-1.5 text-xs font-medium text-rose-400 light:text-rose-700">
           {error}
         </p>
       )}

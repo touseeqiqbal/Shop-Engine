@@ -4,6 +4,7 @@ import type { CatalogProduct } from "@/lib/types";
 import { effectivePrice } from "@/lib/utils";
 import { useLists } from "@/store/lists";
 import { trackEvent } from "@/components/analytics";
+import { shopStat } from "@/lib/shop-stats";
 import { useStoreLocale } from "@/components/providers/locale";
 import { ProductCarousel } from "@/components/product/product-carousel";
 import { SectionHeading } from "@/components/ui/section-heading";
@@ -17,6 +18,8 @@ export function RecentlyViewed({ product }: { product: Pick<CatalogProduct, "id"
   const { currency } = useStoreLocale();
 
   useEffect(() => {
+    // the shop's own count (Reports → Shop funnel)
+    shopStat("view", product.id);
     trackEvent("view_item", {
       currency,
       value: effectivePrice(product),

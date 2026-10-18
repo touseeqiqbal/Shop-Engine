@@ -85,9 +85,16 @@ export const brevo = withTest(
 
 async function transport(ctx: Ctx) {
   const nodemailer = (await import("nodemailer")).default;
+  const { resolvePublicHost } = await import("@/lib/net/public-request");
   const port = Number(ctx.connection.config.port || 587);
+  const host = String(ctx.connection.config.host ?? "").trim();
+  // the store's SMTP server: never an internal address – connect to the address checked, the name only for TLS
+  const { address } = await resolvePublicHost(host).catch((e: Error) => {
+    throw new Error(e.name === "PrivateAddressError" ? "that server is on a private network – use your email provider's public SMTP server" : `couldn't find ${host}`);
+  });
   return nodemailer.createTransport({
-    host: String(ctx.connection.config.host),
+    host: address,
+    tls: { servername: host },
     port,
     secure: port === 465,
     auth: { user: String(ctx.connection.config.username), pass: ctx.connection.secrets.password ?? "" },

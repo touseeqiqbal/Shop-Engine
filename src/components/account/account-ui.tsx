@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
-import { AlertCircle, Heart, Info, LayoutDashboard, Loader2, MapPin, Package, Search } from "lucide-react";
+import { AlertCircle, Heart, Info, LayoutDashboard, Loader2, MapPin, Package, Search, Store } from "lucide-react";
 import { findOrdersByPhoneAction, type FindOrdersState } from "@/app/(frontend)/(store)/account/actions";
 import { ORDER_STATUS_LABEL } from "@/lib/order-display";
 import type { OrderStatus } from "@/lib/types";
@@ -14,12 +14,13 @@ import { formatPhoneInput } from "@/components/checkout/phone";
 import { useDateFormatter, useMoney, useStoreLocale } from "@/components/providers/locale";
 import { useState } from "react";
 
+// the shopper's own tabs first; ShopEngine's store management (for merchants) last, with its own icon
 const LINKS = [
   { href: "/account", label: "Overview", icon: LayoutDashboard },
-  { href: "/account/stores", label: "Stores", icon: Package },
   { href: "/account/orders", label: "Orders", icon: Package },
   { href: "/account/addresses", label: "Addresses", icon: MapPin },
   { href: "/account/wishlist", label: "Wishlist", icon: Heart },
+  { href: "/account/stores", label: "Manage stores", icon: Store },
 ];
 
 export function AccountNav() {
@@ -53,8 +54,8 @@ export function DemoBanner({ className }: { className?: string }) {
   return (
     <div className={cn("flex items-start gap-3 rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm", className)} role="note">
       <Info className="mt-0.5 size-4 shrink-0 text-cyan-300" aria-hidden="true" />
-      <p className="text-cyan-100/90">
-        <strong className="text-cyan-100">Customer accounts are coming soon.</strong> Sign-in activates once the store database is connected. Meanwhile your
+      <p className="text-cyan-100/90 light:text-cyan-900">
+        <strong className="text-cyan-100 light:text-cyan-950">Customer accounts are coming soon.</strong> Sign-in activates once the store database is connected. Meanwhile your
         wishlist and saved addresses are kept on this device, and you can find your orders with your phone number.
       </p>
     </div>
@@ -62,16 +63,16 @@ export function DemoBanner({ className }: { className?: string }) {
 }
 
 export const STATUS_TONE: Record<OrderStatus, string> = {
-  "awaiting-payment": "border-amber-500/40 bg-amber-500/10 text-amber-300",
-  "awaiting-confirmation": "border-amber-500/40 bg-amber-500/10 text-amber-300",
-  pending: "border-amber-500/40 bg-amber-500/10 text-amber-300",
-  confirmed: "border-sky-500/40 bg-sky-500/10 text-sky-300",
-  dispatched: "border-violet-500/40 bg-violet-500/10 text-violet-200",
-  "out-for-delivery": "border-indigo-500/40 bg-indigo-500/10 text-indigo-200",
-  delivered: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
-  cancelled: "border-rose-500/40 bg-rose-500/10 text-rose-300",
-  refused: "border-rose-500/40 bg-rose-500/10 text-rose-300",
-  returned: "border-rose-500/40 bg-rose-500/10 text-rose-300",
+  "awaiting-payment": "border-amber-500/40 bg-amber-500/10 text-amber-300 light:text-amber-700",
+  "awaiting-confirmation": "border-amber-500/40 bg-amber-500/10 text-amber-300 light:text-amber-700",
+  pending: "border-amber-500/40 bg-amber-500/10 text-amber-300 light:text-amber-700",
+  confirmed: "border-sky-500/40 bg-sky-500/10 text-sky-300 light:text-sky-700",
+  dispatched: "border-violet-500/40 bg-violet-500/10 text-violet-200 light:text-violet-700",
+  "out-for-delivery": "border-indigo-500/40 bg-indigo-500/10 text-indigo-200 light:text-indigo-700",
+  delivered: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 light:text-emerald-700",
+  cancelled: "border-rose-500/40 bg-rose-500/10 text-rose-300 light:text-rose-700",
+  refused: "border-rose-500/40 bg-rose-500/10 text-rose-300 light:text-rose-700",
+  returned: "border-rose-500/40 bg-rose-500/10 text-rose-300 light:text-rose-700",
 };
 
 export function OrderRows({ orders }: { orders: { orderNumber: string; createdAt: string; status: OrderStatus; total: number; itemsLabel?: string }[] }) {
@@ -126,7 +127,7 @@ export function FindOrdersByPhone() {
       </form>
       <div aria-live="polite">
         {state.status === "error" && (
-          <p role="alert" className="flex items-center gap-2 text-sm text-rose-300">
+          <p role="alert" className="flex items-center gap-2 text-sm text-rose-300 light:text-rose-700">
             <AlertCircle className="size-4" aria-hidden="true" /> {state.message}
           </p>
         )}

@@ -95,13 +95,20 @@ function CardPayments({ orderId, onDone, money, provider }: { orderId: number; o
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  // a failed load must not read as "no payment yet" (staff could think the customer hasn't paid)
+  const [loadError, setLoadError] = useState(false);
   const load = useCallback(async () => {
-    const r = await fetch(`/cms-api/payments/order/${orderId}`, { credentials: "include" });
-    if (!r.ok) return;
-    const j = (await r.json()) as { payments: CardPayment[]; refundable: number; refundElsewhere?: string | null };
-    setRows(j.payments);
-    setRefundable(j.refundable);
-    setElsewhere(j.refundElsewhere ?? null);
+    try {
+      const r = await fetch(`/cms-api/payments/order/${orderId}`, { credentials: "include" });
+      if (!r.ok) return setLoadError(true);
+      const j = (await r.json()) as { payments: CardPayment[]; refundable: number; refundElsewhere?: string | null };
+      setRows(j.payments);
+      setRefundable(j.refundable);
+      setElsewhere(j.refundElsewhere ?? null);
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    }
   }, [orderId]);
   useEffect(() => {
     void load();
@@ -120,10 +127,23 @@ function CardPayments({ orderId, onDone, money, provider }: { orderId: number; o
       setReason("");
       await load();
       onDone();
+    } catch {
+      // the connection dropped: the refund may still have gone through – look before trying again
+      toast("Network error – check the payment list below before trying again.", "error");
+      await load();
     } finally {
       setBusy(false);
     }
   }
+  if (loadError)
+    return (
+      <p className="urko-opanel__help" role="alert">
+        Couldn’t load the {provider ?? "card"} payments.{" "}
+        <button type="button" className="urko-btn" onClick={() => void load()}>
+          Try again
+        </button>
+      </p>
+    );
   if (!rows.length) return <p className="urko-opanel__help">{provider ? `No ${provider} payment yet.` : "No card payment yet."}</p>;
   return (
     <div className="urko-opanel__verify">
@@ -240,6 +260,10 @@ function Shipments({ order, onDone, money }: { order: Order; onDone: () => void;
       if (!r.ok) return toast(j.error ?? "Couldn't save – please try again.", "error");
       toast(j.trackingNumber ? `${done} – tracking ${j.trackingNumber}` : done);
       setOpen(false);
+      onDone();
+    } catch {
+      // the connection dropped: it may have been saved (or booked with the courier) – reload and look first
+      toast("Network error – check the parcels below before trying again.", "error");
       onDone();
     } finally {
       setBusy(false);
@@ -426,16 +450,39 @@ export function OrderPanel() {
   const money = useAdminMoney(order?.store, order?.currency);
   const date = useAdminDates(order?.store);
 
+  // "loading" / "failed" are shown – an empty panel hid the next-step button, money and payment approval silently
+  const [loadError, setLoadError] = useState(false);
   const load = useCallback(async () => {
     if (!id) return;
-    const r = await fetch(`/cms-api/orders/${id}?depth=0`, { credentials: "include" });
-    if (r.ok) setOrder((await r.json()) as Order);
+    try {
+      const r = await fetch(`/cms-api/orders/${id}?depth=0`, { credentials: "include" });
+      if (!r.ok) return setLoadError(true);
+      setOrder((await r.json()) as Order);
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    }
   }, [id]);
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (!id || !order) return null;
+  if (!id) return null;
+  if (!order)
+    return (
+      <section className="urko-opanel" aria-label="Order summary" aria-busy={!loadError}>
+        {loadError ? (
+          <p className="urko-opanel__help" role="alert">
+            Couldn’t load this order’s details.{" "}
+            <button type="button" className="urko-btn" onClick={() => void load()}>
+              Try again
+            </button>
+          </p>
+        ) : (
+          <p className="urko-opanel__help">Loading the order…</p>
+        )}
+      </section>
+    );
 
   async function patch(data: Record<string, unknown>, done: string) {
     setBusy(true);
@@ -500,15 +547,23 @@ export function OrderPanel() {
   async function blockNumber() {
     const reason = window.prompt(`Block online orders from ${phone}?\nWhy? (only your team sees this)`, o.status === "refused" ? "Refused parcel" : "");
     if (reason === null) return;
-    const advanceOnly = window.confirm("Press OK to allow orders only with advance payment, or Cancel to block online orders completely.");
-    const r = await fetch("/cms-api/blocked-phones", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone, reason, name: o.customer?.name, action: advanceOnly ? "advance" : "block" }),
-    });
-    if (r.ok) toast(advanceOnly ? "This number now needs an advance payment" : "This number is blocked from online orders");
-    else toast("Could not save – is this number already on the list?", "error");
+    // an explicit choice (OK / Cancel used to mean two different blocks – Cancel couldn't back out)
+    const choice = window.prompt(`What should happen to new orders from ${phone}?\nType 1 – they may order only with an advance payment\nType 2 – block their online orders completely\n(Cancel – change nothing)`, "1");
+    if (choice === null) return;
+    const action = choice.trim() === "2" ? "block" : choice.trim() === "1" ? "advance" : null;
+    if (!action) return toast("Nothing changed – type 1 or 2.", "error");
+    try {
+      const r = await fetch("/cms-api/blocked-phones", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, reason, name: o.customer?.name, action }),
+      });
+      if (r.ok) toast(action === "advance" ? "This number now needs an advance payment" : "This number is blocked from online orders");
+      else toast("Could not save – is this number already on the list?", "error");
+    } catch {
+      toast("Network error – nothing was saved. Please try again.", "error");
+    }
   }
 
   function runNext() {

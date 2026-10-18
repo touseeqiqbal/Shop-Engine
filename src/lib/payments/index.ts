@@ -96,7 +96,7 @@ export async function markCheckoutPaid(payload: Payload, s: { sessionId: string;
   return inTransaction(payload, async (req) => {
     const charge = (await payload.find({ collection: "payment-transactions", where: { and: [{ provider: { equals: provider } }, { providerRef: { equals: s.sessionId } }] }, limit: 1, depth: 0, overrideAccess: true, req })).docs[0] as unknown as Doc | undefined;
     if (!charge) return "ignored"; // not one of ours (another platform on the same account)
-    if (charge.status === "succeeded") return "already";
+    if (["succeeded", "refunded", "partially_refunded"].includes(String(charge.status))) return "already";
     const orderId = relId(charge.order);
     const order = (await payload.findByID({ collection: "orders", id: orderId, depth: 0, overrideAccess: true, req })) as unknown as Doc;
     const store = (await payload.findByID({ collection: "stores", id: relId(order.store), depth: 0, overrideAccess: true, req })) as unknown as Doc;
@@ -111,6 +111,10 @@ export async function markCheckoutPaid(payload: Payload, s: { sessionId: string;
     }
     await payload.update({ collection: "payment-transactions", id: Number(charge.id), data: { status: "succeeded", paymentIntent: s.paymentIntent } as never, overrideAccess: true, req });
     const was = String(order.status);
+    // paid AFTER the order was cancelled (the page was used late, a bank debit settled days later): its stock, gift card
+    // and coupon were already given back – the money is recorded, the order stays cancelled, and the store's team is
+    // told to refund it or re-open the order. The shopper gets no "order received" and no download links.
+    const afterCancel = was === "cancelled";
     await payload.update({
       collection: "orders",
       id: orderId,
@@ -118,18 +122,32 @@ export async function markCheckoutPaid(payload: Payload, s: { sessionId: string;
         paymentStatus: "paid",
         paymentReference: s.paymentIntent ?? s.sessionId,
         ...(was === "awaiting-payment" ? { status: "confirmed", history: [{ status: "confirmed", at: new Date().toISOString(), note: `Paid by ${s.via ?? "card"}` }] } : {}),
+        ...(afterCancel ? { history: [{ status: "cancelled", at: new Date().toISOString(), note: `Paid by ${s.via ?? "card"} AFTER the order was cancelled – refund the payment, or re-open the order if you can still send it` }] } : {}),
       } as never,
       overrideAccess: true,
       req,
-      context: { system: true, skipNotify: true },
+      context: { system: true, skipNotify: true, ...(afterCancel ? { paidAfterCancel: true } : {}) },
     });
-    // the "order received" message goes out now that it is paid (card orders don't get one before)
     const { queueNotification } = await import("@/lib/notify");
-    await queueNotification(payload, "order-placed", relId(order.store), { orderId }, { req, dedupeKey: `order-placed:${orderId}` });
+    if (afterCancel) {
+      log.warn("payments.paid_after_cancel", { order: order.orderNumber, provider });
+      await queueNotification(
+        payload,
+        "staff",
+        relId(order.store),
+        {
+          subject: `Payment received for cancelled order ${String(order.orderNumber)}`,
+          lines: [`${String(order.orderNumber)} was cancelled, but its ${s.via ?? "card"} payment has now arrived.`, "Its stock was already put back. Refund the payment, or re-open the order if you can still send it."],
+          link: { href: `/cms/collections/orders/${orderId}`, label: "Open the order" },
+        },
+        { req, dedupeKey: `paid-after-cancel:${orderId}` },
+      );
+    } else {
+      // the "order received" message goes out now that it is paid (card orders don't get one before)
+      await queueNotification(payload, "order-placed", relId(order.store), { orderId }, { req, dedupeKey: `order-placed:${orderId}` });
+    }
     const { emitStoreEvent } = await import("@/lib/webhooks");
-    await emitStoreEvent(payload, relId(order.store), "order.paid", { id: orderId, orderNumber: order.orderNumber, total: order.total, currency: currency.toUpperCase(), paymentIntent: s.paymentIntent, provider }, req);
-    // paid after the order was cancelled (the page was used after it expired): the money must go back – say so loudly
-    if (was === "cancelled") log.warn("payments.paid_after_cancel", { order: order.orderNumber, provider });
+    await emitStoreEvent(payload, relId(order.store), "order.paid", { id: orderId, orderNumber: order.orderNumber, total: order.total, currency: currency.toUpperCase(), paymentIntent: s.paymentIntent, provider, ...(afterCancel ? { orderCancelled: true } : {}) }, req);
     return "paid";
   });
 }
@@ -156,6 +174,28 @@ export async function failCheckout(payload: Payload, sessionId: string, reason: 
 }
 
 /**
+ * The order was cancelled while its payment page was still open (staff cancelled it): close the page at the provider,
+ * so it can't be paid any more. A page that can't be closed (already paid) is settled by reconcile / the webhook –
+ * a payment after cancelling alerts the store's team (markCheckoutPaid). Run by the outbox ("payments.expire").
+ */
+export async function expireOpenCheckouts(payload: Payload, orderId: number): Promise<number> {
+  const open = (await payload.find({ collection: "payment-transactions", where: { and: [{ order: { equals: orderId } }, { kind: { equals: "charge" } }, { status: { equals: "pending" } }] }, limit: 5, depth: 0, overrideAccess: true })).docs as unknown as Doc[];
+  let closed = 0;
+  for (const c of open) {
+    if (c.provider !== "stripe" || !stripeConfigured()) continue;
+    try {
+      const store = (await payload.findByID({ collection: "stores", id: relId(c.store), depth: 0, overrideAccess: true })) as unknown as Doc;
+      await stripe("POST", `/checkout/sessions/${encodeURIComponent(String(c.providerRef))}/expire`, {}, { account: String(store.paymentsAccountId) });
+      if ((await failCheckout(payload, String(c.providerRef), "order cancelled by the store")) === "cancelled") closed++;
+    } catch (e) {
+      // already paid or closed: reconcile / the webhook settle it
+      log.warn("payments.expire_failed", { payment: c.id, error: (e as Error)?.message });
+    }
+  }
+  return closed;
+}
+
+/**
  * Refund (part of) a card order through the provider (from the order in /cms). Never more than what was charged
  * minus earlier refunds. Returns the refund's status.
  */
@@ -165,9 +205,11 @@ export async function refundCardOrder(payload: Payload, req: PayloadRequest, inp
   const order = (await payload.findByID({ collection: "orders", id: input.orderId, depth: 0, overrideAccess: true, req })) as unknown as Doc;
   const store = (await payload.findByID({ collection: "stores", id: relId(order.store), depth: 0, overrideAccess: true, req })) as unknown as Doc;
   const already = Number(charge.refundedAmount) || 0;
-  const left = Number(charge.amount) - already;
+  // what the card payment has left AND what the order has left after refunds of any kind (returns paid in cash …)
+  const { refundableOnOrder } = await import("@/payload/refunds");
+  const left = Math.min(Number(charge.amount) - already, await refundableOnOrder(payload, order as { id: number; total?: unknown }, req));
   const amount = Math.round(input.amount * 100) / 100;
-  if (!(amount > 0) || amount > left + 1e-9) throw new Error(`You can refund at most ${left} on this order.`);
+  if (!(amount > 0) || amount > left + 1e-9) throw new Error(`You can refund at most ${Math.max(0, left)} on this order.`);
   const currency = String(charge.currency).toLowerCase();
   const idempotencyKey = `refund:${input.orderId}:${already}:${amount}`;
   const refund = await stripe<{ id: string; status: string; amount: number }>(
@@ -187,24 +229,61 @@ export async function refundCardOrder(payload: Payload, req: PayloadRequest, inp
 }
 
 /**
+ * Orders still "waiting for online payment" long after checkout that have NO open payment any more (a crash between
+ * saving the order and opening the provider's page, a cancel that failed): nothing will ever settle them, and they
+ * hold their stock, coupon and gift-card balance. Cancelled here (the shopper was never told about them – card orders
+ * are announced once paid). Run by housekeeping.
+ */
+export async function cancelOrphanedPaymentOrders(payload: Payload, opts: { olderThanMs?: number; limit?: number } = {}): Promise<number> {
+  const before = new Date(Date.now() - (opts.olderThanMs ?? 6 * 3600_000)).toISOString();
+  const waiting = (await payload.find({ collection: "orders", where: { and: [{ status: { equals: "awaiting-payment" } }, { placedAt: { less_than: before } }] }, sort: "placedAt", limit: opts.limit ?? 50, depth: 0, overrideAccess: true })).docs as unknown as Doc[];
+  let cancelled = 0;
+  for (const o of waiting) {
+    try {
+      // a payment still open (a voucher paid at a shop days later …) or already through: not an orphan
+      const live = await payload.count({ collection: "payment-transactions", where: { and: [{ order: { equals: Number(o.id) } }, { kind: { equals: "charge" } }, { status: { in: ["pending", "succeeded", "partially_refunded", "refunded"] } }] }, overrideAccess: true });
+      if (live.totalDocs) continue;
+      await payload.update({
+        collection: "orders",
+        id: Number(o.id),
+        data: { status: "cancelled", history: [{ status: "cancelled", at: new Date().toISOString(), note: "Online payment never started or completed – cancelled automatically" }] } as never,
+        overrideAccess: true,
+        context: { system: true, skipNotify: true, expectStatus: "awaiting-payment" },
+      });
+      cancelled++;
+    } catch (e) {
+      log.error("payments.orphan_cancel_failed", e, { order: o.orderNumber });
+    }
+  }
+  return cancelled;
+}
+
+/**
  * Card payments whose page has expired but that the webhook never reported (it can be missed): ask the provider and
  * settle them – paid ones are marked paid, the rest are cancelled. Run by housekeeping.
  */
 export async function reconcileCardPayments(payload: Payload, limit = 20): Promise<{ paid: number; cancelled: number }> {
   if (!stripeConfigured()) return { paid: 0, cancelled: 0 };
-  const due = (await payload.find({ collection: "payment-transactions", where: { and: [{ provider: { equals: "stripe" } }, { kind: { equals: "charge" } }, { status: { equals: "pending" } }, { expiresAt: { less_than: new Date(Date.now() - 2 * 60_000).toISOString() } }] }, limit, depth: 0, overrideAccess: true })).docs as unknown as Doc[];
+  const due = (await payload.find({ collection: "payment-transactions", where: { and: [{ provider: { equals: "stripe" } }, { kind: { equals: "charge" } }, { status: { equals: "pending" } }, { expiresAt: { less_than: new Date(Date.now() - 2 * 60_000).toISOString() } }] }, sort: "updatedAt", limit, depth: 0, overrideAccess: true })).docs as unknown as Doc[];
   const out = { paid: 0, cancelled: 0 };
+  // checked: to the back of the line (updatedAt), so rows that stay pending or keep failing never block the others
+  const later = (c: Doc) => payload.update({ collection: "payment-transactions", id: Number(c.id), data: {} as never, overrideAccess: true }).catch(() => undefined);
   for (const c of due) {
     try {
       const store = (await payload.findByID({ collection: "stores", id: relId(c.store), depth: 0, overrideAccess: true })) as unknown as Doc;
       const s = await stripe<{ payment_status: string; status: string; amount_total: number; currency: string; payment_intent: string | null }>("GET", `/checkout/sessions/${encodeURIComponent(String(c.providerRef))}`, undefined, { account: String(store.paymentsAccountId) });
       if (s.payment_status === "paid") {
         if ((await markCheckoutPaid(payload, { sessionId: String(c.providerRef), paymentIntent: s.payment_intent, amountMinor: s.amount_total, currency: s.currency, account: String(store.paymentsAccountId) })) === "paid") out.paid++;
-      } else if (s.status === "expired" || s.status === "complete") {
-        if ((await failCheckout(payload, String(c.providerRef), s.status === "expired" ? "expired" : "not paid")) === "cancelled") out.cancelled++;
+      } else if (s.status === "expired") {
+        if ((await failCheckout(payload, String(c.providerRef), "expired")) === "cancelled") out.cancelled++;
+      } else {
+        // "complete" but unpaid: a delayed method (bank debit, voucher) is on its way – Stripe reports the outcome
+        // (async_payment_succeeded / _failed); ask again later
+        await later(c);
       }
     } catch (e) {
       log.error("payments.reconcile_failed", e, { payment: c.id });
+      await later(c);
     }
   }
   return out;

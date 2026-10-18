@@ -86,15 +86,38 @@ export function AfterSalesPanel({ kind }: { kind: Kind }) {
   const money = useAdminMoney(doc?.store);
   const date = useAdminDates(doc?.store);
 
+  // "loading" / "failed" are shown – an empty panel hid the next step without a word
+  const [loadError, setLoadError] = useState(false);
   const load = useCallback(async () => {
     if (!id) return;
-    const r = await fetch(`/cms-api/${collection}/${id}?depth=0`, { credentials: "include" });
-    if (r.ok) setDoc((await r.json()) as Doc);
+    try {
+      const r = await fetch(`/cms-api/${collection}/${id}?depth=0`, { credentials: "include" });
+      if (!r.ok) return setLoadError(true);
+      setDoc((await r.json()) as Doc);
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    }
   }, [id, collection]);
   useEffect(() => {
     void load();
   }, [load]);
-  if (!id || !doc) return null;
+  if (!id) return null;
+  if (!doc)
+    return (
+      <section className="urko-opanel" aria-label="Summary" aria-busy={!loadError}>
+        {loadError ? (
+          <p className="urko-opanel__help" role="alert">
+            Couldn’t load the details.{" "}
+            <button type="button" className="urko-btn" onClick={() => void load()}>
+              Try again
+            </button>
+          </p>
+        ) : (
+          <p className="urko-opanel__help">Loading…</p>
+        )}
+      </section>
+    );
 
   async function patch(data: Record<string, unknown>, done: string) {
     setBusy(true);

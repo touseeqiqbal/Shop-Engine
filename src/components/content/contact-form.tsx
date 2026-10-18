@@ -1,5 +1,5 @@
 "use client";
-import { useActionState, useEffect, useRef } from "react";
+import { startTransition, useActionState, useEffect, useRef } from "react";
 import { CheckCircle2, Loader2, Send } from "lucide-react";
 import { submitContact, type ContactState } from "@/app/(frontend)/(store)/contact/actions";
 import { trackEvent } from "@/components/analytics";
@@ -30,13 +30,25 @@ export function ContactForm() {
   });
   const fieldError = (name: keyof typeof err) =>
     err[name] ? (
-      <p id={`${name}-error`} className="mt-1.5 text-xs font-medium text-rose-400">
+      <p id={`${name}-error`} className="mt-1.5 text-xs font-medium text-rose-400 light:text-rose-700">
         {err[name]}
       </p>
     ) : null;
 
   return (
-    <form ref={formRef} action={action} className="space-y-4" noValidate>
+    <form
+      ref={formRef}
+      action={action}
+      onSubmit={(e) => {
+        // Submit via transition (the `action` prop is only for browsers without JavaScript) so React doesn't empty the
+        // fields when the server sends back an error; they're cleared above once the message is sent.
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget);
+        startTransition(() => action(fd));
+      }}
+      className="space-y-4"
+      noValidate
+    >
       {/* Honeypot */}
       <div aria-hidden="true" className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
         <label htmlFor="hp-contact">Leave this empty</label>

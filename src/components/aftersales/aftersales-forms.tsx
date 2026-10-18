@@ -1,5 +1,5 @@
 "use client";
-import { useActionState, useRef, useState, useTransition } from "react";
+import { startTransition, useActionState, useRef, useState, useTransition } from "react";
 import { CheckCircle2, ImagePlus, X } from "lucide-react";
 import { lookupForReturn, submitReturn, submitWarranty, type LookupState, type SubmitState } from "@/app/(frontend)/(store)/returns/actions";
 import { compressImage } from "@/lib/compress-image";
@@ -7,6 +7,7 @@ import { phonePlaceholder } from "@/lib/phone";
 import { useMoney, useStoreLocale } from "@/components/providers/locale";
 import { Turnstile } from "@/components/ui/turnstile";
 import { honeypotProps } from "@/lib/honeypot";
+import { FilePreview } from "@/components/ui/file-preview";
 
 /** Example in the phone fields: the original shop's familiar "0300-1234567", else the store country's format. */
 const phoneExample = (country: string) => (country === "PK" ? "0300-1234567" : phonePlaceholder(country));
@@ -55,8 +56,7 @@ function PhotoPicker({ files, setFiles, required }: { files: File[]; setFiles: (
       <div className="mt-2 flex flex-wrap gap-2">
         {files.map((f, i) => (
           <span key={i} className="relative size-20 overflow-hidden rounded-xl border border-border bg-surface">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={URL.createObjectURL(f)} alt="" className="size-full object-cover" />
+            <FilePreview file={f} className="size-full object-cover" />
             <button type="button" aria-label="Remove photo" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="absolute right-1 top-1 rounded-full bg-black/70 p-1">
               <X className="size-3" />
             </button>
@@ -124,7 +124,7 @@ function ReturnForm({ reasons, requirePhotos, returnDays }: { reasons: string[];
           {looking ? "Finding…" : "Find my order"}
         </button>
       </form>
-      {found && !found.ok && <p className="text-sm text-rose-300">{found.message}</p>}
+      {found && !found.ok && <p className="text-sm text-rose-300 light:text-rose-700">{found.message}</p>}
 
       {order && !canReturn && (
         <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
@@ -136,13 +136,16 @@ function ReturnForm({ reasons, requirePhotos, returnDays }: { reasons: string[];
 
       {order && canReturn && (
         <form
-          action={(fd) => {
+          onSubmit={(e) => {
+            // Submit via transition (instead of the `action` prop) so React doesn't clear the reason and details on an error.
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
             fd.set("orderNumber", number);
             fd.set("phone", phone);
             fd.set("items", JSON.stringify(Object.entries(qty).filter(([, q]) => q > 0).map(([index, q]) => ({ index: Number(index), qty: q }))));
             fd.delete("photos");
             files.forEach((f) => fd.append("photos", f));
-            action(fd);
+            startTransition(() => action(fd));
           }}
           className="space-y-4"
         >
@@ -194,7 +197,7 @@ function ReturnForm({ reasons, requirePhotos, returnDays }: { reasons: string[];
           </label>
           <PhotoPicker files={files} setFiles={setFiles} required={requirePhotos} />
           {state && !state.ok && (
-            <p className="text-sm text-rose-300" role="alert">
+            <p className="text-sm text-rose-300 light:text-rose-700" role="alert">
               {state.message}
             </p>
           )}
@@ -214,10 +217,13 @@ function WarrantyForm() {
   if (state?.ok) return <Done state={state} />;
   return (
     <form
-      action={(fd) => {
+      onSubmit={(e) => {
+        // Submit via transition (instead of the `action` prop) so React doesn't clear the claim on an error.
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget);
         fd.delete("photos");
         files.forEach((f) => fd.append("photos", f));
-        action(fd);
+        startTransition(() => action(fd));
       }}
       className="space-y-4"
     >
@@ -248,7 +254,7 @@ function WarrantyForm() {
       </label>
       <PhotoPicker files={files} setFiles={setFiles} required={false} />
       {state && !state.ok && (
-        <p className="text-sm text-rose-300" role="alert">
+        <p className="text-sm text-rose-300 light:text-rose-700" role="alert">
           {state.message}
         </p>
       )}

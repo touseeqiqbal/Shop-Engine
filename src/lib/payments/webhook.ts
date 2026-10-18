@@ -28,8 +28,13 @@ export async function handleGatewayWebhook(provider: string, req: Request): Prom
   }
 
   const payload = await payloadClient();
-  const existing = (await payload.find({ collection: "payment-events", where: { and: [{ provider: { equals: provider } }, { eventId: { equals: event.id } }] }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
+  const find = async () => (await payload.find({ collection: "payment-events", where: { and: [{ provider: { equals: provider } }, { eventId: { equals: event.id } }] }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
+  const existing = await find();
   if (existing && (existing.status === "processed" || existing.status === "ignored")) return Response.json({ received: true, duplicate: true });
+  // another delivery of this event is being handled right now: ask the provider to send it again later (then it is
+  // either done – a duplicate – or, if that delivery crashed, handled here)
+  if (existing && existing.status === "received" && Date.now() - Date.parse(String(existing.receivedAt ?? existing.createdAt ?? 0)) < 5 * 60_000)
+    return Response.json({ error: "In progress" }, { status: 503 });
   let record = existing;
   if (!record) {
     try {
@@ -39,9 +44,13 @@ export async function handleGatewayWebhook(provider: string, req: Request): Prom
         overrideAccess: true,
         context: { system: true },
       })) as unknown as Doc;
-    } catch {
-      // the same event arrived twice at once – the other delivery handles it
-      return Response.json({ received: true, duplicate: true });
+    } catch (e) {
+      // the same event arrived twice at once: the other delivery stored it and handles it. Anything else (the database
+      // briefly unavailable …) is NOT a duplicate – 500, so the provider sends the event again (it used to get 200 and
+      // never retried: a lost "invoice paid" or "payment succeeded")
+      if (await find().catch(() => undefined)) return Response.json({ received: true, duplicate: true });
+      log.error("payments.webhook_store_failed", e, { provider, event: event.id, type: event.type });
+      return Response.json({ error: "Failed" }, { status: 500 });
     }
   }
 
@@ -51,7 +60,10 @@ export async function handleGatewayWebhook(provider: string, req: Request): Prom
     return Response.json({ received: true });
   } catch (e) {
     log.error("payments.webhook_failed", e, { provider, event: event.id, type: event.type });
-    await payload.update({ collection: "payment-events", id: Number(record.id), data: { status: "failed", error: String((e as Error)?.message ?? e).slice(0, 500) } as never, overrideAccess: true, context: { system: true } }).catch(() => undefined);
+    // never over a delivery that handled it meanwhile ("processed" stays)
+    await payload
+      .update({ collection: "payment-events", where: { and: [{ id: { equals: Number(record.id) } }, { status: { not_equals: "processed" } }] }, data: { status: "failed", error: String((e as Error)?.message ?? e).slice(0, 500) } as never, overrideAccess: true, context: { system: true } })
+      .catch(() => undefined);
     // 500 → the provider sends it again later
     return Response.json({ error: "Failed" }, { status: 500 });
   }

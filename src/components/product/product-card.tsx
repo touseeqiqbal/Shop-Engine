@@ -10,7 +10,7 @@ import { useStoreLocale } from "@/components/providers/locale";
 import { Price } from "@/components/ui/price";
 import { Stars } from "@/components/ui/stars";
 import { ConditionBadge } from "@/components/ui/condition-badge";
-import { useCart } from "@/store/cart";
+import { addLimitMessage, useCart } from "@/store/cart";
 import { useLists } from "@/store/lists";
 import { useUi } from "@/store/ui";
 import { useHydrated } from "@/hooks/use-hydrated";
@@ -167,9 +167,9 @@ export function ProductCard({
           <>
           {p.variantCount ? <span className="text-[11px] font-medium text-muted">From</span> : null}
           <Price price={p.price} salePrice={p.salePrice} size="sm" />
-          <p className={cn("mt-0.5 text-xs", { rose: "text-rose-400", amber: "text-amber-400", violet: "text-violet-300", emerald: "text-emerald-400" }[availability.tone])}>
+          {/* no "COD available" here: a card can't tell whether the store has Cash on Delivery switched on */}
+          <p className={cn("mt-0.5 text-xs", { rose: "text-rose-400 light:text-rose-700", amber: "text-amber-400 light:text-amber-700", violet: "text-violet-300 light:text-violet-700", emerald: "text-emerald-400 light:text-emerald-700" }[availability.tone])}>
             {availability.label}
-            {!outOfStock && <span className="hidden text-muted sm:inline"> · COD available</span>}
           </p>
           {p.variantCount ? (
             // options (colour / size …) are chosen on the product page
@@ -184,7 +184,8 @@ export function ProductCard({
             type="button"
             disabled={outOfStock}
             onClick={() => {
-              add(p);
+              const limited = addLimitMessage(add(p));
+              if (limited) toast(limited, "error");
               trackEvent("add_to_cart", { currency, value: analyticsItem.price, items: [analyticsItem], source: "product_card" });
             }}
             className={cn("btn btn-sm mt-3 w-full", list ? "btn-primary sm:w-auto" : "btn-secondary group-hover:border-transparent group-hover:bg-brand-gradient group-hover:text-white")}

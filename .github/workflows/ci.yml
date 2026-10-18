@@ -95,6 +95,9 @@ jobs:
         run: npm run test:integration-payments
 
       # security events recorded, one marketplace sync at a time, courier cash → order paid, platform history and alerts
+      - name: Merchant webhooks (local receiver)
+        run: npm run test:store-webhooks
+
       - name: Platform operations
         run: npm run test:platform-ops
 
@@ -110,6 +113,30 @@ jobs:
       - name: Stock value report
         run: npm run test:stock-value
 
+      - name: Loyalty points
+        run: npm run test:loyalty
+
+      - name: Shop funnel
+        run: npm run test:shop-funnel
+
+      - name: Version history for a store's team
+        run: npm run test:versions
+
+      - name: Digital products
+        run: npm run test:digital
+
+      - name: Account security (password reset, account ids)
+        run: npm run test:account-security
+
+      - name: Payment integrity (payment after cancelling, one refund ledger)
+        run: npm run test:payment-integrity
+
+      - name: Courier tracking selection
+        run: npm run test:courier-sync
+
+      - name: Shop counter payments (change, cash lines)
+        run: npm run test:pos-payments
+
       # a product with a photo for the browser test (before the build and the server, which cache the catalog)
       - name: Test product
         run: npm run test:e2e:seed
@@ -117,6 +144,11 @@ jobs:
       # 10 shoppers buying the last 2 at the same moment: exactly 2 sold, never below 0
       - name: Stock under concurrent orders
         run: npm run test:stock
+
+      # known security advisories in dependencies, reported in the log (not failing the build: the ones open today are
+      # inside Payload's and Next's own dependencies – audit-reports/13, DEP-1)
+      - name: Dependency advisories
+        run: npm audit --omit=dev --audit-level=critical || true
 
       - name: Production build
         run: npm run build
@@ -132,6 +164,8 @@ jobs:
           npx next start -p 3000 > server.log 2>&1 &
           for i in $(seq 1 60); do curl -sf http://localhost:3000/api/health > /dev/null && break; sleep 2; done
           E2E_BASE_URL=http://localhost:3000 npm run test:e2e || (tail -n 80 server.log; exit 1)
+          # the same server: anonymous access to every collection, private files and admin endpoints is refused
+          npm run test:security -- http://localhost:3000 || (tail -n 80 server.log; exit 1)
 
       # the backup service's image builds, and a dump made exactly like its nightly one restores into an empty database
       # with every table and row (docs/BACKUP-RESTORE.md, "Option B")

@@ -212,8 +212,9 @@ const finish: Endpoint = {
         await addStock(req.payload, l.productId, l.counted - l.expected, req);
         corrected++;
       }
-      const { revalidate } = await import("../revalidate");
-      revalidate(["catalog"]);
+      const { catalogTagOf, revalidate } = await import("../revalidate");
+      // this store's catalogue only, refreshed in the background
+      revalidate([catalogTagOf(c.store)], [], false, { soft: true });
     }
     await save(req, Number(c.id), { status: apply ? "applied" : "finished", finishedAt: new Date().toISOString(), lines, ...totals(lines) });
     log.info("stockcount.finish", { count: c.id, applied: apply, corrected, variance: totals(lines).variance, by: (req.user as { id: number }).id });

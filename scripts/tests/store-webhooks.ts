@@ -56,6 +56,16 @@ try {
   const next = order.status === "pending" ? "confirmed" : "pending";
   await payload.update({ collection: "orders", id: Number(order.id), data: { status: next } as never, overrideAccess: true, depth: 0 });
   await processOutbox(payload, 100);
+  // the save itself starts a background delivery run (kickOutbox) that may have claimed the events first – wait until
+  // it has finished with them (not a fixed pause: how long a run takes varies)
+  const endpointIds = [Number(mine.id), Number(theirs.id), Number(broken.id)];
+  for (let i = 0; i < 50; i++) {
+    const busy = await payload.count({ collection: "outbox-events", where: { and: [{ type: { equals: "webhook.deliver" } }, { "data.endpointId": { in: endpointIds } }, { status: { in: ["pending", "processing"] } }, { attempts: { equals: 0 } }] } as never, overrideAccess: true });
+    const inFlight = await payload.count({ collection: "outbox-events", where: { and: [{ type: { equals: "webhook.deliver" } }, { "data.endpointId": { in: endpointIds } }, { status: { equals: "processing" } }] } as never, overrideAccess: true });
+    if (!busy.totalDocs && !inFlight.totalDocs) break;
+    if (busy.totalDocs) await processOutbox(payload, 100);
+    await new Promise((r) => setTimeout(r, 200));
+  }
   await new Promise((r) => setTimeout(r, 300));
 
   const toMine = received.filter((r) => r.path === "/mine");

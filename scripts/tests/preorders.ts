@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { getPayload } from "payload";
 import config from "@payload-config";
 import { placeOrderCms } from "../../src/lib/cms/sales";
-import { takeStock } from "../../src/payload/stock";
+import { addStock, takeStock } from "../../src/payload/stock";
 import type { Order } from "../../src/lib/types";
 
 const payload = await getPayload({ config });
@@ -103,9 +103,12 @@ try {
   const done = await call("/stock-count/finish", { id: count.id, apply: true });
   check(!done.error && (await stockOf(keep)) === -2, `applying a count of 0 keeps the 2 owed (stock ${await stockOf(keep)}${done.error ? `, ${String(done.error)}` : ""})`);
 
+  // a purchase of 1 arrives: 1 is still owed (it used to become 0 – the owed unit was forgotten)
+  check((await addStock(payload, keep, 1)) === -1, `receiving 1 while 2 are owed leaves 1 owed (stock ${await stockOf(keep)})`);
+
   // the order is cancelled → its 3 come back
   if (placed.ok) await payload.update({ collection: "orders", id: Number(placed.order.id), data: { status: "cancelled" } as never, overrideAccess: true, depth: 0 });
-  check((await stockOf(keep)) === 1, "cancelling puts the 3 back (stock 1 again)");
+  check((await stockOf(keep)) === 2, "cancelling puts the 3 back (stock 2: the 1 received + the 1 on the shelf)");
 
   // ── pre-order with a ship date in the future ──
   const pre = await product("c", { stock: 5, backorders: "preorder", releaseDate: new Date(Date.now() + 10 * 86_400_000).toISOString() });

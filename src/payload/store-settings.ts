@@ -59,7 +59,7 @@ export function toStoreSettingsCollection(global: GlobalConfig): CollectionConfi
       // only shows the links it names, so these never appear in it anyway
       hidden: false,
     },
-    access: { read: readFor(min), readVersions: readFor(min), create: createFor(min), update: writeFor(min), delete: platformAdmins },
+    access: { read: readFor(min), readVersions: readFor(min, { field: "version.store" }), create: createFor(min), update: writeFor(min), delete: platformAdmins },
     versions,
     hooks: { beforeValidate: [assignStore()], afterChange },
     fields: [storeField({ unique: true }), { name: "storeName", type: "text", virtual: "store.name", admin: { hidden: true } }, ...global.fields],

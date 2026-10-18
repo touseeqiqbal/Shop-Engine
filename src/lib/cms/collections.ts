@@ -1,5 +1,5 @@
 import "server-only";
-import { unstable_cache } from "next/cache";
+import { perStoreCache } from "@/lib/store-cache";
 import { currentStoreId } from "@/lib/tenant";
 import { isCmsConfigured } from "@/lib/db/config";
 import { getAllProducts, getCategories, getProductsByIds } from "@/lib/repo/catalog";
@@ -34,11 +34,21 @@ interface Rule {
   value: string;
 }
 
-const loadDocsCached = unstable_cache(
+const loadDocsCached = perStoreCache(
+  "cms-collections-v4",
   async (storeId: number | null): Promise<Doc[]> => {
     if (!isCmsConfigured) return [];
     const payload = await payloadClient();
-    const res = await payload.find({ collection: "product-collections" as never, where: { and: [{ published: { equals: true } }, inStore(storeId)] }, limit: 0, pagination: false, depth: 1, overrideAccess: true });
+    // published, and inside its Show from / Show until dates (housekeeping refreshes the cache when one passes)
+    const now = new Date().toISOString();
+    const res = await payload.find({
+      collection: "product-collections" as never,
+      where: { and: [{ published: { equals: true } }, { or: [{ showFrom: { exists: false } }, { showFrom: { less_than_equal: now } }] }, { or: [{ showUntil: { exists: false } }, { showUntil: { greater_than: now } }] }, inStore(storeId)] },
+      limit: 0,
+      pagination: false,
+      depth: 1,
+      overrideAccess: true,
+    });
     // Keep only what the storefront needs (relationships reduced to storefront ids / slugs).
     return (res.docs as Doc[]).map((d) => ({
       id: String(d.id),
@@ -61,8 +71,7 @@ const loadDocsCached = unstable_cache(
       rules: (Array.isArray(d.rules) ? (d.rules as Doc[]) : []).map((r) => ({ field: str(r.field), category: storefrontId(obj(r.category)) || undefined, brand: str(obj(r.brand)?.slug) || undefined, value: str(r.value) })),
     }));
   },
-  ["cms-collections-v3"],
-  { tags: ["catalog"], revalidate: 300 }
+  300,
 );
 /** The current store's published collections. */
 const loadDocs = async () => loadDocsCached(await currentStoreId());

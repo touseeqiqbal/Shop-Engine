@@ -21,6 +21,7 @@ export interface RepricedLine {
   basePrice: number;
   stock: number;
   taxClass?: "reduced" | "exempt";
+  shipsNothing?: boolean;
 }
 
 /** Live price/stock for each cart line (keyed like the cart store's lineKey) so stale carts show current prices. */
@@ -40,7 +41,7 @@ export async function repriceCart(input: { productId: string; qty: number; upgra
     if (!p || p.priceOnRequest || ups.some((u) => !u)) return { key, available: false, unitPrice: 0, basePrice: 0, stock: 0 };
     const base = effectivePrice(p);
     // stock = what one line may hold (the cart's own limit for pre-order / keep-selling products)
-    return { key, available: canOrder(p), basePrice: base, unitPrice: base + ups.reduce((s, u) => s + (u?.price ?? 0), 0), stock: buyLimit(p), ...(p.taxClass ? { taxClass: p.taxClass } : {}) };
+    return { key, available: canOrder(p), basePrice: base, unitPrice: base + ups.reduce((s, u) => s + (u?.price ?? 0), 0), stock: buyLimit(p), ...(p.taxClass ? { taxClass: p.taxClass } : {}), ...(p.shipsNothing ? { shipsNothing: true } : {}) };
   });
 }
 

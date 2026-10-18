@@ -1,11 +1,12 @@
-import type { CollectionBeforeLoginHook, Endpoint, PayloadRequest } from "payload";
-import { APIError, generatePayloadCookie } from "payload";
+import type { CollectionBeforeLoginHook, Endpoint, Payload, PayloadRequest } from "payload";
+import { APIError, createLocalReq, generatePayloadCookie } from "payload";
 import { sql } from "@payloadcms/db-postgres";
 import { decrypt, encrypt, hashCode, newBackupCodes, newSecret, otpauthUrl, twoFactorRequired, verifyTotp } from "../two-factor";
 import { log } from "../../lib/log";
 import { ipFromHeaders } from "../../lib/client-ip";
 import { recordSecurityEvent } from "../../lib/security-events";
 import { adminSeat, isPlatformAdminUser, type TenantUser } from "../tenancy";
+import { conn } from "../stock";
 
 /**
  * 2-step verification for /cms.
@@ -29,19 +30,28 @@ const save = (req: PayloadRequest, id: number, twoFactor: TwoFactor) =>
   req.payload.update({ collection: "users", id, data: { twoFactor } as never, overrideAccess: true, req, context: { twoFactorUpdate: true } });
 const bad = (error: string, status = 400) => Response.json({ error }, { status });
 
-/** Checks a TOTP code or a backup code for a user; consumes it. */
+/**
+ * Checks a TOTP code or a backup code for a user and consumes it – each in ONE conditional statement, so two sign-ins
+ * at the same moment can't both use the same code (the second finds it already used).
+ */
 async function checkCode(req: PayloadRequest, user: U, code: string): Promise<boolean> {
   const tf = user.twoFactor ?? {};
   const secret = tf.secret ? decrypt(tf.secret) : null;
   if (!secret) return false;
+  const db = await conn(req.payload, req);
   const step = verifyTotp(secret, code, tf.lastStep ?? 0);
   if (step) {
-    await save(req, user.id, { ...tf, lastStep: step });
-    return true;
+    const { rows } = await db.execute(sql`
+      UPDATE "payload"."cms_users" SET "two_factor_last_step" = ${step}
+      WHERE "id" = ${user.id} AND COALESCE("two_factor_last_step", 0) < ${step} RETURNING "id"`);
+    return rows.length > 0;
   }
   const h = hashCode(code);
   if (code.replace(/\W/g, "").length >= 8 && tf.backupCodes?.includes(h)) {
-    await save(req, user.id, { ...tf, backupCodes: tf.backupCodes.filter((c) => c !== h) });
+    const { rows } = await db.execute(sql`
+      UPDATE "payload"."cms_users" SET "two_factor_backup_codes" = "two_factor_backup_codes" - ${h}
+      WHERE "id" = ${user.id} AND jsonb_exists("two_factor_backup_codes", ${h}) RETURNING "id"`);
+    if (!rows.length) return false;
     log.warn("auth.2fa_backup_code_used", { user: user.id, left: (tf.backupCodes.length ?? 1) - 1 });
     return true;
   }
@@ -63,6 +73,27 @@ function countWrongCode(payload: PayloadRequest["payload"], userId: number) {
       "two_factor_locked_until" = CASE WHEN COALESCE("two_factor_failed_codes", 0) + 1 >= ${MAX_WRONG_CODES} THEN now() + make_interval(mins => ${CODE_LOCK_MS / 60_000}) ELSE "two_factor_locked_until" END,
       "two_factor_failed_codes" = CASE WHEN COALESCE("two_factor_failed_codes", 0) + 1 >= ${MAX_WRONG_CODES} THEN 0 ELSE COALESCE("two_factor_failed_codes", 0) + 1 END
     WHERE "id" = ${userId}`);
+}
+
+/**
+ * A 2-step code for a sensitive action OUTSIDE /cms (Account → Stores: plan, domain, payouts, publishing) – the same
+ * codes, one-time use and per-account lockout as signing in. "not-enabled": the account has no 2-step (nothing to ask).
+ */
+export async function verifyStepUpCode(payload: Payload, userId: number, code: string): Promise<"ok" | "not-enabled" | "wrong" | "locked"> {
+  const req = await createLocalReq({}, payload);
+  const u = await load(req, userId);
+  if (!u?.twoFactor?.enabled) return "not-enabled";
+  if (u.twoFactor.lockedUntil && Date.parse(u.twoFactor.lockedUntil) > Date.now()) return "locked";
+  const typed = String(code ?? "").trim().slice(0, 40);
+  if (typed && (await checkCode(req, u, typed))) return "ok";
+  if (typed) void countWrongCode(payload, u.id).catch((e) => log.error("auth.2fa_counter_failed", e, { user: u.id }));
+  return "wrong";
+}
+
+/** Is 2-step on for this account (Account → Stores asks for a code then)? */
+export async function twoStepOn(payload: Payload, userId: number): Promise<boolean> {
+  const u = await load(await createLocalReq({}, payload), userId).catch(() => null);
+  return Boolean(u?.twoFactor?.enabled);
 }
 
 /**

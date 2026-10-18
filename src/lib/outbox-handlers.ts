@@ -30,6 +30,12 @@ registerOutboxHandler("integration.event", async (payload, event) => {
   await impl?.onEvent?.({ payload, connection: c }, event.data.event as never);
 });
 
+/** An order cancelled while its card page was open: close the page at the provider (lib/payments). */
+registerOutboxHandler("payments.expire", async (payload, event) => {
+  const { expireOpenCheckouts } = await import("./payments");
+  await expireOpenCheckouts(payload, Number(event.data.orderId));
+});
+
 registerOutboxHandler("message.send", async (payload, event) => {
   const { sendMessage } = await import("./notify");
   await sendMessage(event.data as unknown as Message, { payload, storeId: event.store });

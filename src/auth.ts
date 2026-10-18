@@ -55,6 +55,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (user) {
         token.uid = user.id;
         token.role = (user as { role?: string }).role ?? "customer";
+        // when the person actually signed in – kept as the token is renewed (Auth.js gives every renewal a new `iat`,
+        // which would let an old session outlive a password reset)
+        token.authTime = Math.floor(Date.now() / 1000);
       }
       return token;
     },
@@ -63,7 +66,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         (session.user as { id?: string }).id = token.uid as string;
         (session.user as { role?: string }).role = token.role as string;
         // when this sign-in was made – a password reset ends every sign-in made before it (lib/auth.ts)
-        (session.user as { issuedAt?: number }).issuedAt = typeof token.iat === "number" ? token.iat : undefined;
+        // (tokens from before `authTime` existed: none – they count as made before any reset, see lib/auth.ts)
+        (session.user as { issuedAt?: number }).issuedAt = typeof token.authTime === "number" ? token.authTime : 0;
       }
       return session;
     },

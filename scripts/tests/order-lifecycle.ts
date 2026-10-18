@@ -68,6 +68,13 @@ try {
   check((await stockOf()) === 4 && (await usedOf()) === 1, "placing took 1 from stock and counted the coupon");
   check((await outbox("notify.order-placed")) === 1, "the 'order received' message is queued with the order");
 
+  // the same submit again (double click / retry after a lost answer) → the order already placed, not a second one
+  const again = await placeOrderCms({ ...order, orderNumber: `LC-${tag}-2` }, [{ id: String(product.id), qty: 1, title: String(product.title) }], { attemptId: `lc-${tag}`, couponCode: code });
+  check(again.ok === true && again.duplicate === true && Number(again.order.id) === id, "the same submit again returns the order already placed");
+  // …but a CHANGED cart under the same attempt is not "already placed"
+  const changed = await placeOrderCms({ ...order, orderNumber: `LC-${tag}-3`, total: 1800, items: [{ ...order.items[0], qty: 2 }] }, [{ id: String(product.id), qty: 2, title: String(product.title) }], { attemptId: `lc-${tag}`, couponCode: code });
+  check(changed.ok === false && changed.reason === "attempt-reused", `a changed cart under the same attempt isn't passed off as the earlier order (${JSON.stringify(changed.ok ? "ok" : changed.reason)})`);
+
   const stock0 = await stockOf();
   const used0 = await usedOf();
   await payload.update({ collection: "orders", id, data: { status: "confirmed" } as never, overrideAccess: true, depth: 0 });
@@ -82,6 +89,10 @@ try {
   check(used1 === used0 - 1, `cancelling gives the coupon use back (${used0} → ${used1})`);
   const cancelled = (await payload.findByID({ collection: "orders", id, depth: 0, overrideAccess: true })) as unknown as Doc;
   check(cancelled.fulfillmentStatus === "cancelled", "fulfilment status follows (cancelled)");
+  // "try again" after a cancelled attempt (its card page couldn't open) must not show the cancelled order as placed
+  const retry = await placeOrderCms({ ...order, orderNumber: `LC-${tag}-4` }, [{ id: String(product.id), qty: 1, title: String(product.title) }], { attemptId: `lc-${tag}`, couponCode: code });
+  check(retry.ok === false && retry.reason === "attempt-reused", "retrying a cancelled attempt isn't answered with the cancelled order");
+  check((await stockOf()) === stock1 && (await usedOf()) === used1, "…and that refused retry took no stock and no coupon use");
 
   // a second "cancel" (double click, two tabs) changes nothing
   await payload.update({ collection: "orders", id, data: { status: "cancelled", adminNotes: "again" } as never, overrideAccess: true, depth: 0 }).catch(() => null);

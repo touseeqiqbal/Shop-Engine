@@ -3,7 +3,7 @@ import type { CollectionBeforeChangeHook, CollectionConfig, Field, GlobalConfig,
 import { nobody, platformAdmins } from "../access";
 import { assignStore, sameStore, storeAccess, storeField, storeIdOf } from "../tenancy";
 import { dbName } from "../fields";
-import { revalidate } from "../revalidate";
+import { catalogTagOf, revalidate } from "../revalidate";
 import { userError } from "../errors";
 import { storeLocaleOf, storeMoneyOf } from "../store-locale";
 import { log } from "../../lib/log";
@@ -179,12 +179,19 @@ const returnResolution: CollectionBeforeChangeHook = async ({ data, originalDoc,
   }
   let refundedBefore = 0;
   if (data.status === "refunded" && order) {
-    const earlierRefunds = await req.payload.find({ collection: "return-requests", where: { and: [{ order: { equals: order.id } }, { status: { equals: "refunded" } }, ...notThis] }, limit: 100, depth: 0, overrideAccess: true, req });
-    refundedBefore = (earlierRefunds.docs as { refundAmount?: number }[]).reduce((s, r) => s + (Number(r.refundAmount) || 0), 0);
+    // one ledger for the order: earlier returns AND refunds through the payment provider (a card refund plus a cash
+    // refund used to both pass); the order row is locked, so two returns finished at the same moment can't both pass
+    if (req.transactionID) {
+      const { lockOrderStatus } = await import("../stock");
+      await lockOrderStatus(req.payload, order.id, req);
+    }
+    const { refundedOnOrder } = await import("../refunds");
+    const before = await refundedOnOrder(req.payload, order.id, req, { exceptReturn: originalDoc?.id ?? null });
+    refundedBefore = before.total;
     const total = Number(order.total) || 0;
-    if (refundedBefore + refund > total) {
+    if (refundedBefore + refund > total + 0.005) {
       const m = await money();
-      throw userError(`Refunds for this order would come to ${m(refundedBefore + refund)} – more than its total (${m(total)}). Already refunded: ${m(refundedBefore)}.`, 400);
+      throw userError(`Refunds for this order would come to ${m(refundedBefore + refund)} – more than its total (${m(total)}). Already refunded: ${m(refundedBefore)}${before.online ? ` (${m(before.online)} of it through the online payment)` : ""}.`, 400);
     }
   }
 
@@ -252,7 +259,8 @@ const returnResolution: CollectionBeforeChangeHook = async ({ data, originalDoc,
         }
       }
       data.restocked = true;
-      revalidate(["catalog"]);
+      // this store's catalogue only (stock shown on its pages), refreshed in the background
+      revalidate([catalogTagOf(storeId)], [], false, { soft: true });
     }
   } else if (!restock && (data.status === "refunded" || data.status === "replaced")) {
     // came back but not for sale (e.g. faulty): the laptop is with us again – "Returned", no longer "Sold"

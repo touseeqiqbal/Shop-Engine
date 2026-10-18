@@ -595,6 +595,17 @@ export async function notifyGiftCard(c: { code: string; balance: number; expires
   await sendEmail(c.recipientEmail, subject, layout(subject, lines[0], inner), [...lines, shop].join("\n"));
 }
 
+/** A paid order with digital products: the download links (valid for a week; the order page always has fresh ones). */
+export async function notifyDownloads(order: { orderNumber: string; email?: string | null; name?: string | null }, files: { title: string; url: string; limit: number; until: string }[]) {
+  if (!order.email || !files.length) return;
+  const subject = `Your downloads for order ${order.orderNumber}`;
+  const intro = `${order.name ? `Hi ${order.name.split(" ")[0]}! ` : ""}Thank you – your download${files.length === 1 ? " is" : "s are"} ready.`;
+  const rows = files.map((f) => `<p style="margin:12px 0 0;font-size:14px;color:#111827"><strong>${esc(f.title)}</strong><br><span style="color:#6b7280;font-size:12px">Up to ${f.limit} downloads, until ${esc(new Date(f.until).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }))}</span></p>${button(absoluteUrl(f.url), "Download")}`).join("");
+  const page = absoluteUrl(`/order-confirmation/${encodeURIComponent(order.orderNumber)}`);
+  const inner = `<h1 style="margin:0;font-size:20px;color:#111827">${esc(subject)}</h1><p style="margin:8px 0 0;font-size:14px;color:#4b5563">${esc(intro)}</p>${rows}<p style="margin:16px 0 0;font-size:12px;color:#6b7280">These links work for 7 days. Your order page always has fresh ones: ${esc(page)}</p>`;
+  await sendEmail(order.email, subject, layout(subject, intro, inner), [intro, ...files.map((f) => `${f.title}: ${absoluteUrl(f.url)}`), `Order page: ${page}`].join("\n"));
+}
+
 /** Part of an order is on its way (the rest follows) – email and WhatsApp/SMS with the parcel's tracking. */
 export async function notifyShipment(order: Order, s: { items?: { title?: string; qty?: number }[]; courier?: string | null; trackingNumber?: string | null }) {
   const what = (s.items ?? []).map((i) => `${i.title ?? "Item"} × ${i.qty ?? 1}`).join(", ");
@@ -726,7 +737,8 @@ export type NotifyKind =
   | "store-invite"
   | "shipment"
   | "platform"
-  | "gift-card";
+  | "gift-card"
+  | "downloads";
 
 /** The order a notification is about, read fresh when it is delivered. */
 async function loadOrder(payload: Payload, orderId: unknown): Promise<Order | null> {
@@ -777,6 +789,15 @@ export async function buildMessages(payload: Payload | null, kind: NotifyKind, s
           const card = (await payload.findByID({ collection: "gift-cards" as never, id: Number(data.giftCardId), depth: 0, overrideAccess: true }).catch(() => null)) as { code?: string; balance?: number; expiresAt?: string | null; recipientName?: string | null; recipientEmail?: string | null; message?: string | null } | null;
           if (!card?.code || !card.recipientEmail) return;
           return notifyGiftCard({ code: card.code, balance: Number(card.balance) || 0, expiresAt: card.expiresAt, recipientName: card.recipientName, recipientEmail: card.recipientEmail, message: card.message });
+        }
+        case "downloads": {
+          if (!payload) return;
+          const doc = (await payload.findByID({ collection: "orders", id: Number(data.orderId), depth: 0, overrideAccess: true }).catch(() => null)) as Record<string, unknown> | null;
+          if (!doc) return;
+          const { orderDownloads } = await import("@/payload/downloads");
+          const { files } = await orderDownloads(payload, doc, { linkHours: 7 * 24 });
+          const c = (doc.customer ?? {}) as { email?: string; name?: string };
+          return notifyDownloads({ orderNumber: String(doc.orderNumber), email: c.email, name: c.name }, files.filter((f): f is typeof f & { url: string } => Boolean(f.url)));
         }
         case "platform":
           return notifyPlatform(payload, String(data.subject ?? ""), (data.lines as string[]) ?? [], data.link as { href: string; label: string } | undefined);

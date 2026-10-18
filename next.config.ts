@@ -7,8 +7,16 @@ const securityHeaders = [
   { key: "X-Frame-Options", value: "SAMEORIGIN" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
 ];
+
+/**
+ * HTTPS-only (HSTS). `includeSubDomains; preload` only on ShopEngine's own domain (PLATFORM_ROOT_DOMAIN and its store
+ * sub-domains): sent on a merchant's custom domain it would force HTTPS on ALL of their sub-domains for two years –
+ * their other services could break, and it can't be undone quickly. Custom domains get plain HSTS.
+ */
+const platformRoot = (process.env.PLATFORM_ROOT_DOMAIN ?? "").trim().toLowerCase().replace(/^\.+|\.+$/g, "");
+const platformHosts = platformRoot ? `(?:.+\\.)?${platformRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?::\\d+)?` : null;
+const hsts = (value: string) => [{ key: "Strict-Transport-Security", value }];
 
 /**
  * Content-Security-Policy for the shop (not /cms, which Payload manages). Limits where scripts, frames and data can
@@ -58,6 +66,12 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },
+      ...(platformHosts
+        ? [
+            { source: "/:path*", has: [{ type: "host" as const, value: platformHosts }], headers: hsts("max-age=63072000; includeSubDomains; preload") },
+            { source: "/:path*", missing: [{ type: "host" as const, value: platformHosts }], headers: hsts("max-age=63072000") },
+          ]
+        : [{ source: "/:path*", headers: hsts("max-age=63072000") }]),
       // the shop only (dev server needs eval for hot reload)
       // (not /api/integrations: a payment provider's auto-submitting page sets its own, stricter policy)
       ...(process.env.NODE_ENV === "production" ? [{ source: "/((?!cms|cms-api|_next|media/|api/integrations/).*)", headers: [{ key: "Content-Security-Policy", value: csp }] }] : []),

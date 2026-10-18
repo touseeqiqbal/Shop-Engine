@@ -92,15 +92,33 @@ async function chores(reason: string): Promise<Record<string, unknown>> {
   try {
     const now = new Date().toISOString();
     const since = new Date(Date.now() - 10 * 60e3).toISOString();
-    const changed = await payload.count({
+    const changed = await payload.find({
+      limit: 200,
+      depth: 0,
       collection: "flash-sales" as never,
       where: { and: [{ discountPercent: { greater_than: 0 } }, { or: [{ and: [{ startsAt: { greater_than: since } }, { startsAt: { less_than_equal: now } }] }, { and: [{ endsAt: { greater_than: since } }, { endsAt: { less_than_equal: now } }] }] }] } as never,
       overrideAccess: true,
     });
     if (changed.totalDocs) {
-      const { revalidate, CATALOG_TAG } = await import("@/payload/revalidate");
-      revalidate([CATALOG_TAG, "content"], ["/", "/deals"]);
+      // only the stores whose sale started or ended (not every store's catalogue)
+      const { revalidate, catalogTagOf } = await import("@/payload/revalidate");
+      const tags = [...new Set((changed.docs as unknown as { store?: unknown }[]).map((d) => catalogTagOf(d.store)))];
+      revalidate([...tags, "content"], ["/", "/deals"]);
       report.flashSalePrices = changed.totalDocs;
+    }
+    // a collection's Show from / Show until passed: its store's collections appear / go
+    const shown = await payload.find({
+      collection: "product-collections" as never,
+      where: { or: [{ and: [{ showFrom: { greater_than: since } }, { showFrom: { less_than_equal: now } }] }, { and: [{ showUntil: { greater_than: since } }, { showUntil: { less_than_equal: now } }] }] } as never,
+      limit: 50,
+      depth: 0,
+      overrideAccess: true,
+      select: { store: true } as never,
+    });
+    if (shown.docs.length) {
+      const { revalidate, catalogTagOf } = await import("@/payload/revalidate");
+      revalidate([...new Set((shown.docs as { store?: unknown }[]).map((d) => catalogTagOf(d.store)))]);
+      report.collectionsScheduled = shown.docs.length;
     }
   } catch (e) {
     log.error("housekeeping.flash_sales", e);
@@ -115,6 +133,14 @@ async function chores(reason: string): Promise<Record<string, unknown>> {
       log.error("housekeeping.card_reconcile", e, { provider: gateway.id });
     }
   }
+  // orders waiting for an online payment that no longer exists (they'd hold their stock for good)
+  try {
+    const { cancelOrphanedPaymentOrders } = await import("@/lib/payments");
+    const n = await cancelOrphanedPaymentOrders(payload);
+    if (n) report.orphanedPaymentOrdersCancelled = n;
+  } catch (e) {
+    log.error("housekeeping.orphan_payment_orders", e);
+  }
   // security events older than 180 days – once a day
   if (Date.now() - lastSecurityPrune > 24 * 3600e3) {
     lastSecurityPrune = Date.now();
@@ -122,6 +148,9 @@ async function chores(reason: string): Promise<Record<string, unknown>> {
       const { pruneSecurityEvents } = await import("@/lib/security-events");
       const removed = await pruneSecurityEvents(payload);
       if (removed) report.securityEventsRemoved = removed;
+      const { pruneShopStats } = await import("@/payload/shop-stats");
+      const stats = await pruneShopStats(payload);
+      if (stats) report.shopStatsRemoved = stats;
     } catch (e) {
       log.error("housekeeping.security_prune", e);
     }

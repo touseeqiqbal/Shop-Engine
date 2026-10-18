@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { cookies } from "next/headers";
-import { CalendarClock, MapPin, PackageSearch, Truck, Wallet } from "lucide-react";
-import { CopyButton, SuccessBadge } from "@/components/checkout/order-bits";
+import { cache } from "react";
+import { CalendarClock, CircleX, Clock, MapPin, PackageSearch, Truck, Wallet } from "lucide-react";
+import { CopyButton, PendingSubmit, SuccessBadge } from "@/components/checkout/order-bits";
 import { ConfirmCodeForm } from "@/components/checkout/confirm-code-form";
 import { CreateAccountCard } from "@/components/checkout/create-account-card";
 import { WhatsAppIcon } from "@/components/layout/whatsapp-icon";
@@ -24,18 +25,50 @@ import { primaryPhone } from "@/lib/site-info";
 import { moneyFormatter } from "@/lib/money";
 import { getStoreLocale } from "@/lib/store-locale";
 import { formatDate, formatDateTime } from "@/lib/time";
+import { OrderDownloadsCard } from "@/components/checkout/order-downloads";
 import { payNow } from "./pay-action";
-import { shipsLater } from "@/lib/utils";
+import { cn, shipsLater } from "@/lib/utils";
+import type { Order } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ orderNumber: string }>; searchParams: Promise<{ payment?: string }> };
 
-export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const [{ orderNumber }, locale] = await Promise.all([params, getStoreLocale()]);
+/** The order and whether this visitor may see it – once per request (the tab title needs it too). */
+const loadOrder = cache(async (orderNumber: string) => {
+  const [order, jar, user] = await Promise.all([
+    ORDER_NUMBER_RE.test(orderNumber) ? getOrderByNumber(orderNumber) : Promise.resolve(null),
+    cookies(),
+    getSessionUser().catch(() => null),
+  ]);
+  const allowed = !!order && (cookieMatchesOrder(jar.get(LAST_ORDER_COOKIE)?.value, order.orderNumber) || (!!user && !!order.userId && order.userId === user.id));
+  return { order, user, allowed };
+});
+
+/**
+ * What happened to the order: only a placed order gets the "thank you". A card / provider order can be waiting for its
+ * payment, or cancelled – and a payment can still arrive after cancelling (the store then refunds it).
+ */
+function outcome(order: Order, payment?: string) {
+  // paid on a provider's page: the platform card provider, or one the store connected (PayPal, JazzCash online …)
+  const online = order.paymentMethod === "card" || isPaymentIntegration(order.paymentMethod);
+  if (order.status === "cancelled") {
+    const refunded = order.paymentStatus === "refunded";
+    const charged = !refunded && (order.paymentStatus === "paid" || order.paymentStatus === "partial" || order.paymentStatus === "partially-refunded");
+    return { kind: "cancelled" as const, online, charged, refunded, title: online && !charged && !refunded ? "Payment not completed" : "Order cancelled" };
+  }
+  if (online && order.status === "awaiting-payment") return { kind: "unpaid" as const, online, title: payment === "done" ? "Confirming your payment" : "Payment not completed yet" };
+  return { kind: "placed" as const, online, title: "Order confirmed" };
+}
+
+export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
+  const [{ orderNumber }, { payment }, locale] = await Promise.all([params, searchParams, getStoreLocale()]);
+  const { order, allowed } = await loadOrder(decodeURIComponent(orderNumber).trim().toUpperCase());
+  // only the device / account that placed the order learns how it went
+  const title = order && allowed ? outcome(order, payment).title : "Your order";
   return pageMetadata({
-    title: "Order confirmed",
-    description: "Thank you for your order.",
+    title,
+    description: title === "Order confirmed" ? "Thank you for your order." : "Your order details.",
     path: `/order-confirmation/${encodeURIComponent(orderNumber)}`,
     noindex: true,
     locale,
@@ -45,12 +78,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function OrderConfirmationPage({ params, searchParams }: Props) {
   const [{ orderNumber: raw }, { payment }] = await Promise.all([params, searchParams]);
   const orderNumber = decodeURIComponent(raw).trim().toUpperCase();
-  const [order, jar, user] = await Promise.all([
-    ORDER_NUMBER_RE.test(orderNumber) ? getOrderByNumber(orderNumber) : Promise.resolve(null),
-    cookies(),
-    getSessionUser().catch(() => null),
-  ]);
-  const allowed = !!order && (cookieMatchesOrder(jar.get(LAST_ORDER_COOKIE)?.value, order.orderNumber) || (!!user && !!order.userId && order.userId === user.id));
+  const { order, user, allowed } = await loadOrder(orderNumber);
 
   if (!order || !allowed) {
     return (
@@ -78,15 +106,21 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
   // the store's own steps for its own methods ("use your order number as the reference")
   const instructions = findCheckoutMethod(order.paymentMethod, settings)?.instructions;
   const awaitingCode = order.status === "awaiting-confirmation" && Boolean(order.confirmation);
-  // paid on a provider's page: the platform card provider, or one the store connected (PayPal, JazzCash online …)
-  const online = order.paymentMethod === "card" || isPaymentIntegration(order.paymentMethod);
+  // placed (the "thank you"), still waiting for its online payment, or cancelled
+  const result = outcome(order, payment);
   const providerName = order.paymentMethod === "card" ? null : (integrationInfo(order.paymentMethod)?.payment?.label ?? integrationInfo(order.paymentMethod)?.name ?? null);
   const what = providerName ? `${providerName} payment` : "card payment";
   // what a gift card paid, and what is left to pay (by card, transfer or on delivery)
   const giftPaid = order.giftCardAmount ?? 0;
   const tax = taxLines(order);
+  // digital products: their download buttons (once the order is paid)
+  const downloads = await import("@/lib/cms/downloads")
+    .then((m) => m.downloadsForOrder(order.orderNumber, order.storeId ?? null))
+    .catch(() => null);
   const due = Math.max(0, order.total - giftPaid);
-  const waText = awaitingCode
+  // only a placed order is "confirmed" on WhatsApp; otherwise the chat is for questions
+  const askOnly = awaitingCode || result.kind !== "placed";
+  const waText = askOnly
     ? `Hi, I have a question about my order ${order.orderNumber} (${money(order.total)}).`
     : `Hi, I just placed order ${order.orderNumber}, total ${money(order.total)}, please confirm.`;
 
@@ -95,11 +129,29 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
       <section className="relative mx-auto max-w-3xl overflow-hidden rounded-[1.75rem] border border-border bg-bg-elevated px-5 py-10 text-center sm:px-10">
         <div className="pointer-events-none absolute -top-24 left-1/2 size-80 -translate-x-1/2 rounded-full bg-violet-500/20 blur-3xl" aria-hidden="true" />
         <div className="relative">
-          <SuccessBadge />
-          <h1 className="mt-6 font-display text-3xl font-bold sm:text-4xl">
-            Thank you, <span className="gradient-text">{order.customer.name.split(" ")[0]}</span>!
-          </h1>
-          {online && order.status === "awaiting-payment" ? (
+          {result.kind === "placed" ? (
+            <>
+              <SuccessBadge />
+              <h1 className="mt-6 font-display text-3xl font-bold sm:text-4xl">
+                Thank you, <span className="gradient-text">{order.customer.name.split(" ")[0]}</span>!
+              </h1>
+            </>
+          ) : (
+            <>
+              {/* no celebration for an order that isn't going ahead (yet) */}
+              <span
+                className={cn(
+                  "mx-auto grid size-24 place-items-center rounded-full border",
+                  result.kind === "cancelled" ? "border-border-strong bg-surface-strong text-muted" : "border-amber-500/40 bg-amber-500/10 text-amber-300 light:text-amber-700"
+                )}
+                aria-hidden="true"
+              >
+                {result.kind === "cancelled" ? <CircleX className="size-11" /> : <Clock className="size-11" />}
+              </span>
+              <h1 className="mt-6 font-display text-3xl font-bold sm:text-4xl">{result.title}</h1>
+            </>
+          )}
+          {result.kind === "unpaid" ? (
             // the order is only paid when the payment provider confirms it (never from this page's address)
             <div className="mx-auto mt-3 max-w-md space-y-3 text-muted">
               {payment === "done" ? (
@@ -111,13 +163,25 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
                 </p>
               )}
               <form action={payNow.bind(null, order.orderNumber)}>
-                <button className="btn btn-primary btn-lg">
+                <PendingSubmit className="btn btn-primary btn-lg" pendingLabel="Opening payment page…">
                   Pay {money(due)} {providerName ? `with ${integrationInfo(order.paymentMethod)?.name}` : "by card"}
-                </button>
+                </PendingSubmit>
               </form>
             </div>
-          ) : online && order.status === "cancelled" && order.paymentStatus !== "paid" ? (
-            <p className="mx-auto mt-2 max-w-md text-muted">The {what} wasn&apos;t completed, so this order was cancelled and nothing was charged. You can place it again from your cart.</p>
+          ) : result.kind === "cancelled" ? (
+            <p className="mx-auto mt-2 max-w-md text-muted">
+              {result.charged ? (
+                <>
+                  This order was cancelled after your payment reached us. {site.name} will contact you on <strong className="text-fg">{order.customer.phone}</strong> about the refund.
+                </>
+              ) : result.refunded ? (
+                <>This order was cancelled and your payment has been refunded.</>
+              ) : result.online ? (
+                <>The {what} wasn&apos;t completed, so this order was cancelled and nothing was charged. You can place it again from your cart.</>
+              ) : (
+                <>This order was cancelled. If you weren&apos;t expecting that, WhatsApp us and we&apos;ll help.</>
+              )}
+            </p>
           ) : order.status === "awaiting-confirmation" && order.confirmation ? (
             <ConfirmCodeForm
               orderNumber={order.orderNumber}
@@ -142,7 +206,7 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
           </div>
           <div className="mt-6 flex flex-col justify-center gap-2.5 sm:flex-row">
             <a href={waLink(primaryPhone(site).wa, waText)} target="_blank" rel="noopener noreferrer" className="btn btn-whatsapp btn-lg">
-              <WhatsAppIcon className="size-5" /> {awaitingCode ? "Questions? WhatsApp us" : "Confirm on WhatsApp"}
+              <WhatsAppIcon className="size-5" /> {askOnly ? "Questions? WhatsApp us" : "Confirm on WhatsApp"}
             </a>
             <Link href={`/track-order?order=${encodeURIComponent(order.orderNumber)}`} className="btn btn-secondary btn-lg">
               <Truck className="size-4" aria-hidden="true" /> Track order
@@ -208,6 +272,7 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
         </section>
 
         <div className="space-y-5">
+          {downloads && <OrderDownloadsCard downloads={downloads} formatDate={(iso) => formatDate(iso, loc, { dateStyle: "medium" })} />}
           <section className="card space-y-3 p-5" aria-labelledby="oc-delivery">
             <h2 id="oc-delivery" className="flex items-center gap-2 font-display font-bold">
               <MapPin className="size-4 text-violet-300" aria-hidden="true" /> Delivery
@@ -233,9 +298,11 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
                 {[order.billing.address, cityLine(order.billing, loc.country)].filter(Boolean).join(", ")}
               </p>
             )}
-            <p className="flex items-center gap-2 rounded-xl bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">
-              <CalendarClock className="size-4 shrink-0" aria-hidden="true" /> Estimated: {eta.label}
-            </p>
+            {result.kind !== "cancelled" && (
+              <p className="flex items-center gap-2 rounded-xl bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300 light:text-emerald-700">
+                <CalendarClock className="size-4 shrink-0" aria-hidden="true" /> Estimated: {eta.label}
+              </p>
+            )}
           </section>
 
           <section className="card space-y-3 p-5" aria-labelledby="oc-payment">
@@ -245,7 +312,8 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
             <p className="text-sm">
               {paymentLabel(order.paymentMethod, order.paymentMethodLabel)} · <span className="text-muted">{PAYMENT_STATUS_LABEL[order.paymentStatus]}</span>
             </p>
-            {paidOnDelivery(order) ? (
+            {/* a cancelled order has nothing left to pay */}
+            {result.kind === "cancelled" ? null : paidOnDelivery(order) ? (
               <p className="text-sm text-muted">
                 Please keep <strong className="text-fg">{money(Math.max(0, due - (order.advancePaid ?? 0)))}</strong> ready {order.paymentMethod === "cod" ? "in cash when the rider arrives" : "when your order arrives"}
                 {order.advancePaid && order.paymentStatus !== "partial" ? " (once we've confirmed your advance)" : ""}.
@@ -284,7 +352,7 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pr
 
 function Row({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
-    <div className={`flex justify-between ${accent ? "text-emerald-400" : ""}`}>
+    <div className={`flex justify-between ${accent ? "text-emerald-400 light:text-emerald-700" : ""}`}>
       <dt className={accent ? "" : "text-muted"}>{label}</dt>
       <dd className="tabular-nums">{value}</dd>
     </div>

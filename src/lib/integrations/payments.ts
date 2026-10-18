@@ -259,11 +259,16 @@ export async function refundPayment(payload: Payload, req: PayloadRequest, provi
   if (!impl?.refund || !c) throw new Error(`Refund this payment in your ${info?.name ?? provider} account, then record it in Orders → Returns.`);
   const order = (await payload.findByID({ collection: "orders", id: input.orderId, depth: 0, overrideAccess: true, req })) as unknown as Doc;
   const already = Number(charge.refundedAmount) || 0;
-  const left = Number(charge.amount) - already;
-  const amount = Math.round(input.amount * 100) / 100;
-  if (!(amount > 0) || amount > left + 1e-9) throw new Error(`You can refund at most ${left} on this order.`);
   const currency = str(charge.currency).toUpperCase();
-  const refundRef = `R${input.orderId}x${Date.now().toString(36)}`.slice(0, 20);
+  // what the payment has left AND what the order has left after refunds of any kind (returns paid in cash …)
+  const { refundableOnOrder } = await import("../../payload/refunds");
+  const left = Math.min(Number(charge.amount) - already, await refundableOnOrder(payload, order as { id: number; total?: unknown }, req));
+  const { fromMinorUnits, toMinorUnits } = await import("./http");
+  const amount = fromMinorUnits(toMinorUnits(input.amount, currency), currency);
+  if (!(amount > 0) || amount > left + 1e-9) throw new Error(`You can refund at most ${Math.max(0, left)} on this order.`);
+  // the same on a retry (the refunds already recorded don't change): a refund that timed out but was processed isn't
+  // made a second time by the provider
+  const refundRef = `R${input.orderId}a${toMinorUnits(already, currency)}`.slice(0, 20);
   const r = await impl.refund({ payload, connection: c }, { ref: str(charge.providerRef), paymentId: str(charge.paymentIntent) || null, amount, currency, total: Number(charge.amount), reason: input.reason, refundRef });
   if (r.status === "failed") throw new Error(`${info?.name ?? provider} refused the refund.`);
   const refunded = already + amount;
@@ -286,10 +291,13 @@ const VOUCHER_DAYS = 3;
  */
 export async function reconcilePayments(payload: Payload, provider: string, limit = 20): Promise<{ paid: number; cancelled: number }> {
   const out = { paid: 0, cancelled: 0 };
-  const due = (await payload.find({ collection: "payment-transactions", where: { and: [{ provider: { equals: provider } }, { kind: { equals: "charge" } }, { status: { equals: "pending" } }, { expiresAt: { less_than: new Date(Date.now() - 2 * 60_000).toISOString() } }] }, sort: "expiresAt", limit, depth: 0, overrideAccess: true })).docs as unknown as Doc[];
+  const due = (await payload.find({ collection: "payment-transactions", where: { and: [{ provider: { equals: provider } }, { kind: { equals: "charge" } }, { status: { equals: "pending" } }, { expiresAt: { less_than: new Date(Date.now() - 2 * 60_000).toISOString() } }] }, sort: "updatedAt", limit, depth: 0, overrideAccess: true })).docs as unknown as Doc[];
   if (!due.length) return out;
   const impl = await paymentImpl(provider);
   const { failCheckout } = await import("../payments");
+  // asked: to the back of the line (updatedAt) – vouchers waiting for days and rows whose provider keeps failing used
+  // to take the same 20 places at every run, so later payments were never settled
+  const later = (charge: Doc) => payload.update({ collection: "payment-transactions", id: Number(charge.id), data: {} as never, overrideAccess: true }).catch(() => undefined);
   for (const charge of due) {
     const ref = str(charge.providerRef);
     try {
@@ -308,9 +316,12 @@ export async function reconcilePayments(payload: Payload, provider: string, limi
       }
       const expired = Date.parse(str(charge.expiresAt)) || 0;
       const limitMs = st.detail === "voucher" ? VOUCHER_DAYS * 86_400_000 : GIVE_UP_AFTER;
-      if (Date.now() - expired > limitMs && (await failCheckout(payload, ref, "not paid in time", { provider, via: viaOf(provider) })) === "cancelled") out.cancelled++;
+      if (Date.now() - expired > limitMs) {
+        if ((await failCheckout(payload, ref, "not paid in time", { provider, via: viaOf(provider) })) === "cancelled") out.cancelled++;
+      } else await later(charge);
     } catch (e) {
       log.error("payments.reconcile_failed", e, { provider, payment: charge.id });
+      await later(charge);
     }
   }
   return out;

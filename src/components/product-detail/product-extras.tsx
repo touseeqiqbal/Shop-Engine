@@ -1,5 +1,5 @@
 "use client";
-import { useActionState, useState } from "react";
+import { startTransition, useActionState, useState } from "react";
 import { BellRing, MessageCircleQuestion, TrendingDown } from "lucide-react";
 import { askQuestion, subscribeAlert, type SimpleState } from "@/app/(frontend)/(store)/[category]/[product]/engagement-actions";
 import { Turnstile } from "@/components/ui/turnstile";
@@ -10,12 +10,19 @@ import { honeypotProps } from "@/lib/honeypot";
 
 /** Product page extras: back-in-stock / price-drop alert, installments block, questions & answers. */
 
+/** onSubmit: send in a transition so React doesn't empty what was typed on an error (`action` stays for no-JavaScript). */
+const keepTyped = (action: (fd: FormData) => void) => (e: React.FormEvent<HTMLFormElement>) => {
+  e.preventDefault();
+  const fd = new FormData(e.currentTarget);
+  startTransition(() => action(fd));
+};
+
 export function StockPriceAlert({ productId, inStock }: { productId: string; inStock: boolean }) {
   const kind = inStock ? "price" : "stock";
   const [open, setOpen] = useState(!inStock);
   const [state, action, pending] = useActionState<SimpleState, FormData>(subscribeAlert.bind(null, productId, kind), {});
   const { country } = useStoreLocale();
-  if (state.ok) return <p className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{state.message}</p>;
+  if (state.ok) return <p className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300 light:text-emerald-700">{state.message}</p>;
   if (!open)
     return (
       <button type="button" onClick={() => setOpen(true)} className="mt-3 inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg">
@@ -23,7 +30,7 @@ export function StockPriceAlert({ productId, inStock }: { productId: string; inS
       </button>
     );
   return (
-    <form action={action} className="mt-4 rounded-2xl border border-border bg-surface p-4">
+    <form action={action} onSubmit={keepTyped(action)} className="mt-4 rounded-2xl border border-border bg-surface p-4">
       <p className="flex items-center gap-2 text-sm font-semibold">
         <BellRing className="size-4 text-violet-300" aria-hidden="true" />
         {inStock ? "Tell me if the price drops" : "Out of stock – tell me when it's back"}
@@ -38,7 +45,7 @@ export function StockPriceAlert({ productId, inStock }: { productId: string; inS
           {pending ? "…" : "Notify me"}
         </button>
       </div>
-      {state.message && <p className="mt-2 text-sm text-rose-300">{state.message}</p>}
+      {state.message && <p className="mt-2 text-sm text-rose-300 light:text-rose-700">{state.message}</p>}
     </form>
   );
 }
@@ -104,13 +111,13 @@ export function ProductQuestions({ productId, questions }: { productId: string; 
         <p className="text-sm text-muted">No questions yet – ask the first one.</p>
       )}
       {state.ok ? (
-        <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{state.message}</p>
+        <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300 light:text-emerald-700">{state.message}</p>
       ) : !open ? (
         <button type="button" className="btn btn-secondary" onClick={() => setOpen(true)}>
           <MessageCircleQuestion className="size-4" aria-hidden="true" /> Ask a question
         </button>
       ) : (
-        <form action={action} className="card space-y-3 p-4">
+        <form action={action} onSubmit={keepTyped(action)} className="card space-y-3 p-4">
           <input className="hidden" {...honeypotProps} />
           <label className="block text-sm font-medium">
             Your question
@@ -127,7 +134,7 @@ export function ProductQuestions({ productId, questions }: { productId: string; 
             </label>
           </div>
           <Turnstile action="question" />
-          {state.message && <p className="text-sm text-rose-300">{state.message}</p>}
+          {state.message && <p className="text-sm text-rose-300 light:text-rose-700">{state.message}</p>}
           <button className="btn btn-primary" disabled={pending}>
             {pending ? "Sending…" : "Send question"}
           </button>

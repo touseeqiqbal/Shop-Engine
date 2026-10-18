@@ -93,7 +93,7 @@ const toBrand = (b: Doc): Brand => ({ slug: str(b.slug), name: str(b.name), logo
 
 const toModel = (m: Doc): LaptopModel => ({ id: str(m.legacyId) || str(m.slug) || String(m.id), brand: str(obj(m.brand)?.slug), series: str(m.series), name: str(m.name) });
 
-async function toProduct(payload: Payload, p: Doc): Promise<Product> {
+async function toProduct(payload: Payload, p: Doc, opts: { description?: boolean } = {}): Promise<Product> {
   const price = num(p.price);
   const compareAt = num(p.compareAtPrice);
   const onSale = compareAt > price && price > 0;
@@ -108,11 +108,13 @@ async function toProduct(payload: Payload, p: Doc): Promise<Product> {
     categoryId: relId(p.category),
     sku: str(p.sku),
     shortDescription: str(p.shortDescription),
-    description: await toMarkdown(payload, p.description),
+    // the catalogue snapshot drops descriptions (cached per product instead) – don't convert them there
+    description: opts.description === false ? "" : await toMarkdown(payload, p.description),
     price: onSale ? compareAt : price,
     salePrice: onSale ? price : null,
     stock: num(p.stock),
     ...(p.taxClass === "reduced" || p.taxClass === "exempt" ? { taxClass: p.taxClass } : {}),
+    ...(obj(p.digital)?.noShipping === true && Array.isArray(obj(p.digital)?.files) && (obj(p.digital)!.files as unknown[]).length ? { shipsNothing: true } : {}),
     ...(p.backorders === "backorder" || p.backorders === "preorder" ? { backorders: p.backorders, releaseDate: opt(str(p.releaseDate)) ?? null, backorderNote: opt(str(p.backorderNote)) ?? null } : {}),
     weightKg: num(p.weight) > 0 ? num(p.weight) : undefined,
     condition: opt(str(p.condition)) as Condition | undefined,
@@ -163,13 +165,14 @@ export async function loadCatalogFromPayload(storeId: number | null): Promise<{ 
   const [cats, brands, products, models] = await Promise.all([
     findAll(payload, "categories", { depth: 1, ...where }),
     findAll(payload, "brands", { depth: 1, ...where }),
-    findAll(payload, "products", { depth: 1, ...where }),
+    // related products (variant of, bought together) only as ids – not every related product's full document
+    findAll(payload, "products", { depth: 1, populate: { products: { legacyId: true, slug: true } }, ...where }),
     findAll(payload, "laptop-models", { depth: 1, ...where }),
   ]);
   return {
     categories: cats.map(toCategory),
     brands: brands.map(toBrand),
-    products: await Promise.all(products.map((p) => toProduct(payload, p))),
+    products: await Promise.all(products.map((p) => toProduct(payload, p, { description: false }))),
     models: models.map(toModel),
   };
 }
@@ -218,7 +221,8 @@ export async function loadApprovedReviewsFromPayload(storeId: number | null, pro
 
 /** Payload document of a product by storefront id (legacy id or Payload id) – in this store only. */
 export async function findProductDoc(payload: Payload, id: string, storeId: number | null): Promise<Doc | null> {
-  const byId = /^\d+$/.test(id) ? { or: [{ id: { equals: Number(id) } }, { legacyId: { equals: id } }] } : { legacyId: { equals: id } };
+  // a number is the Payload id itself; old-system ids are cuid text (see byStorefrontId in sales.ts)
+  const byId = /^\d+$/.test(id) ? { id: { equals: Number(id) } } : { legacyId: { equals: id } };
   const res = await payload.find({ collection: "products" as never, where: { and: [byId, inStore(storeId)] } as never, limit: 1, depth: 0, overrideAccess: true });
   return (res.docs[0] as Doc | undefined) ?? null;
 }

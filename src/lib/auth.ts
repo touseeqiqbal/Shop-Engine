@@ -1,6 +1,7 @@
 import "server-only";
 import bcrypt from "bcryptjs";
 import { AuthError } from "next-auth";
+import { sessionStillValid } from "@/lib/session-validity";
 import { auth, signIn, signOut } from "@/auth";
 import { isCmsConfigured, isDatabaseConfigured } from "@/lib/db/config";
 import {
@@ -52,8 +53,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     const u = await getUserCms(id);
     if (!u || u.blocked) return null;
     // signed in before the last password reset → signed out (a stolen session ends when the password is reset)
-    const issuedAt = (session?.user as { issuedAt?: number } | undefined)?.issuedAt;
-    if (u.sessionsValidAfter && issuedAt && issuedAt * 1000 + 999 < Date.parse(u.sessionsValidAfter)) return null;
+    if (!sessionStillValid((session?.user as { issuedAt?: number } | undefined)?.issuedAt, u.sessionsValidAfter)) return null;
     return { id: u.id, email: u.email, name: u.name, role: fromCmsRole(u.role) };
   }
   const user = await prisma.user.findUnique({ where: { id }, select: { id: true, email: true, name: true, role: true } });
@@ -151,7 +151,7 @@ export async function requestPasswordReset(email: string) {
   if (isCmsConfigured) await requestPasswordResetCms(email);
 }
 
-export async function resetPassword(token: string, password: string): Promise<{ ok: true; email: string } | { ok: false; error: string }> {
+export async function resetPassword(token: string, password: string): Promise<{ ok: true; email: string; staff?: boolean } | { ok: false; error: string }> {
   if (!isCmsConfigured) return { ok: false, error: "Password reset needs the store database." };
   return resetPasswordCms(token, password);
 }

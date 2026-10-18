@@ -27,9 +27,12 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const num = (v: unknown, d = 0) => (typeof v === "number" && Number.isFinite(v) ? v : d);
 const opt = <T,>(v: T | null | undefined | "") => (v === null || v === undefined || v === "" ? undefined : v);
 
-/** Where-clause for a document addressed by storefront id (legacy id or numeric Payload id). */
-export const byStorefrontId = (id: string): Where =>
-  /^\d+$/.test(id) ? { or: [{ id: { equals: Number(id) } }, { legacyId: { equals: id } }] } : { legacyId: { equals: id } };
+/**
+ * Where-clause for a document addressed by storefront id: a number is the Payload id ITSELF, anything else an id from
+ * the old system (cuid text). Never "id OR legacyId" – a legacyId that looks like a number could then stand in for
+ * another record (another customer's account).
+ */
+export const byStorefrontId = (id: string): Where => (/^\d+$/.test(id) ? { id: { equals: Number(id) } } : { legacyId: { equals: id } });
 
 async function findOne(payload: Payload, collection: string, where: Where, depth = 0): Promise<Doc | null> {
   const res = await payload.find({ collection: collection as never, where, limit: 1, depth, overrideAccess: true, showHiddenFields: true });
@@ -163,7 +166,20 @@ export type PlaceOrderResult =
   | { ok: false; reason: "sold-out"; short: string[] }
   | { ok: false; reason: "coupon" }
   | { ok: false; reason: "payment-reference" }
-  | { ok: false; reason: "gift-card" };
+  | { ok: false; reason: "gift-card" }
+  /** this checkout attempt was used for a different (or cancelled) order – submit again as a new attempt */
+  | { ok: false; reason: "attempt-reused" };
+
+/**
+ * A repeated submit is the SAME order only while that order is still alive and has the same total and quantity: a
+ * cancelled one (its card page couldn't be opened) or a changed cart is a new order – never "already placed" (the
+ * shopper would land on a cancelled order with an emptied cart).
+ */
+export function isSameAttempt(earlier: { status?: unknown; total?: unknown; items?: unknown }, order: { total: number; items: { qty: number }[] }): boolean {
+  if (earlier.status === "cancelled") return false;
+  const qty = (list: unknown) => (Array.isArray(list) ? list.reduce((n, i) => n + (Number((i as { qty?: unknown })?.qty) || 0), 0) : 0);
+  return Math.abs((Number(earlier.total) || 0) - order.total) < 0.005 && qty(earlier.items) === qty(order.items);
+}
 
 const isUniqueViolation = (e: unknown) => /unique|duplicate key|already exists/i.test(String((e as { message?: string })?.message ?? e));
 
@@ -178,7 +194,7 @@ export async function placeOrderCms(order: Order, lines: { id: string; qty: numb
   const storeId = order.storeId ?? null;
   const previous = async () => (opts.attemptId ? await findOne(payload, "orders", { and: [{ attemptId: { equals: opts.attemptId } }, inStore(storeId)] }) : null);
   const earlier = await previous();
-  if (earlier) return { ok: true, order: toOrder(earlier), duplicate: true };
+  if (earlier) return isSameAttempt(earlier, order) ? { ok: true, order: toOrder(earlier), duplicate: true } : { ok: false, reason: "attempt-reused" };
   // one payment receipt (transfer / wallet transaction id) pays for one order only
   if (order.paymentReference && (await findOne(payload, "orders", { and: [{ paymentReference: { equals: order.paymentReference } }, inStore(storeId)] })))
     return { ok: false, reason: "payment-reference" };
@@ -189,6 +205,10 @@ export async function placeOrderCms(order: Order, lines: { id: string; qty: numb
     if (!doc) return { ok: false, reason: "sold-out", short: [l.title] };
     resolved.push({ productId: Number(doc.id), qty: l.qty, title: l.title });
   }
+
+  // read everything the order needs BEFORE the transaction: a lookup inside it without `req` takes a second pool
+  // connection while the first is held – a burst of checkouts then waits on each other (pool exhausted)
+  const base = await orderData(payload, order, storeId);
 
   const { takeStockForLines, consumeCoupon, setStockLog } = await import("@/payload/stock");
   const req = await createLocalReq({}, payload);
@@ -214,7 +234,6 @@ export async function placeOrderCms(order: Order, lines: { id: string; qty: numb
       await killTransaction(req);
       return { ok: false, reason: "sold-out", short };
     }
-    const base = await orderData(payload, order, storeId);
     if (owed.size && Array.isArray(base.items)) {
       const left = new Map(owed);
       base.items = (base.items as Doc[]).map((i) => {
@@ -243,7 +262,7 @@ export async function placeOrderCms(order: Order, lines: { id: string; qty: numb
     // The same attempt saved meanwhile (double click): the database refused the 2nd copy – return the 1st.
     // (Payload reports this as a validation error, so look it up whatever the message says.)
     const dup = await previous().catch(() => null);
-    if (dup) return { ok: true, order: toOrder(dup), duplicate: true };
+    if (dup) return isSameAttempt(dup, order) ? { ok: true, order: toOrder(dup), duplicate: true } : { ok: false, reason: "attempt-reused" };
     if (isUniqueViolation(e)) log.warn("checkout.unique_violation", { order: order.orderNumber, error: msg.slice(0, 200) });
     throw e;
   }
@@ -461,7 +480,7 @@ export async function requestPasswordResetCms(email: string): Promise<void> {
  * Sets a new password from the emailed token. The link proves the customer owns the mailbox, so the email
  * also counts as confirmed. Staff (who reset in /cms) still need 10+ characters here.
  */
-export async function resetPasswordCms(token: string, password: string): Promise<{ ok: true; email: string } | { ok: false; error: string }> {
+export async function resetPasswordCms(token: string, password: string): Promise<{ ok: true; email: string; staff: boolean } | { ok: false; error: string }> {
   const payload = await payloadClient();
   const found = await payload.find({
     collection: "users" as never,
@@ -475,8 +494,12 @@ export async function resetPasswordCms(token: string, password: string): Promise
   if (!user) return { ok: false, error: "This reset link has expired or was already used. Please ask for a new one." };
   if (str(user.role) !== "customer" && password.length < 10) return { ok: false, error: "Staff passwords need at least 10 characters." };
   try {
-    await payload.resetPassword({ collection: "users" as never, data: { token, password }, overrideAccess: true });
-  } catch {
+    // Payload's reset also signs the person in and runs the sign-in hooks: as a storefront operation the /cms 2-step
+    // check lets it through (it used to refuse every reset), and the /cms token it makes is thrown away here – a reset
+    // link never opens /cms; the team signs in there with the new password and their 2-step code
+    await payload.resetPassword({ collection: "users" as never, data: { token, password }, overrideAccess: true, context: { storefront: true, passwordReset: true } });
+  } catch (e) {
+    log.warn("account.reset_failed", { error: e instanceof Error ? e.message : String(e) });
     return { ok: false, error: "This reset link has expired or was already used. Please ask for a new one." };
   }
   // the reset link proves the mailbox is theirs (email confirmed, a guest record becomes a real account);
@@ -484,7 +507,7 @@ export async function resetPasswordCms(token: string, password: string): Promise
   await payload
     .update({ collection: "users" as never, id: user.id as Id, data: { emailVerified: true, hasAccount: true, sessionsValidAfter: new Date().toISOString() } as never, overrideAccess: true, depth: 0 })
     .catch((e) => log.error("account.reset_followup_failed", e));
-  return { ok: true, email: str(user.email) };
+  return { ok: true, email: str(user.email), staff: str(user.role) !== "customer" };
 }
 
 /** Sends the "confirm your email" link. Returns false when there's nothing to send (already confirmed / no email set up). */

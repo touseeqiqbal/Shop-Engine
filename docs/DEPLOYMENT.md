@@ -52,16 +52,17 @@ If `DATABASE_URL`, `PAYLOAD_SECRET`, `AUTH_SECRET` or the `S3_*` bucket variable
 | `SMS_WEBHOOK_URL` | SMS gateway for order messages. |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Cloudflare "are you human" check on checkout and forms. Set **both**, then **redeploy** (the site key is built into the pages). With only one of them the check is skipped and `/api/health` shows a warning. |
 | `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `NEXT_PUBLIC_SENTRY_ENVIRONMENT` | Error alerts (Sentry): `SENTRY_DSN` for the server, `NEXT_PUBLIC_SENTRY_DSN` for visitors' browsers (redeploy after setting it). |
-| `SENTRY_TRACES_SAMPLE_RATE`, `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` | Share of requests Sentry traces for speed (0–1, default 0.1). |
+| `SENTRY_TRACES_SAMPLE_RATE`, `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` | Share of requests Sentry traces for speed (0–1, default 0 = off). The `NEXT_PUBLIC_` one is built in: change it, then redeploy. |
 | `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` | Readable stack traces in Sentry: with all three set, the build uploads source maps (and removes them from the site). |
 | `PLATFORM_ALERT_EMAILS` | Who at ShopEngine hears about failed plan payments and stores closed by their owner (comma-separated). Not set → every platform admin account. |
 | `SHOPPER_SESSION_DAYS` | How long shoppers stay signed in on a storefront (1–90 days, default 14). |
-| `CLIENT_IP_HEADER` | Only if Cloudflare's orange cloud (proxy) is on: set to `cf-connecting-ip`, so limits like "5 orders per 10 minutes" count real visitors, not Cloudflare. Leave unset otherwise. |
+| `CLIENT_IP_HEADER` | Only if Cloudflare's orange cloud (proxy) is on **and the site can't be reached any other way**: set to `cf-connecting-ip`, so limits like "5 orders per 10 minutes" count real visitors, not Cloudflare. Remove (or lock down) the public `*.up.railway.app` address first, and note that merchants' own domains pointed straight at Railway are not behind Cloudflare – anyone reaching the site directly can send a made-up `cf-connecting-ip` and get past the sign-in, checkout and 2-step limits. Leave unset otherwise. |
 | `NEXT_PUBLIC_GA_ID`, `NEXT_PUBLIC_META_PIXEL_ID`, `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION` … | Fallbacks only – normally set these in **Settings → Google & SEO** instead. |
 | `CRON_SECRET` | Lets an outside scheduler run the background jobs. Not needed – the site runs them itself. |
-| `HOUSEKEEPING`, `HOUSEKEEPING_MINUTES` | Background jobs (auto-cancel unconfirmed orders, reminders). Leave unset. With several copies of the site only one runs them at a time (database lock); `HOUSEKEEPING=off` turns them off on a copy completely. |
+| `HOUSEKEEPING`, `HOUSEKEEPING_MINUTES` | Background jobs (auto-cancel unconfirmed orders, reminders). Leave unset. `HOUSEKEEPING=off` turns them off on a copy completely. |
 | `TWO_FACTOR_REQUIRED` | Leave unset. `false` turns off forced 2-step verification – emergencies only. |
-| `PAYLOAD_CSRF_ORIGINS`, `DB_POOL_MAX`, `SKIP_MIGRATIONS` | Advanced – leave unset. |
+| `PAYLOAD_CSRF_ORIGINS`, `DB_POOL_MAX` | Advanced – leave unset. |
+| `SKIP_MIGRATIONS` | `true` = the server does **not** apply pending database changes when it starts (run `npx payload migrate` yourself first). Leave unset. |
 | `MIGRATE_DURING_BUILD` | `true` applies database changes during the build (the old way). Default: when the server starts (see §4). |
 
 ### Multi-store (ShopEngine)
@@ -136,6 +137,17 @@ too (Railway passes service variables to builds), or canonical links will point 
 > Tip: deploy in quiet hours (early morning). Avoid deploying during a sale.
 
 ---
+
+### Run exactly ONE copy of the web service (for now)
+
+Some things are still kept inside each running copy:
+- the page/catalogue cache: a price change saved on one copy reaches the other copies only after up to 5 minutes, so they could charge old prices meanwhile;
+- the request limits (sign-in, checkout, 2-step codes): they would multiply by the number of copies;
+- and the timers of the hourly and daily jobs.
+
+Database changes also run when a copy starts, with no lock between copies. So keep **Replicas = 1** on the web service until these move to shared storage (audit report 13, OPS-5). One copy with more CPU and memory is fine.
+
+**Build-time variables:** `NEXT_PUBLIC_*`, `STAGING` and `PLATFORM_ROOT_DOMAIN` are built into the site. `PLATFORM_ROOT_DOMAIN` also decides which hosts get the strict HTTPS header (`includeSubDomains; preload`); merchants' own domains get plain HSTS. Changing any of them needs a redeploy.
 
 ## 4. Database changes ("migrations")
 

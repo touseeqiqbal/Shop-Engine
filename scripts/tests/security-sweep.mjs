@@ -29,6 +29,30 @@ const COLLECTIONS = {
   imports: "none",
   exports: "none",
   "payload-jobs": "none",
+  // the platform, teams, money and messages
+  stores: "none",
+  "store-memberships": "none",
+  "store-subscriptions": "none",
+  "store-invoices": "none",
+  "payment-transactions": "none",
+  "payment-events": "none",
+  "outbox-events": "none",
+  "webhook-endpoints": "none",
+  "customer-carts": "none",
+  "activity-log": "none",
+  "security-events": "none",
+  "api-keys": "none",
+  integrations: "none",
+  "stock-movements": "none",
+  // added in the 17 Oct pass
+  "gift-cards": "none",
+  "loyalty-accounts": "none",
+  "email-optouts": "none",
+  "digital-files": "none",
+  "shop-stats": "none",
+  // each store's settings pages (the storefront reads them on the server)
+  ...Object.fromEntries(["theme-settings", "announcement-bar", "header", "footer", "whatsapp-button", "shipping", "payments", "notifications", "store-info", "seo-settings", "page-texts", "testimonials", "faqs", "order-protection", "returns-policy", "cookie-notice", "sales-channels", "conversion"].map((g) => [`store-${g}`, "none"])),
+  "subscription-plans": "public",
   products: "public",
   categories: "public",
   brands: "public",
@@ -95,8 +119,20 @@ for (const path of ["/cms-api/reports", "/cms-api/pos/lookup?q=dell", "/cms-api/
   const r = await fetch(base + path, { headers, redirect: "manual" });
   if (r.status < 400) problems.push(`${path} answered ${r.status} without signing in`);
 }
+// Private files: digital products' downloads are never served without a paid order's signed link
+for (const path of ["/cms-api/digital-files/file/e2e-guide.txt", "/media/downloads/e2e-guide.txt", "/download/not-a-token", "/media/payments/x.jpg", "/media/backups/x.gz", "/media/..%2Fpayments/x.jpg"]) {
+  const r = await fetch(base + path, { headers, redirect: "manual" });
+  if (r.status < 400) problems.push(`${path} answered ${r.status} without signing in`);
+}
+// Plans: only active ones, and never their payment-provider ids
+{
+  const r = await fetch(`${base}/cms-api/subscription-plans?limit=50`, { headers });
+  const docs = (await r.json().catch(() => ({}))).docs ?? [];
+  if (docs.some((d) => d.status && d.status !== "active")) problems.push("subscription-plans: inactive plans exposed");
+}
+
 // Writes must be refused
-for (const [slug, data] of [["orders", { orderNumber: "X" }], ["products", { title: "X" }], ["users", { email: "x@x.x", password: "xxxxxxxxxxxx", role: "owner" }], ["reviews", { name: "x", body: "x", rating: 5, approved: true }], ["pos-sales", {}]]) {
+for (const [slug, data] of [["orders", { orderNumber: "X" }], ["products", { title: "X" }], ["users", { email: "x@x.x", password: "xxxxxxxxxxxx", role: "owner" }], ["reviews", { name: "x", body: "x", rating: 5, approved: true }], ["pos-sales", {}], ["gift-cards", { initialValue: 1000 }], ["loyalty-accounts", { customer: 1, adjustBy: 1000 }], ["stores", { name: "x", slug: "x" }], ["store-memberships", { role: "store_owner" }], ["email-optouts", { contact: "x@x.x" }]]) {
   const r = await fetch(`${base}/cms-api/${slug}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(data) });
   if (r.status < 400) problems.push(`anonymous POST /cms-api/${slug} answered ${r.status}`);
 }

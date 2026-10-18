@@ -34,13 +34,15 @@ export function accountEmail(opts: { brand: string; title: string; intro: string
 }
 
 /**
- * Password reset: customers reset on the storefront (their store's own address and name), staff in /cms (ShopEngine).
+ * Password reset: customers on their store's own address (and name); a store's team and platform admins on ShopEngine's
+ * own address – the same reset page, which then sends them to /cms to sign in with the new password and their 2-step
+ * code (Payload's own /cms reset page would sign them in without the code, so it refuses 2-step accounts).
  * `newAccount` = a customer who so far only ordered as a guest – the same link finishes creating their account.
  */
 export function resetPasswordEmail(token: string, role: string | null | undefined, newAccount: boolean, store: EmailBrand) {
   const staff = Boolean(role && role !== "customer");
   const name = staff ? PLATFORM_EMAIL_NAME : store.name;
-  const href = staff ? absoluteUrl(`/cms/reset/${encodeURIComponent(token)}`) : `${store.origin}/account/reset-password?token=${encodeURIComponent(token)}`;
+  const href = staff ? absoluteUrl(`/account/reset-password?token=${encodeURIComponent(token)}`) : `${store.origin}/account/reset-password?token=${encodeURIComponent(token)}`;
   if (newAccount)
     return accountEmail({
       brand: name,

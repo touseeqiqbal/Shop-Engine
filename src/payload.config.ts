@@ -59,6 +59,10 @@ import { Integrations } from "./payload/collections/integrations";
 import { ApiKeys } from "./payload/collections/api-keys";
 import { SecurityEvents } from "./payload/collections/security-events";
 import { GiftCards } from "./payload/collections/gift-cards";
+import { LoyaltyAccounts } from "./payload/collections/loyalty";
+import { ShopStats } from "./payload/collections/shop-stats";
+import { DigitalFiles } from "./payload/collections/digital-files";
+import { shopFunnelEndpoint } from "./payload/endpoints/shop-funnel";
 import { integrationEndpoints } from "./payload/endpoints/integrations";
 import { courierEndpoints } from "./payload/endpoints/couriers";
 import { apiKeyEndpoints } from "./payload/endpoints/api-keys";
@@ -131,6 +135,7 @@ export default buildConfig({
         rto: { Component: "/payload/admin/reports/RtoView#RtoView", path: "/reports/rto", exact: true, meta: { title: "Refused parcels (RTO)" } },
         sales: { Component: "/payload/admin/reports/SalesView#SalesView", path: "/reports/sales", exact: true, meta: { title: "Sales & profit" } },
         stockValue: { Component: "/payload/admin/reports/StockValueView#StockValueView", path: "/reports/stock-value", exact: true, meta: { title: "Stock value" } },
+        funnel: { Component: "/payload/admin/reports/FunnelView#FunnelView", path: "/reports/funnel", exact: true, meta: { title: "Shop funnel" } },
         security: { Component: "/payload/admin/security/SecurityView#SecurityView", path: "/security", exact: true, meta: { title: "Security" } },
         privacy: { Component: "/payload/admin/privacy/PrivacyView#PrivacyView", path: "/privacy", exact: true, meta: { title: "Customer data requests" } },
         stockCount: { Component: "/payload/admin/inventory/StockCountView#StockCountView", path: "/stock-count", exact: true, meta: { title: "Stock count" } },
@@ -143,7 +148,7 @@ export default buildConfig({
     },
     importMap: { baseDir: path.resolve(dirname) },
   },
-  endpoints: [reportsEndpoint, salesReportEndpoint, configExportEndpoint, configImportEndpoint, ...posEndpoints, ...orderToolEndpoints, ...twoFactorEndpoints, ...privacyEndpoints, ...inventoryEndpoints, ...platformEndpoints, ...paymentEndpoints, ...marketingEndpoints, ...integrationEndpoints, ...courierEndpoints, ...apiKeyEndpoints, ...storeDataEndpoints, stockValueEndpoint],
+  endpoints: [reportsEndpoint, salesReportEndpoint, configExportEndpoint, configImportEndpoint, ...posEndpoints, ...orderToolEndpoints, ...twoFactorEndpoints, ...privacyEndpoints, ...inventoryEndpoints, ...platformEndpoints, ...paymentEndpoints, ...marketingEndpoints, ...integrationEndpoints, ...courierEndpoints, ...apiKeyEndpoints, ...storeDataEndpoints, stockValueEndpoint, shopFunnelEndpoint],
   // Security: GraphQL isn't used by the store – switch it off (smaller attack surface).
   graphQL: { disable: true },
   // Background jobs (scheduled publishing of pages and blog posts): run every minute; only platform admins may queue/run them by hand.
@@ -172,7 +177,7 @@ export default buildConfig({
   collections: [Stores, StoreMemberships, SubscriptionPlans, StoreSubscriptions, StoreInvoices, Users, Media, Products, ProductCollections, Categories, Brands, LaptopModels, Reviews, Posts, Orders, ReturnRequests, WarrantyClaims, PosSales, CashUps, Units, Discounts, FlashSales, WholesaleInquiries, ContactMessages, Pages, Menus, BlockedPhones, TradeIns, ProductQuestions, StockAlerts, AbandonedCarts, Suppliers, Purchases, StockCounts]
     // every settings page also exists per store (one document each) – see src/payload/store-settings.ts
     .concat(STORE_SETTINGS_GLOBALS.map(toStoreSettingsCollection))
-    .concat([OutboxEvents, Payments, PaymentEvents, WebhookEndpoints, CustomerCarts, Integrations, ApiKeys, SecurityEvents, GiftCards, EmailOptOuts])
+    .concat([OutboxEvents, Payments, PaymentEvents, WebhookEndpoints, CustomerCarts, Integrations, ApiKeys, SecurityEvents, GiftCards, EmailOptOuts, LoyaltyAccounts, ShopStats, DigitalFiles])
     .map((c) => (isLoggedCollection(c.slug) ? withActivityLog(c) : c))
     .concat([StockMovements, ActivityLog]),
   // The original globals: ShopEngine's defaults and the default store's fallback – edited by platform admins only.
@@ -183,7 +188,9 @@ export default buildConfig({
   sharp,
   typescript: { outputFile: path.resolve(dirname, "payload-types.ts") },
   db: postgresAdapter({
-    pool: { connectionString: process.env.DATABASE_URL || "", max: dbPoolMax },
+    // fail fast instead of waiting for ever: no free connection within 10 s → an error (not a hung request); a transaction
+    // left idle for a minute (a crashed request) is ended by Postgres, releasing its row locks
+    pool: { connectionString: process.env.DATABASE_URL || "", max: dbPoolMax, connectionTimeoutMillis: 10_000, idle_in_transaction_session_timeout: 60_000 },
     // Payload owns its own Postgres schema (and every table is prefixed cms_) so it can never touch the legacy Prisma tables.
     schemaName: "payload",
     // Production uses committed migrations only – never auto-push.
@@ -191,7 +198,10 @@ export default buildConfig({
     migrationDir: path.resolve(dirname, "migrations"),
     // In production (standalone Docker image, no CLI) pending committed migrations run on server start.
     // Take a pg_dump BEFORE deploying a release that contains new migrations (see docs/payload-migration).
-    prodMigrations: migrations,
+    // NEVER during `next build`: the build's page workers each open Payload (NODE_ENV=production), so they would all
+    // migrate the live database at once, before the new version is even healthy (SHOPENGINE_BUILD is set by
+    // scripts/docker-build.sh; NEXT_PHASE by Next for its page workers). SKIP_MIGRATIONS=true: run them yourself.
+    prodMigrations: process.env.SHOPENGINE_BUILD === "true" || process.env.NEXT_PHASE === "phase-production-build" || process.env.SKIP_MIGRATIONS === "true" ? undefined : migrations,
   }),
   plugins: [
     // CSV / JSON import & export (list view → ⋯ menu). Owner-only fields (cost price) follow field access.
@@ -232,7 +242,8 @@ export default buildConfig({
     s3Storage({
       enabled: s3Configured,
       alwaysInsertFields: true, // identical DB schema with or without the bucket
-      collections: { media: { prefix: "media", generateFileURL: mediaFileURL } },
+      // digital products' files: downloads/ – never served by the public /media route, only by /download/<token>
+      collections: { media: { prefix: "media", generateFileURL: mediaFileURL }, "digital-files": { prefix: "downloads" } },
       bucket: process.env.S3_BUCKET || "",
       config: {
         endpoint: process.env.S3_ENDPOINT,

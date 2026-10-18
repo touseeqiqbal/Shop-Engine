@@ -94,6 +94,7 @@ export async function UrkoNav({ payload, permissions, user, visibleEntities }: P
         col("stock-movements", "Stock history"),
         col("categories", "Categories"),
         col("brands", "Brands"),
+        col("digital-files", "Digital files"),
         col("product-collections", "Collections"),
         col("laptop-models", "Laptop models"),
         col("imports", "Import"),
@@ -113,6 +114,7 @@ export async function UrkoNav({ payload, permissions, user, visibleEntities }: P
       ...(isManager ? { href: `${ADMIN}/reports/sales`, match: `${ADMIN}/reports/sales` } : at(col("stock-movements", "Stock history"))),
       children: [
         isManager ? { label: "Sales & profit", href: `${ADMIN}/reports/sales`, match: `${ADMIN}/reports/sales` } : null,
+        isManager ? { label: "Shop funnel", href: `${ADMIN}/reports/funnel`, match: `${ADMIN}/reports/funnel` } : null,
         isOwner ? { label: "Stock value", href: `${ADMIN}/reports/stock-value`, match: `${ADMIN}/reports/stock-value` } : null,
         canRead("orders") ? { label: "Refused parcels (RTO)", href: `${ADMIN}/reports/rto`, match: `${ADMIN}/reports/rto` } : null,
         col("stock-movements", "Stock history"),
@@ -145,6 +147,7 @@ export async function UrkoNav({ payload, permissions, user, visibleEntities }: P
       children: [
         col("discounts", "Discount codes"),
         col("gift-cards", "Gift cards"),
+        col("loyalty-accounts", "Loyalty points"),
         col("flash-sales", "Flash sales"),
         col("reviews", "Reviews"),
         col("abandoned-carts", "Abandoned carts"),

@@ -10,6 +10,22 @@ import { pageMetadata } from "@/lib/seo";
 import { getSiteInfo } from "@/lib/repo/site-content";
 import { loadCustomerOrders } from "./orders/load";
 import { logoutAction } from "./actions";
+import { LoyaltyCard } from "@/components/account/loyalty-card";
+import { getStoreLocale } from "@/lib/store-locale";
+import { moneyFormatter } from "@/lib/money";
+import { currentStoreId } from "@/lib/tenant";
+import { log } from "@/lib/log";
+
+/** What the account page says after "Turn my points into a voucher" (?voucher=…). */
+const VOUCHER_NOTES: Record<string, string> = {
+  made: "Your voucher is ready – it's below. Enter its code in “Gift card” at checkout.",
+  wait: "Too many tries – please wait a few minutes.",
+  failed: "We couldn't make the voucher – please try again.",
+  few: "You don't have enough points for a voucher yet.",
+  zero: "Your points aren't worth a voucher yet.",
+  changed: "Your points changed meanwhile – please try again.",
+  off: "This shop doesn't give loyalty points.",
+};
 
 export const dynamic = "force-dynamic";
 
@@ -23,8 +39,8 @@ export async function generateMetadata(): Promise<Metadata> {
   });
 }
 
-export default async function AccountPage({ searchParams }: { searchParams: Promise<{ reset?: string }> }) {
-  const { reset } = await searchParams;
+export default async function AccountPage({ searchParams }: { searchParams: Promise<{ reset?: string; voucher?: string }> }) {
+  const { reset, voucher } = await searchParams;
   if (!isDatabaseConfigured) {
     return (
       <div className="space-y-6">
@@ -47,7 +63,11 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
 
   const user = await getSessionUser();
   if (!user) redirect("/account/login?next=/account");
-  const [profile, orders] = await Promise.all([getUserProfile(user.id).catch(() => null), loadCustomerOrders(user.id)]);
+  const [profile, orders, loc, storeId] = await Promise.all([getUserProfile(user.id).catch(() => null), loadCustomerOrders(user.id), getStoreLocale(), currentStoreId()]);
+  // loyalty points in this store (only when the store gives them)
+  const { loyaltySummary } = await import("@/lib/cms/loyalty");
+  const loyalty = await loyaltySummary(Number(user.id), storeId).catch((e) => (log.error("account.loyalty_failed", e), null));
+  const money = moneyFormatter(loc);
   const name = profile?.name || user.name || user.email.split("@")[0];
 
   return (
@@ -103,6 +123,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
           </p>
         )}
       </section>
+      {loyalty && <LoyaltyCard summary={loyalty} money={money} note={voucher ? (VOUCHER_NOTES[voucher] ?? null) : null} />}
       <QuickLinks />
     </div>
   );

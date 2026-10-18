@@ -24,6 +24,8 @@ import { Markdown } from "@/components/ui/markdown";
 import { getPageMeta } from "@/lib/page-seo";
 import { getResolvedPageContent } from "@/lib/repo/site-content";
 import { getCurrentStore } from "@/lib/tenant";
+import { getTopCategories } from "@/lib/repo/catalog";
+import { CategoryIcon } from "@/components/ui/category-icon";
 import { countryInText, deliveryArea } from "@/lib/locale";
 
 export const revalidate = 300;
@@ -59,9 +61,15 @@ const PROCESS = [
 
 export default async function AboutPage() {
   // Hero + story are editable in /cms → Online store → Page texts.
-  const [c, store] = await Promise.all([getResolvedPageContent("/about"), getCurrentStore()]);
+  const [c, store, topCategories] = await Promise.all([getResolvedPageContent("/about"), getCurrentStore(), getTopCategories().catch(() => [])]);
   // the original (default) shop's own wording; any other store: its own area (Settings → Store details) or none
   const original = !store || store.isDefault;
+  // "What we sell": the original shop's own texts for the categories it has; any other store: its own top categories –
+  // never another shop's claims (laptop testing, free installation …) or links to categories it doesn't have
+  const slugs = new Set(topCategories.map((t) => t.slug));
+  const sell = original
+    ? WHAT_WE_SELL.filter((w) => slugs.has(w.href.replace("/category/", ""))).map((w) => ({ key: w.title, title: w.title, text: area(w.text), href: w.href, icon: <w.icon className="size-6" aria-hidden="true" /> }))
+    : topCategories.slice(0, 6).map((t) => ({ key: t.slug, title: t.name, text: t.shortDescription, href: `/category/${t.slug}`, icon: <CategoryIcon name={t.icon} className="size-6" /> }));
   const area = (s: string) => s.replace("{area}", c.info.address.area ? `${c.info.address.area} ` : "");
   // the store's own country ("in Pakistan" / "in the United States")
   const country = store?.country ?? "PK";
@@ -78,6 +86,7 @@ export default async function AboutPage() {
           </p>
         }
       >
+        {original && (
         <dl className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {STATS.map((s) => (
             <div key={s.label} className="card p-4">
@@ -89,15 +98,17 @@ export default async function AboutPage() {
             </div>
           ))}
         </dl>
+        )}
       </PageHero>
 
       <div className="container-x mt-12 space-y-16 sm:mt-16 sm:space-y-24">
         {/* Story */}
-        <section className="grid gap-8 lg:grid-cols-2 lg:gap-14" aria-labelledby="story-heading">
+        <section className={original ? "grid gap-8 lg:grid-cols-2 lg:gap-14" : "max-w-3xl"} aria-labelledby="story-heading">
           <div>
             <SectionHeading eyebrow={original ? "From Regal Chowk to your doorstep" : "From our shop to your doorstep"} title={<span id="story-heading">Built on honest advice</span>} className="!mb-4" />
             <Markdown content={c.body} />
           </div>
+          {original && (
           <Reveal className="relative overflow-hidden rounded-[1.75rem] border border-border bg-bg-elevated p-6 sm:p-10">
             <div className="pointer-events-none absolute -right-20 -top-20 size-72 rounded-full bg-cyan-500/20 blur-3xl" aria-hidden="true" />
             <h3 className="relative text-xl font-bold text-fg">Why customers choose us</h3>
@@ -118,33 +129,37 @@ export default async function AboutPage() {
               ))}
             </ul>
           </Reveal>
+          )}
         </section>
 
         {/* What we sell */}
+        {sell.length > 0 && (
         <section aria-labelledby="sell-heading">
           <SectionHeading
             eyebrow="What we sell"
-            title={<span id="sell-heading">Everything for your laptop, under one roof</span>}
-            description="From a complete laptop to the smallest replacement part."
+            title={<span id="sell-heading">{original ? "Everything for your laptop, under one roof" : "Shop by category"}</span>}
+            description={original ? "From a complete laptop to the smallest replacement part." : undefined}
             href="/category"
             hrefLabel="All categories"
           />
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {WHAT_WE_SELL.map((w, i) => (
-              <Reveal as="li" key={w.title} delay={(i % 3) * 0.05}>
+            {sell.map((w, i) => (
+              <Reveal as="li" key={w.key} delay={(i % 3) * 0.05}>
                 <Link href={w.href} className="glow-hover card group flex h-full flex-col gap-3 p-6 transition-transform hover:-translate-y-1">
                   <span className="grid size-12 place-items-center rounded-2xl bg-surface-strong transition-colors group-hover:bg-brand-gradient group-hover:text-white">
-                    <w.icon className="size-6" aria-hidden="true" />
+                    {w.icon}
                   </span>
                   <h3 className="text-lg font-bold text-fg">{w.title}</h3>
-                  <p className="text-sm text-muted">{area(w.text)}</p>
+                  {w.text && <p className="text-sm text-muted">{w.text}</p>}
                 </Link>
               </Reveal>
             ))}
           </ul>
         </section>
+        )}
 
-        {/* Process */}
+        {/* Process – the original laptop shop's own testing checklist */}
+        {original && (
         <section aria-labelledby="process-heading" className="relative overflow-hidden rounded-[1.75rem] border border-border bg-bg-elevated p-6 sm:p-10">
           <div className="bg-grid pointer-events-none absolute inset-0 opacity-50" aria-hidden="true" />
           <div className="relative">
@@ -165,6 +180,7 @@ export default async function AboutPage() {
             </ol>
           </div>
         </section>
+        )}
 
         <section aria-label="Our promises">
           <TrustBadges />
@@ -173,8 +189,8 @@ export default async function AboutPage() {
         <section className="grid gap-4 md:grid-cols-3" aria-label="Delivery and policies">
           {[
             { icon: Truck, title: `Delivery ${deliveryArea(country)}`, text: original ? "Karachi same / next day; major cities 1–3 days; other areas 3–5 days." : "Fast, tracked delivery to every city.", href: "/shipping-policy", cta: "Shipping policy" },
-            { icon: ShieldCheck, title: "Warranty you can use", text: "Checking warranty on used laptops, up to 6 months on refurbished, brand warranty on new.", href: "/warranty-returns", cta: "Warranty & returns" },
-            { icon: PackageCheck, title: "Questions answered", text: "Payments, COD, delivery, grades and returns – all explained.", href: "/faqs", cta: "Read FAQs" },
+            { icon: ShieldCheck, title: original ? "Warranty you can use" : "Warranty & returns", text: original ? "Checking warranty on used laptops, up to 6 months on refurbished, brand warranty on new." : "How warranty and returns work at our shop.", href: "/warranty-returns", cta: "Warranty & returns" },
+            { icon: PackageCheck, title: "Questions answered", text: original ? "Payments, COD, delivery, grades and returns – all explained." : "Payments, delivery and returns – all explained.", href: "/faqs", cta: "Read FAQs" },
           ].map((c) => (
             <Link key={c.title} href={c.href} className="glow-hover card group p-6">
               <c.icon className="size-6 text-violet-400" aria-hidden="true" />

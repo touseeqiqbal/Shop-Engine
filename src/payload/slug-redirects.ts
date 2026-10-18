@@ -1,4 +1,4 @@
-import type { CollectionAfterChangeHook, CollectionAfterDeleteHook, PayloadRequest } from "payload";
+import type { CollectionAfterChangeHook, CollectionAfterDeleteHook, PayloadRequest, Where } from "payload";
 import { revalidate } from "./revalidate";
 
 /**
@@ -8,6 +8,16 @@ import { revalidate } from "./revalidate";
  */
 
 type Doc = Record<string, unknown>;
+
+/**
+ * Redirects belong to a store (two stores may both have /laptops/x): every lookup, change and new redirect here is the
+ * document's OWN store – never another store's redirects.
+ */
+const storeIdOf = (doc: Doc): number | null => {
+  const s = doc.store && typeof doc.store === "object" ? (doc.store as Doc).id : doc.store;
+  return s == null || s === "" ? null : Number(s);
+};
+const inStore = (storeId: number | null, where: Where): Where => ({ and: [storeId == null ? { store: { exists: false } } : { store: { equals: storeId } }, where] });
 
 /** Storefront path of a product: /<top-level category slug>/<product slug> */
 async function productPath(req: PayloadRequest, doc: Doc): Promise<string | null> {
@@ -31,9 +41,9 @@ const PATHS: Record<string, (req: PayloadRequest, doc: Doc) => Promise<string | 
   brands: (_req, d) => (d.slug ? `/brands/${d.slug}` : null),
 };
 
-/** A page that is live (again) must never be redirected away from. */
-async function clearRedirectsFrom(req: PayloadRequest, path: string) {
-  await req.payload.delete({ collection: "redirects", where: { from: { equals: path } }, overrideAccess: true, req });
+/** A page that is live (again) must never be redirected away from (in its own store). */
+async function clearRedirectsFrom(req: PayloadRequest, storeId: number | null, path: string) {
+  await req.payload.delete({ collection: "redirects", where: inStore(storeId, { from: { equals: path } }), overrideAccess: true, req });
 }
 
 const isLive = (collection: string, d: Doc | undefined) =>
@@ -46,7 +56,7 @@ export const slugRedirect =
     // a product that goes (back) on the store: drop any redirect away from its own address
     if (collection === "products" && isLive(collection, doc) && (!previousDoc || !isLive(collection, previousDoc))) {
       const path = await productPath(req, doc).catch(() => null);
-      if (path) await clearRedirectsFrom(req, path).catch(() => undefined);
+      if (path) await clearRedirectsFrom(req, storeIdOf(doc), path).catch(() => undefined);
     }
     // only when a live URL is replaced by another live URL (drafts don't move the public page yet)
     if (operation !== "update" || !previousDoc || !isLive(collection, previousDoc) || !isLive(collection, doc)) return doc;
@@ -55,14 +65,15 @@ export const slugRedirect =
     try {
       const [from, to] = await Promise.all([PATHS[collection](req, previousDoc), PATHS[collection](req, doc)]);
       if (!from || !to || from === to) return doc;
-      const existing = await req.payload.find({ collection: "redirects", where: { from: { equals: from } }, limit: 1, depth: 0, overrideAccess: true, req });
-      const data = { from, to: { type: "custom", url: to } };
+      const storeId = storeIdOf(doc);
+      const existing = await req.payload.find({ collection: "redirects", where: inStore(storeId, { from: { equals: from } }), limit: 1, depth: 0, overrideAccess: true, req });
+      const data = { from, to: { type: "custom", url: to }, store: storeId };
       if (existing.docs[0]) await req.payload.update({ collection: "redirects", id: existing.docs[0].id, data: data as never, overrideAccess: true, req });
       else await req.payload.create({ collection: "redirects", data: data as never, overrideAccess: true, req });
       // never leave a loop behind (new → old)
-      await clearRedirectsFrom(req, to);
+      await clearRedirectsFrom(req, storeId, to);
       // no chains: older redirects that pointed to the old address now go straight to the new one
-      const pointing = await req.payload.find({ collection: "redirects", where: { "to.url": { equals: from } }, limit: 100, depth: 0, overrideAccess: true, req });
+      const pointing = await req.payload.find({ collection: "redirects", where: inStore(storeId, { "to.url": { equals: from } }), limit: 100, depth: 0, overrideAccess: true, req });
       for (const r of pointing.docs) await req.payload.update({ collection: "redirects", id: r.id, data: { to: { type: "custom", url: to } } as never, overrideAccess: true, req });
       revalidate([], [from]);
       req.payload.logger.info(`[seo] redirect ${from} → ${to}`);
@@ -81,8 +92,9 @@ export const productDeletedRedirect: CollectionAfterDeleteHook = async ({ doc, r
     const cat = catId ? ((await req.payload.findByID({ collection: "categories", id: catId as number, depth: 0, overrideAccess: true, req }).catch(() => null)) as Doc | null) : null;
     const to = cat?.slug ? `/category/${cat.slug}` : "/shop";
     if (!from) return doc;
-    const existing = await req.payload.find({ collection: "redirects", where: { from: { equals: from } }, limit: 1, depth: 0, overrideAccess: true, req });
-    if (!existing.docs[0]) await req.payload.create({ collection: "redirects", data: { from, to: { type: "custom", url: to } } as never, overrideAccess: true, req });
+    const storeId = storeIdOf(doc as Doc);
+    const existing = await req.payload.find({ collection: "redirects", where: inStore(storeId, { from: { equals: from } }), limit: 1, depth: 0, overrideAccess: true, req });
+    if (!existing.docs[0]) await req.payload.create({ collection: "redirects", data: { from, to: { type: "custom", url: to }, store: storeId } as never, overrideAccess: true, req });
     revalidate([], [from]);
   } catch (e) {
     req.payload.logger.error({ err: e, msg: "[seo] could not add a redirect for a deleted product" });

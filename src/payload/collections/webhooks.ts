@@ -17,8 +17,8 @@ export const WEBHOOK_EVENTS = [
   { label: "Refund made (card)", value: "refund.created" },
 ] as const;
 
-/** https only (http for localhost while developing); no credentials in the address. */
-const checkUrl: CollectionBeforeChangeHook = ({ data, operation, originalDoc }) => {
+/** https only (http for localhost while developing); no credentials in the address; not an internal address. */
+const checkUrl: CollectionBeforeChangeHook = async ({ data, operation, originalDoc }) => {
   const raw = String(data.url ?? originalDoc?.url ?? "").trim();
   let u: URL;
   try {
@@ -29,6 +29,12 @@ const checkUrl: CollectionBeforeChangeHook = ({ data, operation, originalDoc }) 
   const local = process.env.NODE_ENV !== "production" && ["localhost", "127.0.0.1"].includes(u.hostname);
   if (u.protocol !== "https:" && !(local && u.protocol === "http:")) throw userError("Webhook addresses must start with https://", 400);
   if (u.username || u.password) throw userError("Don't put a password in the address – use the signing secret to check deliveries.", 400);
+  // early feedback only – every delivery checks the address it connects to again (lib/net/public-request)
+  const { resolvePublicHost } = await import("../../lib/net/public-request");
+  await resolvePublicHost(u.hostname).catch((e: Error) => {
+    if (e.name === "PrivateAddressError") throw userError("That address points to a private network – webhooks can only go to public addresses.", 400);
+    // a name that doesn't resolve yet is allowed (DNS may be set up later); deliveries are checked anyway
+  });
   data.url = u.toString();
   // a new endpoint gets its signing secret (shown to the store's managers)
   if (operation === "create" || !originalDoc?.secret) data.secret = `whsec_${randomBytes(24).toString("hex")}`;

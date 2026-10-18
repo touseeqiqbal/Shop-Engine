@@ -2,7 +2,7 @@ import type { CollectionConfig } from "payload";
 import { assignStore, publicOrStore, sameStore, storeAccess, storeField, createFor, writeFor } from "../tenancy";
 import { dbName, legacyIdField, perStoreUnique } from "../fields";
 import { requireFeature } from "../entitlements";
-import { CATALOG_TAG, revalidate } from "../revalidate";
+import { catalogTagOf, revalidate } from "../revalidate";
 
 /** Sales → Discounts (codes and automatic discounts) and Flash sales. Everything is per store. */
 
@@ -90,8 +90,9 @@ export const FlashSales: CollectionConfig = {
   access: { read: publicOrStore("store_staff"), create: createFor("store_staff"), update: writeFor("store_staff"), delete: writeFor("store_manager") },
   hooks: {
     beforeValidate: [assignStore()],
-    afterChange: [({ doc }) => (revalidate([CATALOG_TAG, "content"], ["/", "/deals"]), doc)],
-    afterDelete: [({ doc }) => (revalidate([CATALOG_TAG, "content"], ["/", "/deals"]), doc)],
+    // the sale's store: its countdown and (with "% off") its prices
+    afterChange: [({ doc }) => (revalidate([catalogTagOf(doc.store), "content"], ["/", "/deals"]), doc)],
+    afterDelete: [({ doc }) => (revalidate([catalogTagOf(doc.store), "content"], ["/", "/deals"]), doc)],
   },
   fields: [
     storeField(),

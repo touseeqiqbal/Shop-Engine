@@ -1,8 +1,25 @@
 "use client";
 import { useState } from "react";
+import { useFormStatus } from "react-dom";
 import { m as motion } from "framer-motion";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+/** Submit button of a server-action form that shows it's working ("Opening payment page…") so it isn't tapped twice. */
+export function PendingSubmit({ children, pendingLabel, className }: { children: React.ReactNode; pendingLabel: string; className?: string }) {
+  const { pending } = useFormStatus();
+  return (
+    <button type="submit" className={className} disabled={pending} aria-disabled={pending}>
+      {pending ? (
+        <>
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" /> {pendingLabel}
+        </>
+      ) : (
+        children
+      )}
+    </button>
+  );
+}
 
 /** Animated success check with confetti-ish burst. */
 export function SuccessBadge() {

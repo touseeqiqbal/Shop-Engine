@@ -19,6 +19,8 @@ import {
 export type StoreFormState = {
   ok?: boolean;
   error?: string;
+  /** the account has 2-step on: this action needs a current code */
+  needsCode?: boolean;
   message?: string;
   storeId?: string;
   /** a page to open next (plan payment, payment-account setup) */
@@ -84,9 +86,28 @@ export async function acceptInvitationAction(_prev: StoreFormState, fd: FormData
   return done(res, "Invitation accepted. Open /cms to start working in the store.");
 }
 
+/**
+ * Owner actions with real consequences (publishing, the plan, payouts, the domain) need the account's 2-step code when
+ * 2-step is on – the shop sign-in is password-only, /cms isn't. Null = go ahead.
+ */
+async function stepUp(storefrontUserId: string, fd: FormData): Promise<StoreFormState | null> {
+  const { payloadClient } = await import("@/lib/cms/catalog-source");
+  const { byStorefrontId } = await import("@/lib/cms/sales");
+  const { verifyStepUpCode } = await import("@/payload/endpoints/two-factor");
+  const payload = await payloadClient();
+  const u = (await payload.find({ collection: "users", where: byStorefrontId(storefrontUserId), limit: 1, depth: 0, overrideAccess: true })).docs[0] as { id?: number } | undefined;
+  if (!u?.id) return { ok: false, error: "Please sign in again.", ts: Date.now() };
+  const r = await verifyStepUpCode(payload, Number(u.id), field(fd, "code"));
+  if (r === "ok" || r === "not-enabled") return null;
+  if (r === "locked") return { ok: false, needsCode: true, error: "Too many wrong codes – 2-step codes are paused for 15 minutes.", ts: Date.now() };
+  return { ok: false, needsCode: true, error: field(fd, "code") ? "That code isn't right – use the current code from your authenticator app (or a backup code)." : "2-step sign-in is on for your account: enter the code from your authenticator app.", ts: Date.now() };
+}
+
 export async function publishStoreAction(_prev: StoreFormState, fd: FormData): Promise<StoreFormState> {
   const user = await getSessionUser();
   if (!user) return { ok: false, error: "Please sign in first." };
+  const denied = await stepUp(user.id, fd);
+  if (denied) return denied;
   const storeId = field(fd, "storeId");
   if (!storeId) return { ok: false, error: "Store ID is missing." };
   return done(await publishStore(user.id, storeId), "Your store is live.");
@@ -95,6 +116,8 @@ export async function publishStoreAction(_prev: StoreFormState, fd: FormData): P
 export async function changePlanAction(_prev: StoreFormState, fd: FormData): Promise<StoreFormState> {
   const user = await getSessionUser();
   if (!user) return { ok: false, error: "Please sign in first." };
+  const denied = await stepUp(user.id, fd);
+  if (denied) return denied;
   const cycle = field(fd, "cycle") === "annual" ? "annual" : "monthly";
   const res = await setStorePlanForUser(user.id, field(fd, "storeId"), field(fd, "planId"), cycle);
   if (!res.ok) return { ok: false, error: res.error, ts: Date.now() };
@@ -105,12 +128,16 @@ export async function changePlanAction(_prev: StoreFormState, fd: FormData): Pro
 export async function cancelPlanAction(_prev: StoreFormState, fd: FormData): Promise<StoreFormState> {
   const user = await getSessionUser();
   if (!user) return { ok: false, error: "Please sign in first." };
+  const denied = await stepUp(user.id, fd);
+  if (denied) return denied;
   return done(await cancelStorePlanForUser(user.id, field(fd, "storeId")), "The plan ends at the end of the paid period.");
 }
 
 export async function connectPaymentsAction(_prev: StoreFormState, fd: FormData): Promise<StoreFormState> {
   const user = await getSessionUser();
   if (!user) return { ok: false, error: "Please sign in first." };
+  const denied = await stepUp(user.id, fd);
+  if (denied) return denied;
   const res = await paymentsLinkForUser(user.id, field(fd, "storeId"));
   return res.ok ? { ok: true, message: "Opening the payment account setup…", redirectUrl: res.url, ts: Date.now() } : { ok: false, error: res.error, ts: Date.now() };
 }
@@ -127,6 +154,8 @@ export async function refreshPaymentsAction(_prev: StoreFormState, fd: FormData)
 export async function setDomainAction(_prev: StoreFormState, fd: FormData): Promise<StoreFormState> {
   const user = await getSessionUser();
   if (!user) return { ok: false, error: "Please sign in first." };
+  const denied = await stepUp(user.id, fd);
+  if (denied) return denied;
   return done(await setCustomDomainForUser(user.id, field(fd, "storeId"), field(fd, "domain")), "Domain saved. Add the TXT record shown, then press Verify.");
 }
 

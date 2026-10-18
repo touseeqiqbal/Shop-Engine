@@ -87,9 +87,40 @@ export const Users: CollectionConfig = {
   },
   hooks: {
     beforeLogin: [requireTwoFactor],
+    // A person changed THEIR OWN sign-in email or password in /cms: the old address is told (with a reset link), so a
+    // stolen session can't quietly take the account over; the change is a security event. (Changes made for someone
+    // else are refused above; resets and the storefront have their own messages.)
+    afterChange: [
+      async ({ doc, previousDoc, operation, req, context }) => {
+        const changed = context?.signInChanged as { email?: string; password?: boolean } | undefined;
+        if (operation !== "update" || !changed || context?.migrating || context?.legacyUpgrade || context?.passwordReset || !req.user || (req.user as { id?: unknown }).id !== doc.id) return doc;
+        const oldEmail = changed.email ?? String(previousDoc?.email ?? doc.email ?? "");
+        const what = changed.email && changed.password ? "email address and password" : changed.email ? "email address" : "password";
+        try {
+          const { recordSecurityEvent } = await import("../../lib/security-events");
+          if (changed.password) await recordSecurityEvent(req.payload, { kind: "password-changed", area: "admin", email: String(doc.email ?? ""), userId: doc.id as number, detail: changed.email ? "email changed too" : null });
+          const [{ accountEmail, PLATFORM_EMAIL_NAME }, { deliverEmail }, { absoluteUrl }] = await Promise.all([import("../../lib/account-email"), import("../../lib/mailer"), import("../../lib/site")]);
+          const masked = String(doc.email ?? "").replace(/^(.).*?(@.*)$/, "$1***$2");
+          const mail = accountEmail({
+            brand: PLATFORM_EMAIL_NAME,
+            title: `Your sign-in ${what} was changed`,
+            intro: changed.email ? `The sign-in email of your account was changed to ${masked}${changed.password ? ", and its password too" : ""}.` : "The password of your account was just changed.",
+            button: { href: absoluteUrl("/account/forgot-password"), label: "Not you? Reset your password" },
+            note: "If you made this change, you don't need to do anything. If you didn't, reset your password now and tell your store's owner or ShopEngine support.",
+          });
+          await deliverEmail({ to: oldEmail, subject: `Your sign-in ${what} was changed`, html: mail.html, text: mail.text });
+        } catch (e) {
+          const { log } = await import("../../lib/log");
+          log.error("account.change_notice_failed", e, { user: doc.id });
+        }
+        return doc;
+      },
+    ],
     // Platform → Security events: every sign-in (to /cms or a shop), password resets asked for and done
     afterLogin: [
       async ({ req, user, context }) => {
+        // a password reset isn't a sign-in (its token is thrown away; the change itself is recorded below)
+        if (context?.passwordReset) return user;
         const { recordSecurityEvent } = await import("../../lib/security-events");
         const { ipFromHeaders } = await import("../../lib/client-ip");
         const u = user as { id?: number; email?: string; role?: string };
@@ -184,7 +215,12 @@ export const Users: CollectionConfig = {
         if (operation === "update" && typeof data.email === "string" && originalDoc?.email && data.email.toLowerCase() !== String(originalDoc.email).toLowerCase()) {
           data.emailVerified = false;
         }
-        if (operation === "update" && typeof data.password === "string" && data.password && !context?.legacyUpgrade) data.sessionsValidAfter = new Date().toISOString();
+        if (operation === "update" && typeof data.password === "string" && data.password && !context?.legacyUpgrade) {
+          data.sessionsValidAfter = new Date().toISOString();
+          if (context) context.signInChanged = { ...(context.signInChanged as object | undefined), password: true };
+        }
+        if (operation === "update" && context && typeof data.email === "string" && originalDoc?.email && data.email.toLowerCase() !== String(originalDoc.email).toLowerCase())
+          context.signInChanged = { ...(context.signInChanged as object | undefined), email: String(originalDoc.email) };
         return data;
       },
       // The very first account ever created becomes the Owner (never a customer record made from a guest order).

@@ -70,7 +70,7 @@ export function TrackOrderForm({ initialOrder = "" }: { initialOrder?: string })
 
       <div aria-live="polite" aria-atomic="true">
         {state.status === "error" && (
-          <p role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          <p role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 light:text-rose-700">
             <AlertCircle className="mt-0.5 size-4 shrink-0 text-rose-400" aria-hidden="true" /> {state.message}
           </p>
         )}

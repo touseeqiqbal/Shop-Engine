@@ -113,7 +113,7 @@ export async function cancelPlan(payload: Payload, storeId: number): Promise<{ o
 const STATUS: Record<string, string> = { trialing: "trialing", active: "active", past_due: "past_due", unpaid: "past_due", canceled: "cancelled", incomplete: "past_due", incomplete_expired: "expired", paused: "suspended" };
 
 /** Stripe Billing webhooks on the platform account (no `account` on the event). Returns whether it was ours. */
-export async function handleBillingEvent(payload: Payload, event: { type: string; data: { object: Doc } }): Promise<boolean> {
+export async function handleBillingEvent(payload: Payload, event: { type: string; created?: number; data: { object: Doc } }): Promise<boolean> {
   const o = event.data.object;
   const storeOf = (meta: unknown) => Number((meta as Doc | undefined)?.storeId) || null;
   switch (event.type) {
@@ -129,7 +129,9 @@ export async function handleBillingEvent(payload: Payload, event: { type: string
     case "customer.subscription.deleted": {
       const storeId = storeOf(o.metadata);
       if (!storeId) return false;
-      await syncSubscription(payload, storeId, String(o.id), { customer: String(o.customer ?? ""), planId: Number((o.metadata as Doc)?.planId) || null, object: o });
+      // events can arrive late or out of order (retries): with Stripe set up, the subscription's CURRENT state is read
+      // from Stripe instead of this event's (possibly old) snapshot
+      await syncSubscription(payload, storeId, String(o.id), { customer: String(o.customer ?? ""), planId: Number((o.metadata as Doc)?.planId) || null, ...(stripeConfigured() ? {} : { object: o }) });
       return true;
     }
     case "invoice.paid":
@@ -141,6 +143,15 @@ export async function handleBillingEvent(payload: Payload, event: { type: string
       const currency = String(o.currency ?? "pkr");
       const paid = event.type === "invoice.paid";
       const existing = (await payload.find({ collection: "store-invoices", where: { providerInvoiceId: { equals: String(o.id) } }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
+      if (!paid) {
+        // a "payment failed" that is out of date – the invoice was paid since (a retry delivered late, events out of
+        // order) – must not put a paying store past due (and offline after the grace period)
+        if (existing?.status === "paid") return true;
+        const live = stripeConfigured() ? await stripe<Doc>("GET", `/invoices/${encodeURIComponent(String(o.id))}`).catch(() => null) : null;
+        if (live?.status === "paid") return true;
+        const lastPaid = Date.parse(String(sub.lastPaymentAt ?? "")) || 0;
+        if (event.created && lastPaid && event.created * 1000 < lastPaid) return true;
+      }
       const data = {
         store: storeId,
         subscription: Number(sub.id),

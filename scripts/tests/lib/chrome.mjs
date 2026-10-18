@@ -24,7 +24,8 @@ export async function launch({ port = 9555, width = 1280, height = 900, mobile =
   const profile = mkdtempSync(path.join(tmpdir(), "e2e-chrome-"));
   const proc = spawn(bin, ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--no-sandbox", `--window-size=${width},${height}`, "about:blank"], { stdio: "ignore" });
   let target;
-  for (let i = 0; i < 60 && !target; i++) {
+  // up to a minute: a busy machine (or CI runner) can be slow to start a browser
+  for (let i = 0; i < 240 && !target; i++) {
     await sleep(250);
     target = await fetch(`http://127.0.0.1:${port}/json/list`)
       .then((r) => r.json())
@@ -46,10 +47,15 @@ export async function launch({ port = 9555, width = 1280, height = 900, mobile =
     } else if (msg.method === "Runtime.exceptionThrown") errors.push(msg.params.exceptionDetails?.exception?.description ?? msg.params.exceptionDetails?.text);
     else if (msg.method === "Runtime.consoleAPICalled" && msg.params.type === "error") errors.push(msg.params.args.map((a) => a.value ?? a.description).join(" "));
   };
-  const send = (method, params = {}) =>
+  // every call gives up after a while: a page stuck loading (a slow dev compile) must not hang the whole test
+  const send = (method, params = {}, timeoutMs = 120_000) =>
     new Promise((res, rej) => {
       const id = ++seq;
-      pending.set(id, { res, rej });
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        rej(new Error(`${method} timed out`));
+      }, timeoutMs);
+      pending.set(id, { res: (v) => (clearTimeout(timer), res(v)), rej: (e) => (clearTimeout(timer), rej(e)) });
       ws.send(JSON.stringify({ id, method, params }));
     });
   await send("Runtime.enable");
@@ -58,7 +64,7 @@ export async function launch({ port = 9555, width = 1280, height = 900, mobile =
 
   /** Runs a function body in the page and returns its (JSON) result. */
   const evaluate = async (body) => {
-    const r = await send("Runtime.evaluate", { expression: `(async () => { ${body} })()`, awaitPromise: true, returnByValue: true });
+    const r = await send("Runtime.evaluate", { expression: `(async () => { ${body} })()`, awaitPromise: true, returnByValue: true }, 30_000);
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
     return r.result.value;
   };
@@ -67,7 +73,7 @@ export async function launch({ port = 9555, width = 1280, height = 900, mobile =
     send,
     eval: evaluate,
     async go(url, settleMs = 1500) {
-      await send("Page.navigate", { url });
+      await send("Page.navigate", { url }).catch((e) => errors.push(`navigate: ${e.message}`));
       await b.waitFor(`return document.readyState === "complete"`, 60_000);
       await sleep(settleMs);
     },

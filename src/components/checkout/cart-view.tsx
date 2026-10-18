@@ -6,7 +6,8 @@ import { AnimatePresence, m as motion } from "framer-motion";
 import { ArrowRight, Lock, Minus, Plus, ShieldCheck, ShoppingBag, Trash2, Truck, Wallet } from "lucide-react";
 import { cartCount, cartSubtotal, useCart } from "@/store/cart";
 import { useHydrated } from "@/hooks/use-hydrated";
-import { deliveryEstimate, freeDeliveryAbove } from "@/lib/cities";
+import { useStickyBar } from "@/hooks/use-sticky-bar";
+import { deliveryEstimate, freeDeliveryAbove, paymentEnabled } from "@/lib/cities";
 import { orderTotals } from "@/lib/order-totals";
 import { waLink } from "@/lib/site";
 import { useSiteInfo } from "@/components/providers/site-info";
@@ -29,6 +30,9 @@ export function CartView({ settings }: { settings: StoreSettings }) {
   const site = useSiteInfo(); // live business profile (/cms → Settings → Store details)
   const money = useMoney();
   const pk = useStoreLocale().country === "PK"; // "all over Pakistan" only for Pakistani stores
+  const cod = paymentEnabled("cod", settings); // Cash on Delivery is only promised while the store offers it
+  // the phone checkout bar is shown: the WhatsApp button / cookie notice move above it
+  useStickyBar(hydrated && lines.length > 0);
 
   if (!hydrated) return <CartSkeleton />;
 
@@ -40,7 +44,7 @@ export function CartView({ settings }: { settings: StoreSettings }) {
         </div>
         <h2 className="text-xl font-bold">Your cart is empty</h2>
         <p className="max-w-sm text-sm text-muted">
-          Explore new, used & refurbished laptops and accessories – {pk ? "Cash on Delivery all over Pakistan" : "fast delivery nationwide"}.
+          Explore new, used & refurbished laptops and accessories – {pk ? (cod ? "Cash on Delivery all over Pakistan" : "delivery all over Pakistan") : "fast delivery nationwide"}.
         </p>
         <div className="flex flex-wrap justify-center gap-2">
           <Link href="/shop" className="btn btn-primary">
@@ -55,7 +59,7 @@ export function CartView({ settings }: { settings: StoreSettings }) {
   }
 
   const subtotal = cartSubtotal(lines);
-  const totals = orderTotals({ subtotal, discount: coupon.discount, city, method: "", settings, freeShipping: coupon.freeShipping, lines: lines.map((l) => ({ amount: l.unitPrice * l.qty, taxClass: l.taxClass })) });
+  const totals = orderTotals({ subtotal, discount: coupon.discount, city, method: "", settings, freeShipping: coupon.freeShipping, lines: lines.map((l) => ({ amount: l.unitPrice * l.qty, taxClass: l.taxClass })), noShipping: lines.length > 0 && lines.every((l) => l.shipsNothing) });
   const { discount, delivery } = totals;
   // free-delivery amount for the chosen city's zone (0 = that zone never ships free)
   const freeAbove = city ? freeDeliveryAbove(city, settings) : settings.freeDeliveryThreshold;
@@ -199,7 +203,7 @@ export function CartView({ settings }: { settings: StoreSettings }) {
           </div>
           <ul className="grid gap-2 text-xs text-muted">
             <li className="flex items-center gap-2">
-              <Wallet className="size-4 text-violet-300" aria-hidden="true" /> {pk ? "Cash on Delivery all over Pakistan" : "Flexible payment options at checkout"}
+              <Wallet className="size-4 text-violet-300" aria-hidden="true" /> {pk && cod ? "Cash on Delivery all over Pakistan" : "Flexible payment options at checkout"}
             </li>
             <li className="flex items-center gap-2">
               <ShieldCheck className="size-4 text-violet-300" aria-hidden="true" /> Checked & tested · warranty on every product
@@ -214,8 +218,8 @@ export function CartView({ settings }: { settings: StoreSettings }) {
         </div>
       </aside>
 
-      {/* Mobile sticky checkout bar – sits above the 64px bottom nav */}
-      <div className="glass fixed inset-x-0 bottom-16 z-30 flex items-center gap-3 border-x-0 px-4 py-3 lg:hidden">
+      {/* Mobile sticky checkout bar – above the bottom menu incl. the iPhone home bar (--mobile-nav), not a fixed 4rem */}
+      <div className="glass fixed inset-x-0 bottom-[var(--mobile-nav)] z-30 flex items-center gap-3 border-x-0 px-4 py-3 lg:hidden">
         <div className="min-w-0 flex-1">
           <p className="text-xs text-muted">Total</p>
           <p className="font-display text-lg font-bold tabular-nums">{money(total)}</p>

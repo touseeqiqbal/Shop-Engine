@@ -2,7 +2,7 @@
 # 11 · Remediation log (what was fixed and built after the audit)
 
 **Baseline:** the audit in reports 00–10 describes commit `aab6879`. This log describes the **working tree on top of it** (not committed),
-14 October 2026, with the international work of 15 October 2026 (§2.12). Every claim below was checked by reading the code; where it says "run", it was actually run. Nothing here was run against
+14 October 2026, with the international work of 15 October 2026 (§2.12), the integrations of 16 October (§2.14) and the "fix all" pass of 17 October (§2.15). Every claim below was checked by reading the code; where it says "run", it was actually run. Nothing here was run against
 Stripe, an email/WhatsApp provider, GitHub Actions or production.
 
 ## 1. Result
@@ -28,8 +28,8 @@ Stripe, an email/WhatsApp provider, GitHub Actions or production.
 | Verified-only coverage | 44.8 % | **88.1 %** |
 | Critical security issues (SEC-01…03) | 3 open | 0 open |
 | App boots / migrations match the config | No / No | Yes / Yes (run) |
-| Unit tests | 40 pass (asserting insecure behaviour) | **101 / 101 pass** (secure behaviour; 24 for currencies, time zones, phones, payment methods, delivering abroad) |
-| Database / server tests | none | **7 scripts, 99 checks, all pass** (§5) – 5 of them run in CI |
+| Unit tests | 40 pass (asserting insecure behaviour) | **199 / 199 pass** (17 Oct; secure behaviour, money, tax, pre-orders, gift cards, loyalty, downloads …) |
+| Database / server tests | none | **17 suites, 223 checks, all pass** (17 Oct, §5) – all of them in CI, plus a browser test of checkout |
 
 | Module | Audit | Now | Module | Audit | Now |
 |---|---|---|---|---|---|
@@ -377,6 +377,82 @@ webhooks, marketing tools, accounting, live chat and marketplaces – "do all th
   - **Not built:** BlueEx (its API host does not resolve).
 - **Test data note:** `npm run test:stock` still passes both stock checks, but its clean-up fails. Product #1 in the local test database is published without photos, and an existing rule refuses to save it. This is unrelated to this work, and its stock was left as it was.
 
+### 2.15 The "fix all" pass (17 October 2026)
+
+After a gap analysis ("what else is missing"), the owner asked to fix everything: launch safety first, then quick wins,
+then merchant features. Not committed – the working tree, as before.
+
+**Launch safety and operations**
+- **Browser test of the money path** (`scripts/tests/e2e-checkout.mjs`, `npm run test:e2e` after `test:e2e:seed`):
+  real headless Chrome, desktop and phone, product → cart → checkout → order → thank-you page, plus gift cards (part
+  and whole), a pre-order with a company invoice, a loyalty voucher and a digital download. In CI against a production
+  build; the browser helper (`scripts/tests/lib/chrome.mjs`) now gives up on stuck calls instead of hanging.
+- **Backup and restore drill in CI**: the backup image is built, a dump restored into a fresh database and every
+  table's row count compared (`scripts/tests/compare-restore.mjs`).
+- **Configuration checks** (`src/lib/config-warnings.ts`): settings that only work together, number ranges, minimum
+  secret lengths in production, URL and email formats.
+- **Logging**: server errors go through the structured logger (events, not `console.error`); Sentry trace sampling
+  and source-map upload are configurable (`SENTRY_*`, see `docs/DEPLOYMENT.md`).
+- **Migrations run when the server starts** (no longer during the build; `MIGRATE_DURING_BUILD=true` keeps the old
+  way); shopper sign-ins last `SHOPPER_SESSION_DAYS` (default 14).
+- **Platform admin**: 12-month history (orders, revenue per currency, invoices, stores); integration overview;
+  "view a store as its team" for support (reason required, 30 minutes, recorded); alerts to ShopEngine's team for
+  failed plan payments and stores closed by their owner (`PLATFORM_ALERT_EMAILS`).
+- **Security events** (Platform → Security events): sign-ins, wrong passwords, 2-step changes, lockouts, support views –
+  with shortened addresses, kept 180 days.
+- **Store owners**: download all of the store's data (one JSON file, secrets left out) and close the store themselves
+  (typed confirmation; data kept).
+- **Integrations**: marketplace syncs can't run twice at once and record their result ("Last sync …", **Sync now**);
+  courier cash payouts mark delivered cash-on-delivery orders Paid; QuickBooks / Xero also book refunds.
+- **Storefront**: the header no longer scrolls sideways between 800 and 1,920 px; product, category, brand and blog
+  pages render per store (they returned 500 in production); the first screen of the home page appears at once.
+
+**Merchant features**
+- **Delivery methods and weight pricing**: a zone can offer Express etc. (own price, free-above, delivery time) and
+  charge per kg above an included weight; checkout asks for the method, the order keeps it.
+- **Gift cards** (Marketing → Gift cards): codes with a balance, emailed to the recipient if wanted; pay all or part of
+  an order (the balance is taken in the order's transaction – never spent twice); cancelling gives it back, re-opening
+  takes it again; online payments are for what is left; shown on the order page, receipts, invoices and the Store API.
+- **Pre-orders and backorders** (Product → When sold out): keep selling when sold out, or take pre-orders with a ship
+  date; stock goes below 0 (units owed), the order's lines say "ships later"; the shop counter never oversells; stock
+  counts keep what is owed; shopping feeds and search data say preorder / backorder.
+- **Unsubscribe**: "stop reminders" and the email app's one-click Unsubscribe (`List-Unsubscribe`) put the shopper on the
+  store's Unsubscribed list (Marketing → Unsubscribed); cart reminders and the subscribers export skip them; ticking
+  "send me offers" at checkout takes them off again.
+- **Flash sales with "% off"**: optional start time and discount; the shop, the cart and checkout charge the sale price
+  while it runs and go back by themselves (housekeeping refreshes the catalog when a sale starts or ends).
+- **Tax per product and company invoices**: Normal / Reduced / Exempt per product (Settings → Payments → Reduced rate);
+  each line taxed at its rate, discounts shared out; invoices show one line per rate. Checkout: "Invoice in another
+  name" (company, VAT / tax number, address) – on the invoice (Bill to / Deliver to), the order page and in /cms.
+- **Loyalty points** (Settings → Installments & reminders → Loyalty points; Marketing → Loyalty points): signed-in
+  customers earn points when an order is delivered (taken back if it comes back), turn them into a voucher (a gift card
+  in their name) on their account page and pay with it at checkout; managers can correct a balance with a reason.
+- **Stock value report** (Reports → Stock value, owners): stock at cost and at today's prices, how long it has gone
+  without selling, slow movers.
+- **Shop funnel** (Reports → Shop funnel, managers): product views → added to cart → checkout → online orders, by day and
+  product – counted by the shop itself, no cookies and nothing about the person.
+- **Collections**: "Show from" / "Show until" dates (seasonal collections appear and go by themselves).
+- **Digital products** (Catalog → Digital files; Product → Digital product): private files; once an order is paid the
+  customer gets signed, counted, expiring download links on the order pages and by email; a cart of downloads only
+  pays no delivery.
+- **Per-store caches**: an order, a shop sale or a product / collection edit in one store refreshes that store's
+  catalog only (before, every store's).
+
+**Bugs found while testing (fixed)**
+- The **product edit page was blank** for anyone working in a store: the version history was queried with a plain
+  `store` filter that versions can't use (`readVersions` now filters `version.store` – products, posts, pages, store
+  settings). Guarded by `npm run test:versions`.
+- A courier booking for an order partly paid by gift card would have asked the rider for the full total.
+- With pre-orders: a stock count would have wiped the units owed, and a product with units owed couldn't be saved.
+- The funnel first counted orders typed in by the team as online orders.
+
+**Verified (run)** – see §5.
+
+**Not done** (still open – see §7): a custom role builder, storefront translations, prices in several currencies,
+stock per location, subscriptions, separate authorise / capture, return labels, marketplace orders as ShopEngine
+orders, back-filling email tools, theme drafts (themes keep a version history with restore), a search index for very
+large catalogs.
+
 ## 3. Branding
 The platform is **ShopEngine** (admin, login, emails to merchants and staff, 2-step issuer, admin logo and icon – the brand's own artwork in `public/brand/shopengine/` since 16 October). The original shop is the
 **default store** and keeps its own name, texts, icons and city pages.
@@ -405,6 +481,12 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
 
 | Check | Result |
 |---|---|
+| **17 Oct:** `tsc --noEmit` · `eslint . --max-warnings=0` · `vitest run` | clean · clean · **199 / 199** |
+| **17 Oct:** all 17 database suites (`test:tenants`, `orders`, `billing`, `shipments`, `international`, `stock`, `store-webhooks`, `integration-payments`, `platform-ops`, `gift-cards`, `preorders`, `unsubscribe`, `stock-value`, `loyalty`, `shop-funnel`, `versions`, `digital`) | **all pass – 223 checks, 0 failures** |
+| **17 Oct:** `next build` (production) | **exit 0**; `/download/[token]`, `/api/stats`, `/api/unsubscribe/cart/[token]` in the route list |
+| **17 Oct:** browser test on the production build (`npm run test:e2e`, headless Chrome) | **77 / 77**: desktop + phone checkout, gift card part / whole, pre-order + company invoice, loyalty voucher from the account page, a digital download (link downloads the file, no delivery charge) |
+| **17 Oct:** `/cms` screens as a store owner on the production build (`scripts/tests/admin-smoke.mjs`) | **14 / 14** load without errors: gift cards (list, new), loyalty points, unsubscribed, stock value, product (Pricing & stock), flash sale, loyalty + tax settings, shop funnel, digital files, collection dates, an order with "Invoice to" |
+| **17 Oct:** live on the dev server | flash sale 10 % → product page Rs 1,350, orders charged 1,350, price back 26 s after the sale ended; an order in one store refreshed only that store's catalog (another store kept its cached price); cart reminders: unsubscribed shopper not reminded, the control reminded, one-click POST stopped a cart; the reminder email carried `List-Unsubscribe` + `List-Unsubscribe-Post` (local mail sink) |
 | `tsc --noEmit` · `eslint . --max-warnings=0` | clean · clean |
 | `vitest run` | **101 / 101** (access rules, routing, availability, Stripe signatures, totals/tax, discounts, plans, outbox; currencies and rounding, store-local days incl. daylight saving, phone numbers from any country, payment methods by country, postcode zones, zones per country and addresses abroad) |
 | `npm run test:tenants` (real DB, in CI) | **18 / 18**: own-store reads only; no cross-store writes or creates; no self-promotion or joining other teams; another store's payment settings unreadable and unwritable; same discount code in two stores without interference; merchants can't see other stores' people or delete accounts |
@@ -435,8 +517,12 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
   - the backup image build;
   - DNS TXT verification on a real domain.
 - **Not exercised in a browser:**
-  - platform-admin and owner screens (2-step login wasn't automated), apart from the access rules tested through Payload's API;
+  - platform-admin screens (2-step login isn't automated; the 17 Oct owner screens were checked with 2-step sign-in switched off locally);
   - merchant onboarding (Account → Stores).
+- **17 Oct features, not run against real services:** the downloads email and the gift card / reminder emails were
+  built and caught by a local mail sink (no provider); digital files were stored on local disk, not in the S3 bucket;
+  `List-Unsubscribe` was not tried in Gmail / Outlook; the shop funnel was fed by test traffic only; GitHub Actions
+  (the new CI steps – browser test, backup drill, the new database suites) has not run on GitHub.
 - **Not re-measured:** mobile layout and page speed (still Not Verified).
 - **Payload's own date fields** ("Placed", "Last modified") show the viewer's computer time, not the store's time zone
   (the order panel's timeline and all reports, numbers and messages do use the store's).
@@ -450,8 +536,12 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
 - **Inventory:** multiple inventory locations and stock per location.
 - **Themes:** a theme library.
 - **Fulfilment:** location-based fulfilment; carrier APIs; return shipping labels.
-- **Marketing and analytics:** campaign records; traffic tracking beyond the GA/Meta snippets.
-- **Testing:** an automated browser end-to-end suite in CI.
+- **Marketing and analytics:** campaign records. (Traffic tracking: the shop's own funnel since 17 Oct.)
+- **Testing:** (an automated browser test of checkout is in CI since 17 Oct – not yet run on GitHub.)
+- **Still open after 17 Oct:** a custom role builder; storefront translations; prices in several currencies; stock per
+  location; subscriptions; separate authorise / capture; return labels; marketplace orders as ShopEngine orders;
+  back-filling email tools; theme drafts (themes have a version history with restore); a search index for very large
+  catalogs.
 
 **Notable partials:**
 - One currency per store (no conversion or prices in several currencies); shoppers abroad pay in the store's currency.
@@ -465,7 +555,7 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
   against bank statements.
 - Platform revenue is current figures only (no history or charts).
 - Rate limits are per server instance.
-- The storefront session lasts 30 days.
+- The storefront session lasts `SHOPPER_SESSION_DAYS` (default 14 since 17 Oct).
 
 ## 8. Deploying this
 1. **Back up the database**, then deploy. The four migrations run on start and backfill existing data
@@ -487,6 +577,11 @@ Checked on a second store: home title "Acme Gadgets", product title "… | Acme 
    - QuickBooks, Xero, Daraz and Amazon (`docs/DEPLOYMENT.md`, `.env.example`). Without them, those cards say "not switched on yet".
    - Store-connected payment gateways send shoppers back to the store's own HTTPS address.
    - Migrations `20261016_031120_integrations` and `20261016_035623_store_api_shipments` are additive.
-7. **After deploying,** run the five CI database tests against staging, and `npm run test:webhooks` against a staging server.
+7. **17 Oct migrations** (all additive, run on start): security events, support view, shipping methods, gift cards,
+   pre-orders, unsubscribed, flash-sale discount, tax classes + billing, loyalty points, shop stats, collection dates,
+   digital products. New optional settings: `PLATFORM_ALERT_EMAILS`, `SHOPPER_SESSION_DAYS`, `SENTRY_TRACES_SAMPLE_RATE`,
+   `SENTRY_AUTH_TOKEN` / `SENTRY_ORG` / `SENTRY_PROJECT`, `MIGRATE_DURING_BUILD` (`docs/DEPLOYMENT.md`). Digital files
+   go to the bucket under `downloads/` – never served by `/media`.
+8. **After deploying,** run the CI database tests against staging, and `npm run test:webhooks` against a staging server.
    - Also `npm run test:integration-payments`: it creates and removes its own connections and orders.
    - **Never against production:** they create and delete test records.

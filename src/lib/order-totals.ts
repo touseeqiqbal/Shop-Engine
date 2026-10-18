@@ -30,6 +30,8 @@ export function orderTotals(input: {
   weightKg?: number;
   /** the lines with their products' tax class – products on the reduced rate or without tax (default: all normal) */
   lines?: TaxLine[];
+  /** every item is a download: nothing to deliver */
+  noShipping?: boolean;
 }): Totals {
   const { settings } = input;
   const round = (n: number) => roundMoney(n, settings.currency || "PKR");
@@ -37,9 +39,9 @@ export function orderTotals(input: {
   const discount = Math.min(subtotal, Math.max(0, round(input.discount)));
   const goods = round(subtotal - discount);
   // the chosen way of delivery (Standard unless the zone offers others), priced for this cart
-  const options = input.city ? shippingOptions(input.city, goods, settings, input.postalCode ?? "", input.country, input.weightKg ?? 0) : [];
+  const options = input.city && !input.noShipping ? shippingOptions(input.city, goods, settings, input.postalCode ?? "", input.country, input.weightKg ?? 0) : [];
   const shipping = options.find((o) => o.id === (input.shipping || "standard")) ?? options[0] ?? null;
-  const delivery = input.freeShipping ? 0 : input.city ? (shipping?.charge ?? 0) : settings.freeDeliveryThreshold > 0 && goods >= settings.freeDeliveryThreshold ? 0 : null;
+  const delivery = input.noShipping ? 0 : input.freeShipping ? 0 : input.city ? (shipping?.charge ?? 0) : settings.freeDeliveryThreshold > 0 && goods >= settings.freeDeliveryThreshold ? 0 : null;
   const fee = input.method === "cod" ? codFee(settings) : 0;
   const t = settings.tax;
   let tax = 0;

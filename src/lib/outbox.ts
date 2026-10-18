@@ -59,13 +59,18 @@ export async function processOutbox(payload: Payload, limit = 25, depth = 0): Pr
     RETURNING "id", "type", "store_id", "data", "attempts"`);
   const result = { sent: 0, failed: 0, dead: 0 };
   let fannedOut = false;
+  // Still ours? (one statement: checks AND renews the claim). A slow batch can outlast STUCK_AFTER_MS – another worker
+  // may then have re-claimed a row (its `attempts` went up): that worker sends it, this one skips it (no double sends).
+  const stillMine = async (e: OutboxEvent) =>
+    (await db.execute(sql`UPDATE "payload"."cms_outbox_events" SET "locked_at" = now() WHERE "id" = ${e.id} AND "status" = 'processing' AND "attempts" = ${e.attempts} RETURNING "id"`)).rows.length > 0;
   for (const r of rows) {
     const event: OutboxEvent = { id: Number(r.id), type: String(r.type), store: r.store_id == null ? null : Number(r.store_id), data: (r.data ?? {}) as Record<string, unknown>, attempts: Number(r.attempts) };
     const handler = handlerFor(event.type);
+    if (!(await stillMine(event))) continue;
     try {
       if (!handler) throw new Error(`No handler for "${event.type}"`);
       await handler(payload, event);
-      await db.execute(sql`UPDATE "payload"."cms_outbox_events" SET "status" = 'sent', "sent_at" = now(), "last_error" = NULL, "updated_at" = now() WHERE "id" = ${event.id}`);
+      await db.execute(sql`UPDATE "payload"."cms_outbox_events" SET "status" = 'sent', "sent_at" = now(), "last_error" = NULL, "updated_at" = now() WHERE "id" = ${event.id} AND "attempts" = ${event.attempts}`);
       result.sent++;
       if (event.type.startsWith("notify.")) fannedOut = true;
     } catch (e) {
@@ -74,7 +79,7 @@ export async function processOutbox(payload: Payload, limit = 25, depth = 0): Pr
       await db.execute(sql`
         UPDATE "payload"."cms_outbox_events" SET "status" = ${dead ? "dead" : "pending"}::"payload"."enum_cms_outbox_events_status",
           "next_attempt_at" = now() + make_interval(secs => ${backoffMs(event.attempts) / 1000}), "last_error" = ${message}, "updated_at" = now()
-        WHERE "id" = ${event.id}`);
+        WHERE "id" = ${event.id} AND "attempts" = ${event.attempts}`);
       if (dead) {
         result.dead++;
         log.error("outbox.dead", e, { event: event.id, type: event.type, attempts: event.attempts });

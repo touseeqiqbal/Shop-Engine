@@ -32,7 +32,8 @@ export async function GET() {
     return Response.json({ ok: false, db: "down", cms: "up" }, { status: 503, headers });
   }
   try {
-    await payload.count({ collection: "users", overrideAccess: true });
+    // Payload answers (one row, not a count of every account on each probe)
+    await payload.find({ collection: "users", limit: 1, depth: 0, pagination: false, overrideAccess: true });
     // only how many settings need attention (the details are on the /cms Home screen for platform admins)
     return Response.json({ ok: true, db: "up", cms: "up", ...(warnings.length ? { warnings: warnings.length } : {}) }, { headers });
   } catch (e) {

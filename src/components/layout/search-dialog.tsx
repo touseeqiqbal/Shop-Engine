@@ -37,6 +37,9 @@ export function SearchDialog() {
   const [q, setQ] = useState("");
   const [data, setData] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  // the search request failed (offline, server error) – shown as such, not as "no products found"
+  const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
   const [active, setActive] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -59,6 +62,8 @@ export function SearchDialog() {
     const term = q.trim();
     if (term.length < 2) {
       setData(null);
+      setFailed(false);
+      setLoading(false);
       return;
     }
     setLoading(true);
@@ -66,19 +71,26 @@ export function SearchDialog() {
     const timer = setTimeout(async () => {
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`, { signal: ctrl.signal });
-        setData(await res.json());
+        if (!res.ok) throw new Error(`Search failed (${res.status})`);
+        setData((await res.json()) as SearchResponse);
+        setFailed(false);
         setActive(-1);
-      } catch {
-        /* aborted */
+      } catch (err) {
+        // replaced by a newer search (typing on) – nothing to report
+        if ((err as Error).name === "AbortError" || ctrl.signal.aborted) return;
+        // don't leave the previous term's results up as if they were these
+        setData(null);
+        setActive(-1);
+        setFailed(true);
       } finally {
-        setLoading(false);
+        if (!ctrl.signal.aborted) setLoading(false);
       }
     }, 180);
     return () => {
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [q]);
+  }, [q, retry]);
 
   const close = () => setSearchOpen(false);
   const submit = (term = q) => {
@@ -145,6 +157,10 @@ export function SearchDialog() {
                 <X className="size-5" aria-hidden="true" />
               </button>
             </form>
+            {/* screen readers hear how many products matched (a failed search has its own alert below) */}
+            <p className="sr-only" role="status">
+              {q.trim().length >= 2 && !loading && data ? (hits.length ? `${hits.length} product${hits.length === 1 ? "" : "s"} found` : "No products found") : ""}
+            </p>
 
             <div className="max-h-[70vh] overflow-y-auto p-3">
               {q.trim().length < 2 ? (
@@ -174,6 +190,19 @@ export function SearchDialog() {
                 </div>
               ) : (
                 <>
+                  {failed && (
+                    <div role="alert" className="flex flex-col items-center gap-3 p-6 text-center text-sm">
+                      <p className="text-rose-300 light:text-rose-700">Search isn&apos;t responding right now.</p>
+                      <div className="flex flex-wrap justify-center gap-2">
+                        <button type="button" onClick={() => setRetry((n) => n + 1)} className="btn btn-secondary btn-sm">
+                          Try again
+                        </button>
+                        <button type="button" onClick={() => submit()} className="btn btn-ghost btn-sm">
+                          See all results for “{q}”
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {!!data?.categories.length && (
                     <div className="mb-2 flex flex-wrap gap-2 px-2 pt-1">
                       {data.categories.map((c) => (

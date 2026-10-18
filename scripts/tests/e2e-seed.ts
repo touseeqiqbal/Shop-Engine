@@ -63,4 +63,37 @@ for (const [code, balance] of [["E2EP-ART2-CARD-TEST", 500], ["E2EF-ACEV-CARD-TE
   else await payload.create({ collection: "gift-cards" as never, data: { ...data, code, store, recipientName: "E2E" } as never, overrideAccess: true, depth: 0, context: { giftCardServer: true, storeId: store } });
 }
 console.log("E2E gift cards ready (500 and 5000)");
+
+// loyalty on for this store, and a customer with 150 points (password from E2E_CUSTOMER_PASSWORD) – test databases only
+const conv = (await payload.find({ collection: "store-conversion" as never, where: { store: { equals: store } }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
+const loyalty = { enabled: true, pointsPer100: 1, pointValue: 1, minRedeem: 100 };
+if (conv) await payload.update({ collection: "store-conversion" as never, id: Number(conv.id), data: { loyalty } as never, overrideAccess: true, depth: 0, ...ctx });
+else await payload.create({ collection: "store-conversion" as never, data: { store, loyalty } as never, overrideAccess: true, depth: 0, context: { skipRevalidate: true, storeId: store } });
+const loyalEmail = "e2e.loyal@example.com";
+const loyalPassword = process.env.E2E_CUSTOMER_PASSWORD || "E2e-Loyal-2026!";
+const found = (await payload.find({ collection: "users", where: { email: { equals: loyalEmail } }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
+const loyal = found
+  ? ((await payload.update({ collection: "users", id: Number(found.id), data: { password: loyalPassword, emailVerified: true, name: "E2E Loyal" } as never, overrideAccess: true, depth: 0 })) as unknown as Doc)
+  : ((await payload.create({ collection: "users", data: { email: loyalEmail, password: loyalPassword, name: "E2E Loyal", role: "customer", emailVerified: true } as never, overrideAccess: true, depth: 0 })) as unknown as Doc);
+const { addPoints, pointsBalance } = await import("../../src/payload/loyalty");
+const had = await pointsBalance(payload, store, Number(loyal.id));
+if (had !== 150) await addPoints(payload, { storeId: store, userId: Number(loyal.id), points: 150 - had, note: "E2E seed" });
+// last run's vouchers go (each run makes one)
+await payload.delete({ collection: "gift-cards" as never, where: { customer: { equals: Number(loyal.id) } } as never, overrideAccess: true });
+console.log("E2E loyal customer ready (150 points)");
+
+// a digital product (a download, nothing to ship) with its file
+let guide = await one("products", { slug: { equals: "e2e-digital-guide" } });
+if (!guide) {
+  const text = Buffer.from("ShopEngine E2E digital guide\n");
+  const file = (await payload.create({ collection: "digital-files" as never, data: { store, title: "E2E Guide (text)" } as never, file: { data: text, mimetype: "text/plain", name: "e2e-guide.txt", size: text.length }, overrideAccess: true, depth: 0, context: { skipRevalidate: true, storeId: store } })) as unknown as Doc;
+  guide = (await payload.create({
+    collection: "products",
+    data: { title: "E2E Digital Guide", slug: "e2e-digital-guide", sku: "E2E-GUIDE", brand: brand.id, category: category.id, price: 300, stock: 1000, status: "active", images: (product.images as unknown[]) ?? [], store, _status: "published", digital: { files: [file.id], noShipping: true, downloadLimit: 3, downloadDays: 30 } } as never,
+    overrideAccess: true,
+    depth: 0,
+    ...ctx,
+  })) as unknown as Doc;
+}
+console.log("E2E digital product ready: /e2e-tests/e2e-digital-guide");
 process.exit(0);

@@ -12,6 +12,7 @@ import { primaryPhone, storePlace } from "@/lib/site-info";
 import { faqJsonLd } from "@/lib/seo";
 import { getPageMeta } from "@/lib/page-seo";
 import { getResolvedPageContent } from "@/lib/repo/site-content";
+import { getBlogPost, getCategoryBySlug } from "@/lib/repo/catalog";
 import { getConversionSettings } from "@/lib/cms/engagement";
 import { countryInText } from "@/lib/locale";
 import { moneyFormatter } from "@/lib/money";
@@ -91,7 +92,15 @@ const FAQS = (pk: boolean): FaqItem[] => [
 ];
 
 export default async function InstallmentsPage() {
-  const [c, conversion, loc] = await Promise.all([getResolvedPageContent("/installments"), getConversionSettings(), getStoreLocale()]);
+  const [c, conversion, loc, budget, used, guide] = await Promise.all([
+    getResolvedPageContent("/installments"),
+    getConversionSettings(),
+    getStoreLocale(),
+    // the "on a budget" suggestions link only to what this store has
+    getCategoryBySlug("budget-laptops").catch(() => null),
+    getCategoryBySlug("used-refurbished-laptops").catch(() => null),
+    getBlogPost("best-laptops-under-100000-pakistan").catch(() => null),
+  ]);
   const money = moneyFormatter(loc);
   const pk = loc.country === "PK";
   const plans = conversion.emiEnabled ? conversion.emiPlans : [];
@@ -198,20 +207,34 @@ export default async function InstallmentsPage() {
         <ul className="mt-4 space-y-3 text-sm text-muted">
           <li className="flex gap-3">
             <MessageCircle className="mt-0.5 size-4 shrink-0 text-emerald-400" aria-hidden="true" />
-            <span>
-              Browse our{" "}
-              <Link href="/category/budget-laptops" className="font-semibold text-fg underline-offset-4 hover:underline">
-                {pk ? "budget laptops under Rs 100,000" : "budget laptops"}
-              </Link>{" "}
-              and{" "}
-              <Link href="/category/used-refurbished-laptops" className="font-semibold text-fg underline-offset-4 hover:underline">
-                used & refurbished laptops
-              </Link>{" "}
-              – Core i5 performance for much less.
-            </span>
+            {budget || used ? (
+              <span>
+                Browse our{" "}
+                {budget && (
+                  <Link href="/category/budget-laptops" className="font-semibold text-fg underline-offset-4 hover:underline">
+                    {pk ? "budget laptops under Rs 100,000" : "budget laptops"}
+                  </Link>
+                )}
+                {budget && used ? " and " : " "}
+                {used && (
+                  <Link href="/category/used-refurbished-laptops" className="font-semibold text-fg underline-offset-4 hover:underline">
+                    used & refurbished laptops
+                  </Link>
+                )}{" "}
+                – Core i5 performance for much less.
+              </span>
+            ) : (
+              <span>
+                Browse{" "}
+                <Link href="/shop?sort=price-asc" className="font-semibold text-fg underline-offset-4 hover:underline">
+                  our lowest prices
+                </Link>{" "}
+                – often the quickest way to stay within budget.
+              </span>
+            )}
           </li>
           {/* the rupee buying guide is written for Pakistan */}
-          {pk && (
+          {pk && guide && (
             <li className="flex gap-3">
               <MessageCircle className="mt-0.5 size-4 shrink-0 text-emerald-400" aria-hidden="true" />
               <span>

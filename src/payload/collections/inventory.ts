@@ -1,7 +1,7 @@
 import type { CollectionBeforeChangeHook, CollectionConfig } from "payload";
 import { assignStore, getTenant, hasStoreRole, readFor, sameStore, storeAccess, storeField, storeIdOf, storeRoleField } from "../tenancy";
 import { dbName } from "../fields";
-import { revalidate } from "../revalidate";
+import { catalogTagOf, revalidate } from "../revalidate";
 import { userError } from "../errors";
 
 /**
@@ -90,7 +90,8 @@ const receivePurchase: CollectionBeforeChangeHook = async ({ data, originalDoc, 
   }
   data.receivedAt = now;
   data.receivedBy = (req.user as { id?: number } | null)?.id ?? null;
-  revalidate(["catalog"]);
+  // this store's catalogue only (stock shown on its pages), refreshed in the background
+  revalidate([catalogTagOf(storeId)], [], false, { soft: true });
   return data;
 };
 

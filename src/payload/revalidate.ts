@@ -30,20 +30,21 @@ export function clearRedirectCache() {
   g.__shopengineStores = undefined;
 }
 
-function run(tags: string[], paths: string[], layout: boolean) {
-  for (const t of tags) revalidateTag(t, { expire: 0 });
+function run(tags: string[], paths: string[], layout: boolean, soft = false) {
+  for (const t of tags) revalidateTag(t, soft ? "max" : { expire: 0 });
   for (const p of paths) revalidatePath(p);
   if (layout) revalidatePath("/", "layout");
 }
 
 /**
- * Revalidate cache tags and paths; a no-op outside a Next.js request.
+ * Revalidate cache tags and paths; a no-op outside a Next.js request. `soft`: stale-while-revalidate (the old data is
+ * served while the new loads in the background) – for stock-only changes such as orders, where a short delay is fine.
  * Hooks run BEFORE the database commit, so it runs now and once more after the response (= after the commit) –
  * otherwise a visitor in between could cache the old data again.
  */
-export function revalidate(tags: string[], paths: string[] = [], layout = false) {
+export function revalidate(tags: string[], paths: string[] = [], layout = false, opts: { soft?: boolean } = {}) {
   try {
-    run(tags, paths, layout);
+    run(tags, paths, layout, opts.soft);
   } catch (e) {
     report(e);
     return;
@@ -51,7 +52,7 @@ export function revalidate(tags: string[], paths: string[] = [], layout = false)
   try {
     after(() => {
       try {
-        run(tags, paths, layout);
+        run(tags, paths, layout, opts.soft);
       } catch (e) {
         report(e);
       }
@@ -63,11 +64,15 @@ export function revalidate(tags: string[], paths: string[] = [], layout = false)
 
 /** Storefront catalog cache tags (same strings as TAGS in src/lib/repo/catalog.ts). */
 export const CATALOG_TAG = "catalog";
+import { catalogTagOf } from "../lib/cache-tags";
 export const REVIEWS_TAG = "reviews";
+
+/** One store's catalog cache tag (CATALOG_TAG – every store – when the store isn't known). */
+export { catalogTagOf } from "../lib/cache-tags";
 
 /** Payload hook: refresh the storefront catalog after a save/delete (skipped when context.skipRevalidate is set). */
 export const revalidateCatalog = <T>({ doc, context }: { doc: T; context?: Record<string, unknown> }): T => {
-  // the header/menus show category and product names and links too
-  if (!context?.skipRevalidate) revalidate([CATALOG_TAG, CHROME_TAG], ["/", "/sitemap.xml", "/llms.txt"]);
+  // that store's catalog; the header/menus show category and product names and links too
+  if (!context?.skipRevalidate) revalidate([catalogTagOf((doc as { store?: unknown } | null)?.store), CHROME_TAG], ["/", "/sitemap.xml", "/llms.txt"]);
   return doc;
 };

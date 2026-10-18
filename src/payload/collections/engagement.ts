@@ -3,7 +3,7 @@ import { anyone, platformAdmins } from "../access";
 import { assignStore, publicOrStore, sameStore, storeAccess, storeField, storeIdOf, storeRoleField } from "../tenancy";
 import { dbName, perStoreUnique } from "../fields";
 import { optOutKey } from "../optout-key";
-import { revalidate } from "../revalidate";
+import { catalogTagOf, revalidate } from "../revalidate";
 import { log } from "../../lib/log";
 
 /**
@@ -93,7 +93,8 @@ export const TradeIns: CollectionConfig = {
 
 const questionAnswered: CollectionAfterChangeHook = async ({ doc, previousDoc, context, req }) => {
   if (context?.migrating) return doc;
-  if (doc.published || previousDoc?.published) revalidate(["catalog"]);
+  // this store's catalogue only – a question answered in one store never expires every store's
+  if (doc.published || previousDoc?.published) revalidate([catalogTagOf(doc.store)]);
   if (doc.answer && doc.published && !previousDoc?.published && doc.email) {
     // queued with the save (sent by the outbox once it is committed; never twice)
     try {
@@ -301,6 +302,25 @@ export const ConversionSettings: GlobalConfig = {
         { name: "cartSubject", type: "text", defaultValue: "You left something in your cart", label: "Email subject" },
         { name: "cartMessage", type: "textarea", defaultValue: "Your items are still waiting – stock is limited, so complete your order before they're gone.", label: "Message" },
         { name: "cartCoupon", type: "text", label: "Coupon code to offer (optional)", admin: { description: "Create it first in Marketing → Discount codes." } },
+      ],
+    },
+    {
+      type: "collapsible",
+      label: "Loyalty points",
+      fields: [
+        {
+          name: "loyalty",
+          type: "group",
+          label: false,
+          fields: [
+            { name: "enabled", type: "checkbox", defaultValue: false, label: "Give signed-in customers points on delivered orders", admin: { description: "They turn their points into a voucher on their account page and pay with it at checkout. A returned or refused order takes its points back." } },
+            { type: "row", fields: [
+              { name: "pointsPer100", type: "number", min: 0, defaultValue: 1, label: "Points per 100 spent", admin: { width: "34%", description: "On the items (after discounts), not delivery." } },
+              { name: "pointValue", type: "number", min: 0, defaultValue: 1, label: "One point is worth", admin: { width: "33%", description: "In your currency, e.g. 1 = Rs 1 off." } },
+              { name: "minRedeem", type: "number", min: 1, defaultValue: 100, label: "Fewest points for a voucher", admin: { width: "33%" } },
+            ] },
+          ],
+        },
       ],
     },
     {

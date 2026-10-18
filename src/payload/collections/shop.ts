@@ -35,13 +35,13 @@ const relId = (v: unknown) => (v && typeof v === "object" ? (v as { id: number }
 /** Product stock = its units that are In stock (only for products that track units). */
 async function syncUnitStock(req: Parameters<CollectionAfterChangeHook>[0]["req"], productId: number | null | undefined) {
   if (!productId) return;
-  const product = (await req.payload.findByID({ collection: "products", id: productId, depth: 0, overrideAccess: true, req }).catch(() => null)) as { trackUnits?: boolean } | null;
+  const product = (await req.payload.findByID({ collection: "products", id: productId, depth: 0, overrideAccess: true, req }).catch(() => null)) as { trackUnits?: boolean; store?: unknown } | null;
   if (!product?.trackUnits) return;
   const { totalDocs } = await req.payload.count({ collection: "units", where: { and: [{ product: { equals: productId } }, { status: { equals: "in-stock" } }] }, overrideAccess: true, req });
   const { setStock } = await import("../stock");
   await setStock(req.payload, productId, totalDocs, req);
-  const { revalidate, CATALOG_TAG } = await import("../revalidate");
-  revalidate([CATALOG_TAG]);
+  const { revalidate, catalogTagOf } = await import("../revalidate");
+  revalidate([catalogTagOf(product.store)]);
 }
 
 const unitAfterChange: CollectionAfterChangeHook = async ({ doc, previousDoc, req, context }) => {

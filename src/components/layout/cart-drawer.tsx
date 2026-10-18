@@ -15,6 +15,7 @@ export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
   const { t } = usePrefs();
   const money = useMoney();
   const pk = useStoreLocale().country === "PK"; // "all over Pakistan" only for Pakistani stores
+  const cod = delivery.cod.enabled; // Cash on Delivery is only promised while the store offers it
   const panel = useRef<HTMLElement>(null);
   useFocusTrap(panel, drawerOpen);
   // the city picked on a product page (shipping zones can have their own free-delivery amount)
@@ -79,7 +80,7 @@ export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
                   <ShoppingBag className="size-9 text-muted" aria-hidden="true" />
                 </div>
                 <p className="text-lg font-semibold">{t("emptyCart")}</p>
-                <p className="text-sm text-muted">Browse laptops and accessories – {pk ? "Cash on Delivery all over Pakistan" : "fast delivery nationwide"}.</p>
+                <p className="text-sm text-muted">Browse laptops and accessories – {pk ? (cod ? "Cash on Delivery all over Pakistan" : "delivery all over Pakistan") : "fast delivery nationwide"}.</p>
                 <Link href="/shop" onClick={closeDrawer} className="btn btn-primary">
                   {t("continueShopping")}
                 </Link>
@@ -155,7 +156,7 @@ export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
                     <span className="text-muted">{t("subtotal")}</span>
                     <span className="font-display text-xl font-bold tabular-nums">{money(subtotal)}</span>
                   </div>
-                  <p className="text-xs text-muted">Delivery calculated at checkout · Cash on Delivery available</p>
+                  <p className="text-xs text-muted">Delivery calculated at checkout{cod ? " · Cash on Delivery available" : ""}</p>
                   <div className="grid grid-cols-2 gap-2">
                     <Link href="/cart" onClick={closeDrawer} className="btn btn-secondary">
                       {t("viewCart")}

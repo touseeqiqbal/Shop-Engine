@@ -57,6 +57,9 @@ export const legacyIdField: Field = {
   type: "text",
   unique: true,
   index: true,
+  // written only by the import scripts (with full access) – never through /cms or the API: the storefront finds
+  // old records by it, so it must not be settable on an account or product
+  access: { create: () => false, update: () => false },
   admin: { position: "sidebar", readOnly: true, description: "Imported from the previous system.", condition: (d) => Boolean(d?.legacyId) },
   hooks: { beforeDuplicate: [() => null] },
 };
