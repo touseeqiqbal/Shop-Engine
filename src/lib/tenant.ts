@@ -8,6 +8,7 @@ import { unstable_rethrow } from "next/dist/client/components/unstable-rethrow";
 import { isCmsConfigured } from "@/lib/db/config";
 import { PREVIEW_STORE_COOKIE, matchStore, storeAvailability, storeOrigin, toDirectoryEntry, type StoreDirectoryEntry } from "./tenant-shared";
 import { isMarketingHost } from "./marketing/hosts";
+import { readPreviewCookie } from "./preview-cookie";
 
 export { storeAvailability, storeOrigin, type StoreDirectoryEntry } from "./tenant-shared";
 
@@ -59,7 +60,8 @@ const storeOfRequest = cache(async (): Promise<StoreDirectoryEntry | null> => {
   try {
     // the Host header only (a CDN caches by it; X-Forwarded-Host could be used to poison another store's cache)
     host = (await headers()).get("host") ?? "";
-    if ((await draftMode()).isEnabled) previewId = Number((await cookies()).get(PREVIEW_STORE_COOKIE)?.value) || null;
+    // only a cookie /api/preview signed (for a store this person works in) – never a store id typed into it
+    if ((await draftMode()).isEnabled) previewId = readPreviewCookie((await cookies()).get(PREVIEW_STORE_COOKIE)?.value);
   } catch (e) {
     // Next.js signals "this page depends on the request" by throwing: let it through, so a page is never cached once
     // and then shown on every store's address (pages are rendered per request; their data stays cached per store)
@@ -131,6 +133,22 @@ export async function currentStoreId(): Promise<number | null> {
   return (await getCurrentStore())?.id ?? null;
 }
 
+/**
+ * Is a team member previewing THIS store's drafts? Draft Mode on AND a signed preview cookie (/api/preview) naming the
+ * current store. Draft Mode alone isn't enough: its cookie copied to another store's address would open that store's
+ * drafts.
+ */
+export async function isPreviewing(): Promise<boolean> {
+  try {
+    if (!(await draftMode()).isEnabled) return false;
+    const previewId = readPreviewCookie((await cookies()).get(PREVIEW_STORE_COOKIE)?.value);
+    return previewId != null && previewId === (await currentStoreId());
+  } catch (e) {
+    unstable_rethrow(e);
+    return false;
+  }
+}
+
 /** Is the current store open to shoppers (draft stores are open to their team in Draft Mode)? */
 export async function currentAvailability() {
   const store = await getCurrentStore();
@@ -138,7 +156,7 @@ export async function currentAvailability() {
   const availability = storeAvailability(store);
   if (!availability.open && availability.reason === "setting-up") {
     try {
-      if ((await draftMode()).isEnabled) return { store, availability: { open: true } as const };
+      if (await isPreviewing()) return { store, availability: { open: true } as const };
     } catch (e) {
       unstable_rethrow(e);
     }

@@ -3,6 +3,7 @@ import { payloadClient } from "@/lib/cms/catalog-source";
 import { getConversionSettings } from "@/lib/cms/engagement";
 import { canReach, queueNotification } from "@/lib/notify";
 import { storeDirectory, storeOrigin } from "@/lib/tenant";
+import { storeAvailability, toDirectoryEntry } from "@/lib/tenant-shared";
 import { log } from "@/lib/log";
 import { isOptedOut } from "@/payload/optouts";
 
@@ -29,8 +30,22 @@ function settingsCache() {
 /** At most this many pages of candidates per run (each job's own page size). */
 const MAX_PAGES = 10;
 
+/**
+ * Is the store open to shoppers? A closed, suspended, unpublished or expired store sends no reminders or alerts (they
+ * used to keep going out, with links to a shop that is offline). The original shop (no store id) counts as open.
+ */
+async function storeIsOpen(): Promise<(storeId: number | null) => boolean> {
+  // read directly (a job, once a run): the cached store list falls back to "no stores" when it can't load, which would
+  // look like every store is closed
+  const payload = await payloadClient();
+  const res = await payload.find({ collection: "stores", limit: 0, pagination: false, depth: 0, overrideAccess: true });
+  const stores = (res.docs as unknown as Record<string, unknown>[]).map(toDirectoryEntry);
+  return (storeId) => (storeId == null ? true : storeAvailability(stores.find((x) => x.id === storeId) ?? null).open);
+}
+
 export async function sendStockAndPriceAlerts(): Promise<number> {
   const payload = await payloadClient();
+  const isOpen = await storeIsOpen();
   const settingsOf = settingsCache();
   // Only alerts that can be due (product back in stock, or price alerts), oldest first – so alerts for products
   // that stay sold out can't fill every run and hide the ones that are due.
@@ -58,6 +73,7 @@ export async function sendStockAndPriceAlerts(): Promise<number> {
     const p = a.product as Doc | null;
     if (!p || p.status !== "active") continue;
     const storeId = relId(a.store) ?? relId(p.store);
+    if (!isOpen(storeId)) continue;
     const s = await settingsOf(storeId);
     if (!s.alertsEnabled) continue;
     const price = num(p.price);
@@ -114,8 +130,10 @@ export async function sendCartReminders(): Promise<number> {
     after = str((res.docs[res.docs.length - 1] as unknown as Doc).lastActivityAt);
   }
   let sent = 0;
+  const isOpen = await storeIsOpen();
   for (const c of carts) {
     const storeId = relId(c.store);
+    if (!isOpen(storeId)) continue;
     const s = await settingsOf(storeId);
     if (!s.cartEnabled || !(await cartsAllowed(storeId))) continue;
     const count = num(c.remindersSent);

@@ -50,7 +50,11 @@ const nextConfig: NextConfig = {
   ...(process.env.DEV_ALLOWED_ORIGINS ? { allowedDevOrigins: process.env.DEV_ALLOWED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean) } : {}),
   output: "standalone",
   images: {
-    formats: ["image/avif", "image/webp"],
+    // WebP only: AVIF encoding is slow and runs on the shop's own server (one copy – docs/DEPLOYMENT.md), taking CPU from
+    // page rendering; WebP is nearly as small. Optimised images are kept for a month instead of being re-checked
+    // every minute (photo addresses change when the photo does).
+    formats: ["image/webp"],
+    minimumCacheTTL: 2_678_400,
     qualities: [60, 75, 90],
     remotePatterns: [
       { protocol: "https", hostname: "images.unsplash.com" },

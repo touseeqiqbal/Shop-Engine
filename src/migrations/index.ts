@@ -47,6 +47,7 @@ import * as migration_20261017_144531_loyalty_points from './20261017_144531_loy
 import * as migration_20261017_150657_shop_stats from './20261017_150657_shop_stats';
 import * as migration_20261017_153016_collection_schedule from './20261017_153016_collection_schedule';
 import * as migration_20261017_155031_digital_products from './20261017_155031_digital_products';
+import * as migration_20261019_080158_combined_discounts from './20261019_080158_combined_discounts';
 
 export const migrations = [
   {
@@ -292,6 +293,11 @@ export const migrations = [
   {
     up: migration_20261017_155031_digital_products.up,
     down: migration_20261017_155031_digital_products.down,
-    name: '20261017_155031_digital_products'
+    name: '20261017_155031_digital_products',
+  },
+  {
+    up: migration_20261019_080158_combined_discounts.up,
+    down: migration_20261019_080158_combined_discounts.down,
+    name: '20261019_080158_combined_discounts'
   },
 ];

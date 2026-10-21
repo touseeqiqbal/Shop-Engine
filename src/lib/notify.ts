@@ -73,7 +73,10 @@ export async function withStore<T>(storeId: number | null | undefined, fn: () =>
   const id = storeId ?? null;
   return runInStore(id, async () => {
     const store = id == null ? null : ((await storeDirectory()).find((x) => x.id === id) ?? null);
-    const [info, locale, channels] = await Promise.all([getSiteInfo(id).catch(() => DEFAULT_SITE_INFO), payload ? storeLocaleOf(payload, id) : DEFAULT_LOCALE, storeChannels(payload ?? null, id)]);
+    // a store we can't look up right now: fail (the outbox tries again) – falling back used to send store B's messages
+    // under the original shop's name, with its reply-to address and its team as recipients
+    if (id != null && !store) throw new Error(`Store ${id} isn't in the store list (yet) – try again later`);
+    const [info, locale, channels] = await Promise.all([getSiteInfo(id), payload ? storeLocaleOf(payload, id) : DEFAULT_LOCALE, storeChannels(payload ?? null, id)]);
     const origin = (store ? storeOrigin(store) : mainSiteUrl("")).replace(/\/$/, "");
     return ctxStore.run({ site: { ...info, url: origin }, origin, storeId: id, isDefault: !store || store.isDefault, locale, channels }, fn);
   });
@@ -146,8 +149,9 @@ export async function sendMessage(m: Message, opts: { payload?: Payload | null; 
         if (m.channel === "whatsapp") return await impl?.whatsapp?.(c, intlDigits(m.to, m.country), m.text, m.template);
         return await impl?.sms?.(c, intlDigits(m.to, m.country), m.text);
       } catch (e) {
-        // a message the provider will never take (e.g. WhatsApp outside the 24-hour window) isn't retried
-        if (e instanceof IntegrationError) return log.warn("notify.not_sendable", { channel: m.channel, provider: own.provider, reason: e.message });
+        // a message the provider will never take (e.g. WhatsApp outside the 24-hour window) isn't retried – but one that
+        // never reached it (network trouble, a timeout) is: it used to be marked sent and lost (order confirmations, codes)
+        if (e instanceof IntegrationError && !(e as { retryable?: boolean }).retryable) return log.warn("notify.not_sendable", { channel: m.channel, provider: own.provider, reason: e.message });
         throw e;
       }
     }

@@ -1,7 +1,7 @@
 import { gatewayInfo } from "./catalog";
 import { GatewayError, type PaymentGateway, type WebhookEvent, type WebhookResult } from "./gateway-types";
 import { StripeError, stripeConfigured, verifyStripeWebhook } from "./stripe";
-import { failCheckout, markCheckoutPaid, openCheckoutUrl, paymentsOnboardingLink, reconcileCardPayments, refreshPaymentsAccount, refundCardOrder, startCardPayment, storeCanTakeCards } from "./index";
+import { failCheckout, markCheckoutPaid, openCheckoutUrl, paymentsOnboardingLink, reconcileCardPayments, refreshPaymentsAccount, refundCardOrder, settleRefund, startCardPayment, storeCanTakeCards } from "./index";
 
 /**
  * Stripe as a payment provider plugin: Stripe Connect (each store's own Express account), hosted Checkout for
@@ -49,6 +49,17 @@ async function handle(payload: Parameters<PaymentGateway["handleWebhook"]>[0], e
       case "checkout.session.expired": {
         const r = await failCheckout(payload, sessionId, event.type.endsWith("expired") ? "expired" : "payment failed");
         return { status: r === "cancelled" ? "processed" : "ignored", store: storeOf(), summary: { session: sessionId, result: r } };
+      }
+      // a refund's final answer (it may be "pending" for days, then succeed – or fail)
+      case "charge.refund.updated":
+      case "refund.updated":
+      case "refund.failed": {
+        const st = String(o.status ?? "");
+        const status = st === "succeeded" ? "succeeded" : st === "failed" || st === "canceled" ? "failed" : "pending";
+        const r = await settleRefund(payload, { provider: "stripe", refundRef: String(o.id ?? ""), status, reason: typeof o.failure_reason === "string" ? o.failure_reason : undefined });
+        // the event's store is the connected account's (a refund carries no store in its metadata)
+        const owner = (await payload.find({ collection: "stores", where: { paymentsAccountId: { equals: event.account } }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;
+        return { status: r === "updated" ? "processed" : "ignored", store: owner ? Number(owner.id) : null, summary: { refund: o.id ?? null, status: st, result: r } };
       }
       case "account.updated": {
         const store = (await payload.find({ collection: "stores", where: { paymentsAccountId: { equals: event.account } }, limit: 1, depth: 0, overrideAccess: true })).docs[0] as unknown as Doc | undefined;

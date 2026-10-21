@@ -1,7 +1,8 @@
 "use client";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth, useTheme } from "@payloadcms/ui";
 import { usePathname } from "next/navigation";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { Toaster } from "./ui/toast";
 import { StoreProvider } from "./ui/store-context";
 
@@ -28,6 +29,10 @@ function TwoFactorGate() {
   const { user } = useAuth();
   const pathname = usePathname();
   const [needed, setNeeded] = useState(false);
+  const shown = needed && !pathname.startsWith("/cms/security") && !pathname.startsWith("/cms/logout");
+  // keyboard focus goes into the gate and stays there (it can't be closed – only "Set it up" or "Sign out")
+  const box = useRef<HTMLDivElement>(null);
+  useFocusTrap(box, shown);
   useEffect(() => {
     // the server knows who needs it (owners / managers of any store, platform admins)
     if (!user) return setNeeded(false);
@@ -40,10 +45,10 @@ function TwoFactorGate() {
       live = false;
     };
   }, [user, pathname]);
-  if (!needed || pathname.startsWith("/cms/security") || pathname.startsWith("/cms/logout")) return null;
+  if (!shown) return null;
   return (
     <div className="urko-dialog__backdrop" role="dialog" aria-modal="true" aria-labelledby="urko-2fa-title">
-      <div className="urko-dialog" style={{ maxWidth: 460, padding: 28 }}>
+      <div ref={box} className="urko-dialog" style={{ maxWidth: 460, padding: 28 }}>
         <h2 id="urko-2fa-title" style={{ marginTop: 0 }}>
           Turn on 2-step verification
         </h2>

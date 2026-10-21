@@ -19,7 +19,12 @@ export const WEBHOOK_EVENTS = [
 
 /** https only (http for localhost while developing); no credentials in the address; not an internal address. */
 const checkUrl: CollectionBeforeChangeHook = async ({ data, operation, originalDoc }) => {
+  // a new endpoint gets its signing secret (shown to the store's managers)
+  if (operation === "create" || !originalDoc?.secret) data.secret = `whsec_${randomBytes(24).toString("hex")}`;
+  // checked when the address is set or changed – not on every save (a delivery's status save must never fail on it;
+  // every delivery checks the address it connects to anyway)
   const raw = String(data.url ?? originalDoc?.url ?? "").trim();
+  if (operation === "update" && raw === String(originalDoc?.url ?? "").trim()) return data;
   let u: URL;
   try {
     u = new URL(raw);
@@ -36,8 +41,6 @@ const checkUrl: CollectionBeforeChangeHook = async ({ data, operation, originalD
     // a name that doesn't resolve yet is allowed (DNS may be set up later); deliveries are checked anyway
   });
   data.url = u.toString();
-  // a new endpoint gets its signing secret (shown to the store's managers)
-  if (operation === "create" || !originalDoc?.secret) data.secret = `whsec_${randomBytes(24).toString("hex")}`;
   return data;
 };
 

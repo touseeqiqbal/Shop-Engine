@@ -4,14 +4,13 @@ import { usePathname } from "next/navigation";
 import { Home, LayoutGrid, Search, ShoppingBag, User } from "lucide-react";
 import { cartCount, useCart } from "@/store/cart";
 import { useUi } from "@/store/ui";
-import { usePrefs } from "@/components/providers/preferences";
+import { Tr } from "@/components/providers/preferences";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { cn } from "@/lib/utils";
 
 /** Mobile-only app-style bottom navigation. */
 export function BottomNav() {
   const pathname = usePathname();
-  const { t } = usePrefs();
   const lines = useCart((s) => s.lines);
   const pulse = useCart((s) => s.pulse);
   const setSearchOpen = useUi((s) => s.setSearchOpen);
@@ -30,13 +29,13 @@ export function BottomNav() {
         <li className="flex flex-1">
           <Link href="/" className={cn(item, isActive("/") ? "text-fg" : "text-muted")} aria-current={isActive("/") ? "page" : undefined}>
             <Home className="size-[22px]" aria-hidden="true" />
-            {t("home")}
+            <Tr k="home" />
           </Link>
         </li>
         <li className="flex flex-1">
-          <Link href="/category" className={cn(item, isActive("/category") ? "text-fg" : "text-muted")}>
+          <Link href="/category" className={cn(item, isActive("/category") ? "text-fg" : "text-muted")} aria-current={isActive("/category") ? "page" : undefined}>
             <LayoutGrid className="size-[22px]" aria-hidden="true" />
-            {t("categories")}
+            <Tr k="categories" />
           </Link>
         </li>
         <li className="flex flex-1">
@@ -44,11 +43,11 @@ export function BottomNav() {
             <span className="-mt-6 grid size-12 place-items-center rounded-full bg-brand-gradient text-white shadow-[0_8px_24px_-6px_rgba(139,92,246,0.8)]">
               <Search className="size-5" aria-hidden="true" />
             </span>
-            {t("search")}
+            <Tr k="search" />
           </button>
         </li>
         <li className="flex flex-1">
-          <Link href="/cart" prefetch={false} className={cn(item, "relative", isActive("/cart") ? "text-fg" : "text-muted")}>
+          <Link href="/cart" prefetch={false} className={cn(item, "relative", isActive("/cart") ? "text-fg" : "text-muted")} aria-current={isActive("/cart") ? "page" : undefined}>
             <span className="relative">
               <ShoppingBag key={pulse} className={cn("size-[22px]", pulse > 0 && "animate-bounce-once")} aria-hidden="true" />
               {count > 0 && (
@@ -57,13 +56,13 @@ export function BottomNav() {
                 </span>
               )}
             </span>
-            {t("cart")}
+            <Tr k="cart" />
           </Link>
         </li>
         <li className="flex flex-1">
-          <Link href="/account" prefetch={false} className={cn(item, isActive("/account") ? "text-fg" : "text-muted")}>
+          <Link href="/account" prefetch={false} className={cn(item, isActive("/account") ? "text-fg" : "text-muted")} aria-current={isActive("/account") ? "page" : undefined}>
             <User className="size-[22px]" aria-hidden="true" />
-            {t("account")}
+            <Tr k="account" />
           </Link>
         </li>
       </ul>

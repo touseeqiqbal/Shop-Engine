@@ -42,7 +42,8 @@ export async function http<T = Record<string, unknown>>(url: string, opts: HttpO
   } catch (e) {
     if (e instanceof PrivateAddressError) throw new IntegrationError(`${opts.provider}: that address points to a private network – use the provider's public web address.`, 400);
     const timedOut = (e as Error)?.name === "TimeoutError";
-    throw new IntegrationError(timedOut ? `${opts.provider} didn’t answer in time – please try again.` : `Couldn’t reach ${opts.provider} – please try again.`, 502);
+    // retryable: nothing was answered – a message sent through it is tried again later (lib/notify)
+    throw Object.assign(new IntegrationError(timedOut ? `${opts.provider} didn’t answer in time – please try again.` : `Couldn’t reach ${opts.provider} – please try again.`, 502), { retryable: true });
   }
   const text = typeof res.text === "string" ? res.text : await res.text();
   let data: unknown = text;

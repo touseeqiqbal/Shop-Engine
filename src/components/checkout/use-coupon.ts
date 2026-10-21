@@ -41,7 +41,10 @@ export function useCartSync(enabled: boolean) {
         if (removed) setNotice(`${removed} item${removed === 1 ? " is" : "s are"} no longer available and ${removed === 1 ? "was" : "were"} removed from your cart.`);
         else if (changed) setNotice("Some prices in your cart were updated to today's prices.");
       })
-      .catch(() => {});
+      .catch(() => {
+        // a soft note, not an error: the order is priced again on the server when it's placed
+        if (!cancelled) setNotice("We couldn't refresh the prices just now – the final total is confirmed when you place the order.");
+      });
     return () => {
       cancelled = true;
     };
@@ -66,6 +69,9 @@ export function useCartCoupon(enabled = true) {
   const validate = useCallback(
     async (code: string, opts: { persist: boolean }) => {
       const id = ++reqId.current;
+      // no typed code = only the automatic-discount check: its failures stay out of the (empty) coupon field
+      const auto = !code.trim();
+      const idle: CouponState = { status: "idle", discount: 0, freeShipping: false, message: "" };
       setState((s) => ({ ...s, status: "checking" }));
       try {
         const res = await applyCoupon({ code, lines: JSON.parse(signature) });
@@ -74,11 +80,11 @@ export function useCartCoupon(enabled = true) {
           setState({ status: res.discount > 0 || res.freeShipping ? "applied" : "idle", discount: res.discount, freeShipping: res.freeShipping, message: res.message });
           if (opts.persist && res.code) setCoupon(res.code);
         } else {
-          setState({ status: "error", discount: 0, freeShipping: false, message: res.message });
+          setState(auto ? idle : { status: "error", discount: 0, freeShipping: false, message: res.message });
         }
         return res;
       } catch {
-        if (id === reqId.current) setState({ status: "error", discount: 0, freeShipping: false, message: "Couldn't check the coupon – please try again." });
+        if (id === reqId.current) setState(auto ? idle : { status: "error", discount: 0, freeShipping: false, message: "Couldn't check the coupon – please try again." });
         return null;
       }
     },

@@ -6,7 +6,7 @@ import { AnimatePresence, m as motion } from "framer-motion";
 import { ChevronDown, GitCompareArrows, Heart, Languages, LayoutGrid, Menu, Moon, Search, ShoppingBag, Sun, User, X } from "lucide-react";
 import { Logo } from "./logo";
 import { CategoryIcon } from "@/components/ui/category-icon";
-import { usePrefs } from "@/components/providers/preferences";
+import { Tr, usePrefs } from "@/components/providers/preferences";
 import { useChrome } from "@/components/providers/chrome";
 import { cartCount, useCart } from "@/store/cart";
 import { useLists } from "@/store/lists";
@@ -235,7 +235,7 @@ export function Navbar({ menu, mobileMenu }: { menu: NavLink[]; mobileMenu?: Nav
               aria-label="Search products"
             >
               <Search className="size-4" aria-hidden="true" />
-              <span className="flex-1 truncate">{t("searchPlaceholder")}</span>
+              <span className="flex-1 truncate"><Tr k="searchPlaceholder" /></span>
               <kbd className="hidden rounded-md border border-border-strong px-1.5 py-0.5 text-[10px] font-semibold text-muted xl:inline">Ctrl K</kbd>
             </button>
           )}
@@ -476,7 +476,7 @@ function MobileMenu({ menu, open, onClose }: { menu: NavLink[]; open: boolean; o
                 )}
               </div>
               <a href={waLink(phone.wa, `Hi ${site.name}!`)} target="_blank" rel="noopener noreferrer" className="btn btn-whatsapp w-full">
-                {t("chatWithUs")} · {phone.display}
+                <Tr k="chatWithUs" /> · {phone.display}
               </a>
             </div>
           </motion.aside>

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, m as motion } from "framer-motion";
 import { X } from "lucide-react";
 import { WhatsAppIcon } from "./whatsapp-icon";
@@ -16,6 +16,28 @@ export function WhatsAppFloat() {
   const [open, setOpen] = useState(false);
   const site = useSiteInfo(); // live business profile (/cms → Settings → Store details)
   const { whatsapp } = useChrome();
+  const wrap = useRef<HTMLDivElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  // the list of numbers: focus moves to the first one; Escape (back to the button) or a tap outside closes it
+  useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(() => wrap.current?.querySelector<HTMLElement>("[role='dialog'] a")?.focus(), 50);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      toggle.current?.focus();
+    };
+    const onDown = (e: PointerEvent) => {
+      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [open]);
   if (!whatsapp.enabled) return null;
   const numbers = whatsapp.numbers.length ? whatsapp.numbers : site.phones;
   const note = whatsapp.note || site.whatsappNote;
@@ -25,7 +47,7 @@ export function WhatsAppFloat() {
     "relative grid size-14 place-items-center rounded-full bg-[#25D366] text-white shadow-[0_10px_30px_-6px_rgba(37,211,102,0.7)] transition hover:scale-105";
 
   return (
-    <div data-float="whatsapp" className={cn("fixed bottom-[calc(var(--mobile-nav)+1rem)] z-40 flex flex-col gap-3 lg:bottom-6", left ? "left-4 items-start lg:left-6" : "right-4 items-end lg:right-6")}>
+    <div ref={wrap} data-float="whatsapp" className={cn("fixed bottom-[calc(var(--mobile-nav)+1rem)] z-40 flex flex-col gap-3 lg:bottom-6", left ? "left-4 items-start lg:left-6" : "right-4 items-end lg:right-6")}>
       <AnimatePresence>
         {open && (
           <motion.div
@@ -68,6 +90,7 @@ export function WhatsAppFloat() {
         </a>
       ) : (
         <button
+          ref={toggle}
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}

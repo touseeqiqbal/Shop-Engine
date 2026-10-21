@@ -164,7 +164,7 @@ async function addStoreLink(payload: Payload, user: Id | null | undefined, store
 export type PlaceOrderResult =
   | { ok: true; order: Order; duplicate?: boolean }
   | { ok: false; reason: "sold-out"; short: string[] }
-  | { ok: false; reason: "coupon" }
+  | { ok: false; reason: "coupon"; code?: string }
   | { ok: false; reason: "payment-reference" }
   | { ok: false; reason: "gift-card" }
   /** this checkout attempt was used for a different (or cancelled) order – submit again as a new attempt */
@@ -189,7 +189,7 @@ const isUniqueViolation = (e: unknown) => /unique|duplicate key|already exists/i
  * is kept. `attemptId` makes a repeated submit (double click, retry after a lost response) return the order
  * that was already placed instead of creating a second one.
  */
-export async function placeOrderCms(order: Order, lines: { id: string; qty: number; title: string }[], opts: { attemptId?: string | null; couponCode?: string | null; giftCard?: { code: string; amount: number } | null; afterSave?: (orderId: number, req: Awaited<ReturnType<typeof createLocalReq>>) => Promise<void> }): Promise<PlaceOrderResult> {
+export async function placeOrderCms(order: Order, lines: { id: string; qty: number; title: string }[], opts: { attemptId?: string | null; couponCode?: string | null; extraCouponCode?: string | null; giftCard?: { code: string; amount: number } | null; afterSave?: (orderId: number, req: Awaited<ReturnType<typeof createLocalReq>>) => Promise<void> }): Promise<PlaceOrderResult> {
   const payload = await payloadClient();
   const storeId = order.storeId ?? null;
   const previous = async () => (opts.attemptId ? await findOne(payload, "orders", { and: [{ attemptId: { equals: opts.attemptId } }, inStore(storeId)] }) : null);
@@ -219,6 +219,12 @@ export async function placeOrderCms(order: Order, lines: { id: string; qty: numb
       await killTransaction(req);
       return { ok: false, reason: "coupon" };
     }
+    // an automatic discount used together with the typed code counts as used too (its "first 100 orders" / "once per
+    // customer" limits used to be skipped whenever a combinable code was typed)
+    if (opts.couponCode && opts.extraCouponCode && !(await consumeCoupon(payload, opts.extraCouponCode, storeId, req))) {
+      await killTransaction(req);
+      return { ok: false, reason: "coupon", code: opts.extraCouponCode };
+    }
     // the gift card pays its part in the same transaction (its balance can't be spent twice)
     if (opts.giftCard && opts.giftCard.amount > 0) {
       const { takeFromGiftCard } = await import("@/payload/gift-cards");
@@ -243,7 +249,7 @@ export async function placeOrderCms(order: Order, lines: { id: string; qty: numb
         return { ...i, availability: o.kind, owedQty: o.qty };
       });
     }
-    const data = { ...base, stockHeld: true, attemptId: opts.attemptId || null, couponConsumed: Boolean(opts.couponCode), giftCardCharged: Boolean(opts.giftCard && opts.giftCard.amount > 0) };
+    const data = { ...base, stockHeld: true, attemptId: opts.attemptId || null, couponConsumed: Boolean(opts.couponCode), ...(opts.couponCode && opts.extraCouponCode ? { extraCouponCode: opts.extraCouponCode } : {}), giftCardCharged: Boolean(opts.giftCard && opts.giftCard.amount > 0) };
     // context.fromStorefront: the stock was taken just above, so the Orders hook must not take it again
     const doc = (await payload.create({ collection: "orders" as never, data: data as never, overrideAccess: true, depth: 0, context: { fromStorefront: true, storefront: true, storeId }, req })) as Doc;
     // in the same transaction: the confirmation messages (sent only if the order is really saved), online payment …
@@ -581,7 +587,8 @@ export async function couponUsesByCustomerCms(code: string, storeId: number | nu
   if (!who.length) return 0;
   const res = await (await payloadClient()).count({
     collection: "orders" as never,
-    where: { and: [{ couponCode: { equals: code.trim().toUpperCase() } }, { status: { not_in: ["cancelled", "refused"] } }, inStore(storeId), { or: who }] },
+    // the code typed, or the automatic discount used together with one
+    where: { and: [{ or: [{ couponCode: { equals: code.trim().toUpperCase() } }, { extraCouponCode: { equals: code.trim().toUpperCase() } }] }, { status: { not_in: ["cancelled", "refused"] } }, inStore(storeId), { or: who }] },
     overrideAccess: true,
   });
   return res.totalDocs;

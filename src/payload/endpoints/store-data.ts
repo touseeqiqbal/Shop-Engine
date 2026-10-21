@@ -1,6 +1,7 @@
 import type { Endpoint, PayloadRequest } from "payload";
 import { getTenant, hasStoreRole } from "../tenancy";
 import { logActivity } from "../collections/history";
+import { log } from "../../lib/log";
 
 /**
  * A store owner's own data (the store being worked in):
@@ -108,6 +109,9 @@ const close: Endpoint = {
     const body = (await req.json?.().catch(() => null)) as { confirm?: unknown } | null;
     if (String(body?.confirm ?? "").trim() !== String(store.name ?? "").trim()) return Response.json({ error: "Type the store's name exactly to confirm." }, { status: 400 });
     await payload.update({ collection: "stores", id: o.store, data: { status: "closed" } as never, overrideAccess: true, context: { system: true } });
+    // a closed store isn't billed on: its subscription ends with the period already paid for
+    const { cancelPlan } = await import("../../lib/billing");
+    await cancelPlan(payload, o.store).catch((e) => log.error("stores.close_cancel_plan_failed", e, { store: o.store }));
     await logActivity(req, { action: "update", entity: "stores", entityLabel: "Store", docId: String(o.store), title: String(store.name ?? o.store), changes: [{ field: "status", from: String(store.status), to: "closed – by its owner" }], storeId: o.store });
     const { queueNotification } = await import("../../lib/notify");
     await queueNotification(payload, "platform", null, { subject: `${String(store.name)} was closed by its owner`, lines: [`${String(store.name)} (store #${o.store}) is now offline – its data is kept. Reopen it or delete it from its page in /cms.`], link: { href: `/cms/collections/stores/${o.store}`, label: "Open the store" } }, { dedupeKey: `store-closed:${o.store}:${new Date().toISOString().slice(0, 10)}` }).catch(() => undefined);

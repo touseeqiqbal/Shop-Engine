@@ -107,6 +107,20 @@ export async function markCheckoutPaid(payload: Payload, s: { sessionId: string;
     if (s.currency.toLowerCase() !== currency || s.amountMinor !== expected || wrongAccount) {
       await payload.update({ collection: "payment-transactions", id: Number(charge.id), data: { status: "failed", failureReason: `Mismatch: got ${s.amountMinor} ${s.currency} on ${s.account ?? "?"}, expected ${expected} ${currency}` } as never, overrideAccess: true, req });
       log.error("payments.mismatch", new Error("payment does not match order"), { order: order.orderNumber, provider, got: s.amountMinor, expected, account: s.account });
+      // a payment came in that doesn't match: the order isn't confirmed – but the money is real, so the team checks it
+      // (it used to be dropped silently, and the order then auto-cancelled as "never paid")
+      const { queueNotification } = await import("@/lib/notify");
+      await queueNotification(
+        payload,
+        "staff",
+        relId(order.store),
+        {
+          subject: `Payment doesn't match order ${String(order.orderNumber)}`,
+          lines: [`A ${s.via ?? "card"} payment for ${String(order.orderNumber)} arrived, but it doesn't match the order (got ${s.amountMinor} ${s.currency.toUpperCase()}, expected ${expected} ${currency.toUpperCase()}).`, "The order was NOT confirmed. Check the payment in your provider's dashboard: confirm the order by hand, or refund it."],
+          link: { href: `/cms/collections/orders/${orderId}`, label: "Open the order" },
+        },
+        { req, dedupeKey: `payment-mismatch:${String(charge.id)}` },
+      );
       return "ignored";
     }
     await payload.update({ collection: "payment-transactions", id: Number(charge.id), data: { status: "succeeded", paymentIntent: s.paymentIntent } as never, overrideAccess: true, req });
@@ -218,9 +232,11 @@ export async function refundCardOrder(payload: Payload, req: PayloadRequest, inp
     { payment_intent: String(charge.paymentIntent), amount: toMinor(amount, currency), metadata: { orderId: String(input.orderId), reason: (input.reason ?? "").slice(0, 200) } },
     { account: String(store.paymentsAccountId), idempotencyKey },
   );
+  // refused at once by the provider: nothing went back – nothing is recorded as refunded (staff see why)
+  if (refund.status === "failed") throw new Error("The card refund was refused by the payment provider – nothing was refunded. Refund the customer another way and record it in Orders → Returns.");
   const refunded = already + fromMinor(refund.amount, currency);
   const full = refunded >= Number(charge.amount) - 1e-9;
-  await payload.create({ collection: "payment-transactions", data: { store: relId(order.store), order: input.orderId, kind: "refund", status: refund.status === "succeeded" ? "succeeded" : refund.status === "failed" ? "failed" : "pending", provider: "stripe", providerRef: refund.id, amount, currency: currency.toUpperCase(), idempotencyKey } as never, overrideAccess: true, req });
+  await payload.create({ collection: "payment-transactions", data: { store: relId(order.store), order: input.orderId, kind: "refund", status: refund.status === "succeeded" ? "succeeded" : "pending", provider: "stripe", providerRef: refund.id, amount, currency: currency.toUpperCase(), idempotencyKey } as never, overrideAccess: true, req });
   await payload.update({ collection: "payment-transactions", id: Number(charge.id), data: { refundedAmount: refunded, status: full ? "refunded" : "partially_refunded" } as never, overrideAccess: true, req });
   await payload.update({ collection: "orders", id: input.orderId, data: { paymentStatus: full ? "refunded" : "partially-refunded", history: [{ status: String(order.status), at: new Date().toISOString(), note: `Refunded ${amount} by card${input.reason ? ` – ${input.reason}` : ""}` }] } as never, overrideAccess: true, req, context: { system: true, skipNotify: true, skipStock: true } });
   const { emitStoreEvent } = await import("@/lib/webhooks");
@@ -241,7 +257,8 @@ export async function cancelOrphanedPaymentOrders(payload: Payload, opts: { olde
   for (const o of waiting) {
     try {
       // a payment still open (a voucher paid at a shop days later …) or already through: not an orphan
-      const live = await payload.count({ collection: "payment-transactions", where: { and: [{ order: { equals: Number(o.id) } }, { kind: { equals: "charge" } }, { status: { in: ["pending", "succeeded", "partially_refunded", "refunded"] } }] }, overrideAccess: true });
+      // (a payment that arrived but didn't match counts too: money came in – the team decides, not this sweep)
+      const live = await payload.count({ collection: "payment-transactions", where: { and: [{ order: { equals: Number(o.id) } }, { kind: { equals: "charge" } }, { or: [{ status: { in: ["pending", "succeeded", "partially_refunded", "refunded"] } }, { failureReason: { like: "Mismatch:" } }] }] }, overrideAccess: true });
       if (live.totalDocs) continue;
       await payload.update({
         collection: "orders",
@@ -256,6 +273,62 @@ export async function cancelOrphanedPaymentOrders(payload: Payload, opts: { olde
     }
   }
   return cancelled;
+}
+
+/**
+ * A refund's final answer from the provider – it can stay "pending" for days and then fail (a closed card …). A failed
+ * refund is taken off the payment and the order again (the customer still has to be paid) and the store's team is
+ * told; it used to stay "Refunded" for good. Every provider reports through here (Stripe: refund events).
+ */
+export async function settleRefund(payload: Payload, input: { provider: string; refundRef: string; status: "succeeded" | "failed" | "pending"; reason?: string }): Promise<"updated" | "unchanged" | "ignored"> {
+  return inTransaction(payload, async (req) => {
+    const refund = (await payload.find({ collection: "payment-transactions", where: { and: [{ provider: { equals: input.provider } }, { providerRef: { equals: input.refundRef } }, { kind: { equals: "refund" } }] }, limit: 1, depth: 0, overrideAccess: true, req })).docs[0] as unknown as Doc | undefined;
+    if (!refund) return "ignored"; // not one of ours
+    // one answer at a time per order: Stripe sends several events for one change (charge.refund.updated AND
+    // refund.updated) – lock first, then read the refund's status as it is now, so a failure is taken off only once
+    const { lockOrderStatus } = await import("@/payload/stock");
+    await lockOrderStatus(payload, relId(refund.order), req);
+    const now = (await payload.findByID({ collection: "payment-transactions", id: Number(refund.id), depth: 0, overrideAccess: true, req })) as unknown as Doc;
+    refund.status = now.status;
+    // already final (a failed refund was already taken off – never twice)
+    if (refund.status === input.status || refund.status === "failed" || (refund.status === "succeeded" && input.status === "pending")) return "unchanged";
+    await payload.update({ collection: "payment-transactions", id: Number(refund.id), data: { status: input.status, ...(input.status === "failed" ? { failureReason: (input.reason || "refused by the provider").slice(0, 300) } : {}) } as never, overrideAccess: true, req });
+    if (input.status !== "failed") return "updated";
+    const orderId = relId(refund.order);
+    const amount = Number(refund.amount) || 0;
+    const charge = (await payload.find({ collection: "payment-transactions", where: { and: [{ order: { equals: orderId } }, { provider: { equals: input.provider } }, { kind: { equals: "charge" } }, { status: { in: ["succeeded", "partially_refunded", "refunded"] } }] }, limit: 1, depth: 0, overrideAccess: true, req })).docs[0] as unknown as Doc | undefined;
+    if (charge) {
+      const left = Math.max(0, Math.round(((Number(charge.refundedAmount) || 0) - amount) * 1000) / 1000);
+      await payload.update({ collection: "payment-transactions", id: Number(charge.id), data: { refundedAmount: left, status: left > 0 ? "partially_refunded" : "succeeded" } as never, overrideAccess: true, req });
+    }
+    const order = (await payload.findByID({ collection: "orders", id: orderId, depth: 0, overrideAccess: true, req })) as unknown as Doc;
+    // what is still refunded on the order (returns paid in cash … and the provider's other refunds)
+    const { refundedOnOrder } = await import("@/payload/refunds");
+    const still = (await refundedOnOrder(payload, orderId, req)).total;
+    const paymentStatus = still <= 0 ? "paid" : still >= (Number(order.total) || 0) - 0.005 ? "refunded" : "partially-refunded";
+    await payload.update({
+      collection: "orders",
+      id: orderId,
+      data: { paymentStatus, history: [{ status: String(order.status), at: new Date().toISOString(), note: `A refund of ${amount} failed at the payment provider${input.reason ? ` (${input.reason})` : ""} – the customer still has to be paid` }] } as never,
+      overrideAccess: true,
+      req,
+      context: { system: true, skipNotify: true, skipStock: true },
+    });
+    const { queueNotification } = await import("@/lib/notify");
+    await queueNotification(
+      payload,
+      "staff",
+      relId(order.store),
+      {
+        subject: `Refund failed: order ${String(order.orderNumber)}`,
+        lines: [`The refund of ${amount} for ${String(order.orderNumber)} failed at the payment provider${input.reason ? ` (${input.reason})` : ""}.`, "The customer hasn't got their money back – refund them another way and record it in Orders → Returns."],
+        link: { href: `/cms/collections/orders/${orderId}`, label: "Open the order" },
+      },
+      { req, dedupeKey: `refund-failed:${String(refund.id)}` },
+    );
+    log.warn("payments.refund_failed", { order: order.orderNumber, provider: input.provider, refund: input.refundRef });
+    return "updated";
+  });
 }
 
 /**

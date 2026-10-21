@@ -20,17 +20,21 @@ export function RtoReport() {
   const [tab, setTab] = useState<"byCity" | "byZone" | "byCourier" | "byCustomer">("byCity");
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0); // "Try again" loads the same period once more
   // days in the store's time zone, amounts in its currency
   const money = useAdminMoney();
   const { timezone } = useAdminLocale();
   const today = todayIn(timezone);
   useEffect(() => {
     setData(null);
+    setError("");
     fetch(`/cms-api/order-tools/rto?from=${addDays(today, -range)}&to=${today}`, { credentials: "include" })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Could not load the report"))))
       .then(setData)
       .catch((e) => setError((e as Error).message));
-  }, [range, today]);
+  }, [range, today, attempt]);
+  // a failed load shows the error instead of skeletons that never finish
+  const pending = error ? "–" : "…";
 
   const rows = data?.[tab] ?? [];
   const tone = (rate: number) => (rate >= 20 ? "r" : rate >= 10 ? "y" : "g");
@@ -51,12 +55,19 @@ export function RtoReport() {
           ))}
         </div>
       </div>
-      {error && <p className="urko-tip">{error}</p>}
+      {error && (
+        <p className="urko-tip" role="alert">
+          {error}{" "}
+          <button type="button" className="urko-btn urko-btn--sm" onClick={() => setAttempt((a) => a + 1)}>
+            Try again
+          </button>
+        </p>
+      )}
       <div className="urko-grid urko-grid--stats" style={{ marginBottom: 16 }}>
-        <Stat label="Refused" value={data ? String(data.totals.refused) : "…"} />
-        <Stat label="Delivered" value={data ? String(data.totals.delivered) : "…"} />
-        <Stat label="Refusal rate" value={data ? `${data.totals.rate}%` : "…"} />
-        <Stat label="Lost on delivery (est.)" value={data ? money(data.totals.lost) : "…"} />
+        <Stat label="Refused" value={data ? String(data.totals.refused) : pending} />
+        <Stat label="Delivered" value={data ? String(data.totals.delivered) : pending} />
+        <Stat label="Refusal rate" value={data ? `${data.totals.rate}%` : pending} />
+        <Stat label="Lost on delivery (est.)" value={data ? money(data.totals.lost) : pending} />
       </div>
       <nav className="urko-tabs" aria-label="Group by">
         {(
@@ -74,40 +85,46 @@ export function RtoReport() {
       </nav>
       <div className="urko-card">
         {!data ? (
-          <div className="urko-skeleton" style={{ height: 160 }} />
+          error ? (
+            <p className="urko-tip">No figures – the report didn&apos;t load.</p>
+          ) : (
+            <div className="urko-skeleton" style={{ height: 160 }} />
+          )
         ) : rows.length === 0 ? (
           <p className="urko-tip">No refused parcels in this period. 🎉</p>
         ) : (
-          <table className="urko-table">
-            <thead>
-              <tr>
-                <th scope="col">{tab === "byCustomer" ? "Customer" : tab === "byCourier" ? "Courier" : tab === "byZone" ? "Zone" : "City"}</th>
-                <th scope="col" className="n">Refused</th>
-                <th scope="col" className="n">Delivered</th>
-                <th scope="col" className="n">Rate</th>
-                <th scope="col" className="n">Lost (est.)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.key}>
-                  <td>
-                    {tab === "byCustomer" ? (
-                      <a href={`/cms/collections/orders?search=${encodeURIComponent(r.label.split(" · ")[1] ?? "")}`}>{r.label}</a>
-                    ) : (
-                      r.label
-                    )}
-                  </td>
-                  <td className="n">{r.refused}</td>
-                  <td className="n">{r.delivered}</td>
-                  <td className="n">
-                    <span className={`urko-badge urko-badge--${tone(r.rate)}`}>{r.rate}%</span>
-                  </td>
-                  <td className="n">{money(r.lost)}</td>
+          <div className="urko-table-wrap">
+            <table className="urko-table">
+              <thead>
+                <tr>
+                  <th scope="col">{tab === "byCustomer" ? "Customer" : tab === "byCourier" ? "Courier" : tab === "byZone" ? "Zone" : "City"}</th>
+                  <th scope="col" className="n">Refused</th>
+                  <th scope="col" className="n">Delivered</th>
+                  <th scope="col" className="n">Rate</th>
+                  <th scope="col" className="n">Lost (est.)</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.key}>
+                    <td>
+                      {tab === "byCustomer" ? (
+                        <a href={`/cms/collections/orders?search=${encodeURIComponent(r.label.split(" · ")[1] ?? "")}`}>{r.label}</a>
+                      ) : (
+                        r.label
+                      )}
+                    </td>
+                    <td className="n">{r.refused}</td>
+                    <td className="n">{r.delivered}</td>
+                    <td className="n">
+                      <span className={`urko-badge urko-badge--${tone(r.rate)}`}>{r.rate}%</span>
+                    </td>
+                    <td className="n">{money(r.lost)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
       <p className="urko-tip" style={{ marginTop: 12 }}>

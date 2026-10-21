@@ -9,6 +9,8 @@ import { runBillingLifecycle } from "@/lib/billing";
 let lastCleanup = 0;
 let lastBilling = 0;
 let lastCouriers = 0;
+/** After this long, a housekeeping run leaves the slow chores (courier / marketplace syncs) for the next run. */
+const CHORE_BUDGET_MS = 60_000;
 let lastSecurityPrune = 0;
 let lastIntegrationSync = 0;
 
@@ -66,6 +68,8 @@ export async function runHousekeeping(reason: string): Promise<Record<string, un
 
 async function chores(reason: string): Promise<Record<string, unknown>> {
   const started = Date.now();
+  // for /api/health: when this process last ran the chores
+  (globalThis as { __shopengineHousekeepingAt?: number }).__shopengineHousekeepingAt = started;
   const report: Record<string, unknown> = {};
   const payload = await payloadClient();
   try {
@@ -155,8 +159,24 @@ async function chores(reason: string): Promise<Record<string, unknown>> {
       log.error("housekeeping.security_prune", e);
     }
   }
+  // messages first: what the quick chores above queued (cancellations, alerts) goes out now – the slow chores below
+  // (courier and marketplace APIs) used to hold it back for as long as they took
+  const sendQueued = async () => {
+    try {
+      const r = await processOutbox(payload, 100);
+      // both sends of the run together (the first one's failures must not vanish from the report)
+      const before = (report.outbox as { sent: number; failed: number; dead: number } | undefined) ?? { sent: 0, failed: 0, dead: 0 };
+      if (r.sent || r.failed || r.dead) report.outbox = { sent: before.sent + r.sent, failed: before.failed + r.failed, dead: before.dead + r.dead };
+    } catch (e) {
+      log.error("housekeeping.outbox", e);
+    }
+  };
+  await sendQueued();
+  // the slow chores (other companies' APIs) get a time budget: a run that has already taken long leaves them for the
+  // next run (their timers aren't reset), so one slow courier or marketplace can't hold up everything else
+  const withinBudget = () => Date.now() - started < CHORE_BUDGET_MS;
   // courier parcels still on their way (and cash the couriers collected) – every 15 minutes, a batch at a time
-  if (Date.now() - lastCouriers > 15 * 60e3) {
+  if (Date.now() - lastCouriers > 15 * 60e3 && withinBudget()) {
     lastCouriers = Date.now();
     try {
       const { syncCourierTracking } = await import("@/lib/integrations/couriers");
@@ -167,7 +187,7 @@ async function chores(reason: string): Promise<Record<string, unknown>> {
     }
   }
   // integrations with periodic work of their own (marketplace stock, accounting tokens …) – every 30 minutes
-  if (Date.now() - lastIntegrationSync > 30 * 60e3) {
+  if (Date.now() - lastIntegrationSync > 30 * 60e3 && withinBudget()) {
     lastIntegrationSync = Date.now();
     try {
       const { runIntegrationSyncs } = await import("@/lib/integrations/sync");
@@ -186,13 +206,8 @@ async function chores(reason: string): Promise<Record<string, unknown>> {
       log.error("housekeeping.billing", e);
     }
   }
-  try {
-    // last: everything queued above goes out now (and anything that failed earlier is retried)
-    const r = await processOutbox(payload, 100);
-    if (r.sent || r.failed || r.dead) report.outbox = r;
-  } catch (e) {
-    log.error("housekeeping.outbox", e);
-  }
+  // last: what the slow chores queued goes out too (and anything that failed earlier is retried)
+  await sendQueued();
   // once an hour is plenty for clearing out old personal data
   if (Date.now() - lastCleanup > 3600e3) {
     lastCleanup = Date.now();

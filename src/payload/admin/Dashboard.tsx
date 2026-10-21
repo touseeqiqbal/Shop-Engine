@@ -97,8 +97,10 @@ export function Dashboard() {
         { n: data.todo.toShip, text: "orders ready to book with courier", tone: "b", tag: "Ready", href: `${ORDERS}${where("status", "equals", "confirmed")}` },
         { n: data.todo.lowStockTotal + data.todo.outOfStockTotal, text: "products low or out of stock", tone: "r", tag: "Stock", href: "/cms/collections/products?where%5BstockStatus%5D%5Bin%5D%5B0%5D=low&where%5BstockStatus%5D%5Bin%5D%5B1%5D=out" },
         { n: data.todo.newWholesale, text: "new wholesale enquiries", tone: "y", tag: "New", href: `/cms/collections/wholesale-inquiries${where("status", "equals", "new")}` },
-        { n: data.todo.missingInfo, text: "products missing photos or details", tone: "y", tag: "Fix", href: "/cms/collections/products" },
-        { n: data.todo.openMessages, text: "unread messages", tone: "y", tag: "New", href: "/cms/collections/contact-messages" },
+        // the count is of products on the store; "fewer than 3 photos" can't be filtered in a list address, so on-store only
+        { n: data.todo.missingInfo, text: "products missing photos or details", tone: "y", tag: "Fix", href: `/cms/collections/products${where("status", "equals", "active")}` },
+        // the same messages the count is of: not yet marked handled
+        { n: data.todo.openMessages, text: "unread messages", tone: "y", tag: "New", href: `/cms/collections/contact-messages${where("handled", "not_equals", "true")}` },
       ]
     : [];
   const open = todo.filter((t) => t.n > 0);

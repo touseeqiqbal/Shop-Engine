@@ -32,6 +32,8 @@ const PAGES = [
   ["shop-funnel", "/cms/reports/funnel", ["Shop funnel", "Product views", "Most viewed products"]],
   ["digital-files", "/cms/collections/digital-files", ["Digital files"]],
   ["collection-new", "/cms/collections/product-collections/create", ["Show from", "Show until"]],
+  // the shop counter: its sales list loads (or says it couldn't – never zeros as if nothing was sold)
+  ["pos", "/cms/pos", ["Shop counter", "Cash-up"]],
   ...(ORDER ? [["order", `/cms/collections/orders/${ORDER}`, ["Invoice to"]]] : []),
 ];
 

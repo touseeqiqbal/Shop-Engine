@@ -28,7 +28,8 @@ export const useUi = create<UiState>()((set, get) => ({
   toast: (message, tone = "success") => {
     const id = ++toastId;
     set({ toasts: [...get().toasts, { id, message, tone }] });
-    setTimeout(() => get().dismiss(id), 3200);
+    // errors stay long enough to read what went wrong (as in the admin)
+    setTimeout(() => get().dismiss(id), tone === "error" ? 7000 : 3200);
   },
   dismiss: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
 }));

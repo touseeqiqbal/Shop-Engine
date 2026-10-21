@@ -21,7 +21,7 @@ import { useUi } from "@/store/ui";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { AnimatedPrice } from "./animated-price";
 import { UpgradeConfigurator } from "./upgrade-configurator";
-import { VariantPicker, initialPick, matchVariant } from "./variant-picker";
+import { VariantPicker, initialPick, matchVariant, pickValue } from "./variant-picker";
 
 export function BuyBox({ product: main, delivery }: { product: CatalogProduct; delivery: DeliveryInfo }) {
   const site = useSiteInfo(); // live business profile (/cms → Settings → Store details)
@@ -47,7 +47,8 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
   const p: CatalogProduct = variant ? { ...variant, upgrades: main.upgrades, warranty: variant.warranty || main.warranty } : main;
   const unavailable = variants.length > 0 && !variant;
   const choose = (name: string, value: string) => {
-    const next = { ...pick, [name]: value };
+    // a value that only exists with other choices switches those too
+    const next = pickValue(variants, options, pick, name, value);
     setPick(next);
     const v = matchVariant(variants, options, next);
     if (v) window.history.replaceState(null, "", `?variant=${encodeURIComponent(v.slug)}`);
@@ -79,6 +80,8 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
   const outOfStock = unavailable || !canOrder(p);
   const maxQty = Math.max(1, Math.min(buyLimit(p), 10));
   const stock = availabilityLabel(p, (iso) => formatDate(iso, { day: "numeric", month: "short" }, loc));
+  // one label for the main button and the phone's sticky bar
+  const cartLabel = unavailable ? "Unavailable" : outOfStock ? "Sold out" : stock.kind === "preorder" ? "Pre-order now" : "Add to Cart";
   // wishlist / compare keep the main product (not one colour or size)
   const wished = hydrated && wishlist.includes(main.id);
   const comparing = hydrated && compare.includes(main.id);
@@ -228,7 +231,7 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
         <div className="grid grid-cols-2 gap-2.5">
           <button type="button" onClick={() => addToCart()} disabled={outOfStock} className="btn btn-secondary btn-lg w-full">
             <ShoppingBag className="size-5" aria-hidden="true" />
-            {outOfStock ? "Sold out" : stock.kind === "preorder" ? "Pre-order now" : "Add to Cart"}
+            {cartLabel}
           </button>
           <button type="button" onClick={buyNow} disabled={outOfStock} className="btn btn-primary btn-lg w-full">
             <Zap className="size-5" aria-hidden="true" />
@@ -374,6 +377,7 @@ export function BuyBox({ product: main, delivery }: { product: CatalogProduct; d
         name={p.name}
         total={total}
         outOfStock={outOfStock}
+        label={cartLabel}
         onAdd={() => addToCart()}
         waHref={waLink(phone.wa, waText)}
       />
@@ -387,6 +391,7 @@ function StickyBuyBar({
   name,
   total,
   outOfStock,
+  label,
   onAdd,
   waHref,
 }: {
@@ -394,6 +399,8 @@ function StickyBuyBar({
   name: string;
   total: number;
   outOfStock: boolean;
+  /** the main button's text ("Pre-order now", "Unavailable" …) */
+  label: string;
   onAdd: () => void;
   waHref: string;
 }) {
@@ -446,7 +453,7 @@ function StickyBuyBar({
               </a>
               <button type="button" onClick={onAdd} disabled={outOfStock} className="btn btn-primary h-11 shrink-0 px-5">
                 <ShoppingBag className="size-4" aria-hidden="true" />
-                {outOfStock ? "Sold out" : "Add to Cart"}
+                {label}
               </button>
             </div>
           </motion.div>

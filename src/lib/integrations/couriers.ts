@@ -149,7 +149,9 @@ export async function cancelCourierBooking(payload: Payload, req: PayloadRequest
   if (!s || s.status !== "shipped") throw new IntegrationError("Only a parcel that is on its way can be cancelled.");
   if (s.provider && s.trackingNumber) {
     const { ctx, courier } = await courierOf(payload, relId(order.store), s.provider);
-    if (courier.cancel) await courier.cancel(ctx, s.courierRef || s.trackingNumber);
+    // no cancel through the courier's API: cancelling only here would leave the live booking (collecting cash) there
+    if (!courier.cancel) throw new IntegrationError(`${courier.name} can't cancel bookings through its API – cancel ${s.trackingNumber} in your ${courier.name} account, then mark the parcel as returned or cancelled by hand.`, 400);
+    await courier.cancel(ctx, s.courierRef || s.trackingNumber);
   }
   const { setShipmentStatus } = await import("@/payload/shipments");
   return setShipmentStatus(payload, req, order, index, "cancelled", { courierStatus: "Cancelled" });

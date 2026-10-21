@@ -20,11 +20,22 @@ export type StoreEventType = "order.created" | "order.updated" | "order.paid" | 
  */
 export async function emitStoreEvent(payload: Payload, storeId: number | null | undefined, type: StoreEventType, data: Record<string, unknown>, req?: PayloadRequest): Promise<void> {
   if (storeId == null) return;
-  const endpoints = type === "checkout.started" ? [] : ((await payload.find({ collection: "webhook-endpoints", where: { and: [{ store: { equals: storeId } }, { active: { equals: true } }, { events: { contains: type } }] }, limit: 20, depth: 0, overrideAccess: true, ...(req ? { req } : {}) }).catch(() => ({ docs: [] }))).docs as unknown as { id: number }[]);
+  const endpoints = type === "checkout.started" ? [] : ((await payload.find({ collection: "webhook-endpoints", where: { and: [{ store: { equals: storeId } }, { active: { equals: true } }, { events: { contains: type } }] }, limit: 20, depth: 0, overrideAccess: true, ...(req ? { req } : {}) }).catch(async (e: unknown) => {
+        // inside the caller's transaction a database error has aborted it – the change must fail, not vanish at COMMIT
+        const { rethrowIfAborted } = await import("@/payload/tx-errors");
+        rethrowIfAborted(e, req);
+        return { docs: [] };
+      })).docs as unknown as { id: number }[]);
   const { connectionsOf } = await import("@/lib/integrations/server");
   const { integrationInfo } = await import("@/lib/integrations/catalog");
   // in the caller's transaction when there is one (a second pool connection while it is held can exhaust the pool)
-  const listeners = (await connectionsOf(payload, storeId, req ? { req } : {}).catch(() => [])).filter((c) => c.status === "connected" && integrationInfo(c.provider)?.events?.includes(type));
+  const listeners = (
+    await connectionsOf(payload, storeId, req ? { req } : {}).catch(async (e: unknown) => {
+      const { rethrowIfAborted } = await import("@/payload/tx-errors");
+      rethrowIfAborted(e, req);
+      return [];
+    })
+  ).filter((c) => c.status === "connected" && integrationInfo(c.provider)?.events?.includes(type));
   if (!endpoints.length && !listeners.length) return;
   const { enqueue, kickOutbox } = await import("@/lib/outbox");
   const id = `evt_${randomUUID().replace(/-/g, "")}`;

@@ -103,6 +103,38 @@ try {
   check((await stockOf()) === stock0, "re-opening takes the stock again");
   check((await usedOf()) === used0, "re-opening counts the coupon again");
   check((await outbox("notify.order-status")) === 3, "every status change queued its own message");
+
+  // ── a typed code AND an automatic discount together: both count as used, both go back on cancel ──
+  const auto = (await payload.create({ collection: "discounts", data: { store, code: `AUTO${tag}`, kind: "percent", value: 5, active: true, automatic: true, combinable: true, used: 0, usageLimit: 10 } as never, ...sys, context: { ...sys.context, storeId: store } })) as unknown as Doc;
+  const both = (await payload.create({ collection: "discounts", data: { store, code: `BOTH${tag}`, kind: "percent", value: 5, active: true, combinable: true, used: 0, usageLimit: 10 } as never, ...sys, context: { ...sys.context, storeId: store } })) as unknown as Doc;
+  const usedBy = async (d: Doc) => Number(((await payload.findByID({ collection: "discounts", id: Number(d.id), depth: 0, overrideAccess: true })) as unknown as Doc).used);
+  const combined = await placeOrderCms({ ...order, orderNumber: `LC-${tag}-C`, couponCode: `BOTH${tag}` }, [{ id: String(product.id), qty: 1, title: String(product.title) }], { attemptId: `lc-${tag}-c`, couponCode: `BOTH${tag}`, extraCouponCode: `AUTO${tag}` });
+  const combinedId = combined.ok ? Number(combined.order.id) : 0;
+  const cDoc = combinedId ? ((await payload.findByID({ collection: "orders", id: combinedId, depth: 0, overrideAccess: true })) as unknown as Doc) : null;
+  check(combined.ok && (await usedBy(both)) === 1 && (await usedBy(auto)) === 1 && cDoc?.extraCouponCode === `AUTO${tag}`, `typed code + automatic discount: both counted as used (${await usedBy(both)} / ${await usedBy(auto)})`);
+  if (combinedId) {
+    await payload.update({ collection: "orders", id: combinedId, data: { status: "cancelled" } as never, overrideAccess: true, depth: 0 });
+    check((await usedBy(both)) === 0 && (await usedBy(auto)) === 0, "cancelling gives both uses back");
+    await payload.delete({ collection: "orders", id: combinedId, overrideAccess: true, context: { migrating: true, skipStock: true } });
+  }
+  await payload.delete({ collection: "discounts", id: Number(auto.id), ...sys }).catch(() => null);
+  await payload.delete({ collection: "discounts", id: Number(both.id), ...sys }).catch(() => null);
+
+  // a cancel and an item edit at the same moment: the edit must not write back the copy it read before the cancel
+  // (it used to re-open the order and keep its stock) – whichever goes first, the order ends cancelled, stock all back
+  const open = (await payload.findByID({ collection: "orders", id, depth: 0, overrideAccess: true })) as unknown as Doc;
+  const twoOfIt = ((open.items as Doc[]) ?? []).map((it, i) => (i === 0 ? { ...it, qty: 2 } : it));
+  const raced = await Promise.all([
+    payload.update({ collection: "orders", id, data: { status: "cancelled" } as never, overrideAccess: true, depth: 0 }).then(() => "ok", (e: Error) => e.message),
+    payload.update({ collection: "orders", id, data: { items: twoOfIt } as never, overrideAccess: true, depth: 0 }).then(() => "ok", (e: Error) => e.message),
+  ]);
+  const afterRace = (await payload.findByID({ collection: "orders", id, depth: 0, overrideAccess: true })) as unknown as Doc;
+  // whichever save wins, stock + what the order still holds = what there was – never a unit lost or taken twice
+  // (cancel first: cancelled, all back, the edit refused; edit first: 2 held, the cancel refused as "changed meanwhile")
+  const held = afterRace.status === "cancelled" ? 0 : Number(((afterRace.items as Doc[]) ?? [])[0]?.qty ?? 0);
+  const stockNow = await stockOf();
+  check(stockNow + held === stock0 + 1 && raced.filter((r) => r === "ok").length >= 1, `cancel + edit at the same moment: no unit lost (status ${String(afterRace.status)}, holds ${held}, stock ${stockNow}; ${raced.map((r) => (r === "ok" ? "ok" : "refused")).join(", ")})`);
+  if (afterRace.status !== "cancelled") await payload.update({ collection: "orders", id, data: { status: "cancelled" } as never, overrideAccess: true, depth: 0 }).catch(() => null);
   // finish: cancel so the stock goes back before the clean-up
   await payload.update({ collection: "orders", id, data: { status: "cancelled" } as never, overrideAccess: true, depth: 0 });
 } finally {

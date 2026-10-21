@@ -189,8 +189,9 @@ export default buildConfig({
   typescript: { outputFile: path.resolve(dirname, "payload-types.ts") },
   db: postgresAdapter({
     // fail fast instead of waiting for ever: no free connection within 10 s → an error (not a hung request); a transaction
-    // left idle for a minute (a crashed request) is ended by Postgres, releasing its row locks
-    pool: { connectionString: process.env.DATABASE_URL || "", max: dbPoolMax, connectionTimeoutMillis: 10_000, idle_in_transaction_session_timeout: 60_000 },
+    // left idle for a minute (a crashed request) is ended by Postgres, releasing its row locks; waiting more than 30 s
+    // for a lock fails (a migration's ALTER TABLE queued behind a long report must not block every order query behind it)
+    pool: { connectionString: process.env.DATABASE_URL || "", max: dbPoolMax, connectionTimeoutMillis: 10_000, idle_in_transaction_session_timeout: 60_000, lock_timeout: 30_000 },
     // Payload owns its own Postgres schema (and every table is prefixed cms_) so it can never touch the legacy Prisma tables.
     schemaName: "payload",
     // Production uses committed migrations only – never auto-push.

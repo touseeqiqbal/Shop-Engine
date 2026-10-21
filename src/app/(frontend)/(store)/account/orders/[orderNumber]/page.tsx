@@ -100,12 +100,20 @@ export default async function OrderDetailPage({ params }: Props) {
       {!stopped && stepIndex >= 0 && (
         <section className="card p-5 sm:p-6" aria-label="Delivery progress">
           <ol className="grid grid-cols-5 gap-2 text-center text-xs sm:text-sm">
-            {ORDER_FLOW.map((s, i) => (
-              <li key={s} className="space-y-2">
-                <span className={cn("mx-auto block h-1.5 rounded-full", i <= stepIndex ? "bg-brand-gradient" : "bg-surface-strong")} aria-hidden="true" />
-                <span className={i <= stepIndex ? "font-semibold text-fg" : "text-muted"}>{ORDER_STATUS_LABEL[s]}</span>
-              </li>
-            ))}
+            {ORDER_FLOW.map((s, i) => {
+              // the bar's colour isn't read out: say each step's state (as on the track-order page)
+              const done = i < stepIndex || (i === stepIndex && s === "delivered");
+              const current = i === stepIndex;
+              return (
+                <li key={s} className="space-y-2" aria-current={current ? "step" : undefined}>
+                  <span className={cn("mx-auto block h-1.5 rounded-full", i <= stepIndex ? "bg-brand-gradient" : "bg-surface-strong")} aria-hidden="true" />
+                  <span className={i <= stepIndex ? "font-semibold text-fg" : "text-muted"}>
+                    {ORDER_STATUS_LABEL[s]}
+                    <span className="sr-only">{done ? " – completed" : current ? " – current step" : " – upcoming"}</span>
+                  </span>
+                </li>
+              );
+            })}
           </ol>
         </section>
       )}

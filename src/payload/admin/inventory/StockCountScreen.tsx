@@ -27,13 +27,19 @@ export function StockCountScreen() {
   const [busy, setBusy] = useState(false);
   const scanRef = useRef<HTMLInputElement>(null);
 
+  // a failed request says so – no empty list, no "Continue" that silently does nothing
+  const [openFailed, setOpenFailed] = useState(false);
   const loadOpen = useCallback(async () => {
-    const r = await fetch("/cms-api/stock-counts?where[status][equals]=open&sort=-updatedAt&limit=10&depth=0", { credentials: "include" });
-    setOpen(r.ok ? ((await r.json()) as { docs: Count[] }).docs : []);
+    const r = await fetch("/cms-api/stock-counts?where[status][equals]=open&sort=-updatedAt&limit=10&depth=0", { credentials: "include" }).catch(() => null);
+    const j = r?.ok ? ((await r.json().catch(() => null)) as { docs: Count[] } | null) : null;
+    setOpenFailed(!j);
+    setOpen(j?.docs ?? []);
   }, []);
   const load = useCallback(async (id: number) => {
-    const r = await fetch(`/cms-api/stock-counts/${id}?depth=0`, { credentials: "include" });
-    if (r.ok) setCurrent((await r.json()) as Count);
+    const r = await fetch(`/cms-api/stock-counts/${id}?depth=0`, { credentials: "include" }).catch(() => null);
+    const j = r?.ok ? ((await r.json().catch(() => null)) as Count | null) : null;
+    if (j) setCurrent(j);
+    else toast("Couldn’t load the count – try again", "error");
   }, []);
   useEffect(() => {
     void loadOpen();
@@ -114,6 +120,14 @@ export function StockCountScreen() {
             Start a new count
           </button>
         </div>
+        {openFailed && (
+          <p className="urko-pos__msg" role="alert">
+            Couldn’t load the counts in progress.{" "}
+            <button type="button" className="urko-btn" onClick={() => void loadOpen()}>
+              Try again
+            </button>
+          </p>
+        )}
         {open && open.length > 0 && (
           <div className="urko-card" style={{ marginTop: 16 }}>
             <h2 className="urko-pos__h" style={{ marginTop: 0 }}>
@@ -190,50 +204,52 @@ export function StockCountScreen() {
         )}
       </div>
       <div className="urko-card">
-        <table className="urko-table">
-          <thead>
-            <tr>
-              <th scope="col">Product</th>
-              <th scope="col" className="n">
-                System
-              </th>
-              <th scope="col" className="n">
-                Counted
-              </th>
-              <th scope="col" className="n">
-                Difference
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((l) => {
-              const d = l.counted - l.expected;
-              return (
-                <tr key={l.productId}>
-                  <td>
-                    {l.title}
-                    <br />
-                    <small className="urko-tip">
-                      {l.sku}
-                      {l.tracked ? " · by serial" : ""}
-                    </small>
-                  </td>
-                  <td className="n">{l.expected}</td>
-                  <td className="n">
-                    {l.tracked ? (
-                      l.counted
-                    ) : (
-                      <input className="urko-quick__input" style={{ width: 70, textAlign: "right" }} inputMode="numeric" defaultValue={l.counted} key={`${l.productId}-${l.counted}`} onBlur={(e) => e.target.value !== String(l.counted) && setCounted(l, e.target.value)} aria-label={`Counted ${l.title}`} />
-                    )}
-                  </td>
-                  <td className="n">
-                    <span className={`urko-badge urko-badge--${d === 0 ? "g" : d < 0 ? "r" : "b"}`}>{d > 0 ? `+${d}` : d}</span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="urko-table-wrap">
+          <table className="urko-table">
+            <thead>
+              <tr>
+                <th scope="col">Product</th>
+                <th scope="col" className="n">
+                  System
+                </th>
+                <th scope="col" className="n">
+                  Counted
+                </th>
+                <th scope="col" className="n">
+                  Difference
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l) => {
+                const d = l.counted - l.expected;
+                return (
+                  <tr key={l.productId}>
+                    <td>
+                      {l.title}
+                      <br />
+                      <small className="urko-tip">
+                        {l.sku}
+                        {l.tracked ? " · by serial" : ""}
+                      </small>
+                    </td>
+                    <td className="n">{l.expected}</td>
+                    <td className="n">
+                      {l.tracked ? (
+                        l.counted
+                      ) : (
+                        <input className="urko-quick__input" style={{ width: 70, textAlign: "right" }} inputMode="numeric" defaultValue={l.counted} key={`${l.productId}-${l.counted}`} onBlur={(e) => e.target.value !== String(l.counted) && setCounted(l, e.target.value)} aria-label={`Counted ${l.title}`} />
+                      )}
+                    </td>
+                    <td className="n">
+                      <span className={`urko-badge urko-badge--${d === 0 ? "g" : d < 0 ? "r" : "b"}`}>{d > 0 ? `+${d}` : d}</span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

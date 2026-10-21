@@ -64,13 +64,13 @@ export default async function AboutPage() {
   const [c, store, topCategories] = await Promise.all([getResolvedPageContent("/about"), getCurrentStore(), getTopCategories().catch(() => [])]);
   // the original (default) shop's own wording; any other store: its own area (Settings → Store details) or none
   const original = !store || store.isDefault;
+  const area = (s: string) => s.replace("{area}", c.info.address.area ? `${c.info.address.area} ` : "");
   // "What we sell": the original shop's own texts for the categories it has; any other store: its own top categories –
   // never another shop's claims (laptop testing, free installation …) or links to categories it doesn't have
   const slugs = new Set(topCategories.map((t) => t.slug));
   const sell = original
     ? WHAT_WE_SELL.filter((w) => slugs.has(w.href.replace("/category/", ""))).map((w) => ({ key: w.title, title: w.title, text: area(w.text), href: w.href, icon: <w.icon className="size-6" aria-hidden="true" /> }))
     : topCategories.slice(0, 6).map((t) => ({ key: t.slug, title: t.name, text: t.shortDescription, href: `/category/${t.slug}`, icon: <CategoryIcon name={t.icon} className="size-6" /> }));
-  const area = (s: string) => s.replace("{area}", c.info.address.area ? `${c.info.address.area} ` : "");
   // the store's own country ("in Pakistan" / "in the United States")
   const country = store?.country ?? "PK";
   const where = (s: string) => s.replace("{country}", countryInText(country)).replace("{allOver}", deliveryArea(country));

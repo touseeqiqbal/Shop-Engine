@@ -78,12 +78,20 @@ export interface StoredObject {
   etag?: string;
 }
 
-export async function getObject(key: string): Promise<StoredObject | null> {
+/**
+ * An object to stream. `ifNoneMatch` (the browser's cached ETag): when the object is unchanged, `{ notModified }` comes
+ * back without reading it – the bucket isn't asked to send a file the browser already has.
+ */
+export async function getObject(key: string): Promise<StoredObject | null>;
+export async function getObject(key: string, opts: { ifNoneMatch?: string | null }): Promise<StoredObject | { notModified: true; etag: string } | null>;
+export async function getObject(key: string, opts: { ifNoneMatch?: string | null } = {}): Promise<StoredObject | { notModified: true; etag: string } | null> {
   if (!isSafeKey(key)) return null;
   if (!isStorageConfigured) {
     try {
       const p = localPath(key);
       const s = await stat(p);
+      const etag = `"${s.size}-${s.mtimeMs}"`;
+      if (opts.ifNoneMatch && opts.ifNoneMatch === etag) return { notModified: true, etag };
       return {
         body: Readable.toWeb(createReadStream(p)) as unknown as ReadableStream<Uint8Array>,
         contentType: typeFromKey(key),
@@ -95,7 +103,7 @@ export async function getObject(key: string): Promise<StoredObject | null> {
     }
   }
   try {
-    const res = await s3().send(new GetObjectCommand({ Bucket: env.bucket, Key: key }));
+    const res = await s3().send(new GetObjectCommand({ Bucket: env.bucket, Key: key, ...(opts.ifNoneMatch ? { IfNoneMatch: opts.ifNoneMatch } : {}) }));
     if (!res.Body) return null;
     return {
       body: res.Body.transformToWebStream() as ReadableStream<Uint8Array>,
@@ -104,7 +112,9 @@ export async function getObject(key: string): Promise<StoredObject | null> {
       etag: res.ETag,
     };
   } catch (e) {
-    if ((e as { name?: string }).name === "NoSuchKey" || (e as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404) return null;
+    const status = (e as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+    if (status === 304 && opts.ifNoneMatch) return { notModified: true, etag: opts.ifNoneMatch };
+    if ((e as { name?: string }).name === "NoSuchKey" || status === 404) return null;
     throw e;
   }
 }

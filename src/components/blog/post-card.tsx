@@ -39,7 +39,7 @@ export async function PostCard({ post, featured, className, headingLevel = "h2" 
           </span>
           <span className="inline-flex items-center gap-1">
             <Clock className="size-3.5" aria-hidden="true" />
-            {readingTime(post.content)} min read
+            {post.minutes ?? readingTime(post.content)} min read
           </span>
         </div>
         <H className={cn("font-bold leading-tight text-fg", featured ? "text-2xl sm:text-3xl lg:text-4xl" : "text-lg sm:text-xl")}>

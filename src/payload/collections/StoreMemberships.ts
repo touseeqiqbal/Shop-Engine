@@ -24,6 +24,17 @@ const guardTeamChange: CollectionBeforeChangeHook = async ({ data, originalDoc, 
   if (context?.system) return data;
   const t = await getTenant(req);
   const store = storeIdOf(data.store ?? originalDoc?.store);
+  // a suspended member coming back takes a seat again: checked like a new one (suspending, inviting more and then
+  // re-activating used to grow the team past the plan)
+  const reactivating = operation === "update" && originalDoc?.status === "suspended" && data.status !== undefined && data.status !== "suspended";
+  if (reactivating && !t.platformAdmin) {
+    const { storeLimits } = await import("../../lib/billing");
+    const limits = await storeLimits(req.payload, store);
+    if (limits.maxStaffMembers > 0) {
+      const used = await req.payload.count({ collection: "store-memberships", where: { and: [{ store: { equals: store } }, { status: { not_equals: "suspended" } }] }, overrideAccess: true, req });
+      if (used.totalDocs >= limits.maxStaffMembers) throw userError(`Your plan allows ${limits.maxStaffMembers} team members. Upgrade the plan (Account → Stores) to add more.`, 403);
+    }
+  }
   if (operation === "create") {
     const email = String(data.email ?? "").trim().toLowerCase();
     if (!t.platformAdmin || !data.user) {

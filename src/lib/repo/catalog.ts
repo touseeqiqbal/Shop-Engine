@@ -30,10 +30,11 @@ import type {
   StoreSettings,
   Testimonial,
 } from "@/lib/types";
-import { effectivePrice } from "@/lib/utils";
+import { effectivePrice, readingTime } from "@/lib/utils";
 import { isExactMatch, rank, suggest } from "@/lib/search";
 import { currentStoreId } from "@/lib/tenant";
 import { log } from "@/lib/log";
+import { joinParts, partsFor, productsOfPart, sharedCatalogBuild } from "@/lib/catalog-parts";
 
 /**
  * Everything here is for the store of the current request (`currentStoreId()` – the host, or `runInStore` in jobs).
@@ -117,29 +118,48 @@ async function loadRaw(storeId: number | null) {
   return { categories, brands, products, models };
 }
 
+/** The whole catalogue, built from the database – WITHOUT the long descriptions (cached per product below). */
+async function buildSnapshot(storeId: number | null): Promise<CatalogSnapshot> {
+  const { categories, brands, products, models } = await loadRaw(storeId);
+  categories.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  // running flash sales with "% off" lower their products' prices here – every page, the cart and checkout read this
+  // snapshot (housekeeping refreshes it when such a sale starts or ends)
+  const flash = isCmsConfigured ? await discountedFlashSalesCms(storeId) : [];
+  return { categories, brands, products: applyFlashSales(groupVariants(enrich(products, categories, brands)), flash).map((p) => ({ ...p, description: "" })), models };
+}
+
 /**
- * The whole catalogue in one cache entry – WITHOUT the long descriptions (Next.js won't cache an entry over 2 MB,
- * so with hundreds of products every page would rebuild it). Descriptions are cached per product below.
+ * Cached in parts (lib/catalog-parts.ts): Next.js won't cache an entry over 2 MB, and a big store's whole catalogue is
+ * more than that – every page would then rebuild it from the database. The index holds the small part (categories,
+ * brands, models) and the products' order; each part about PART_SIZE products.
  */
-const loadSnapshotCached = perStoreCache(
-  "catalog-snapshot-v6",
-  async (storeId: number | null): Promise<CatalogSnapshot> => {
-    const { categories, brands, products, models } = await loadRaw(storeId);
-    categories.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
-    // running flash sales with "% off" lower their products' prices here – every page, the cart and checkout read this
-    // snapshot (housekeeping refreshes it when such a sale starts or ends)
-    const flash = isCmsConfigured ? await discountedFlashSalesCms(storeId) : [];
-    const snapshot = { categories, brands, products: applyFlashSales(groupVariants(enrich(products, categories, brands)), flash).map((p) => ({ ...p, description: "" })), models };
-    // Next.js silently skips caching an entry over 2 MB – then EVERY page reloads the whole catalogue from the
-    // database. Say so well before that happens (a store with ~1,000+ products, fewer with many variants).
-    const bytes = Buffer.byteLength(JSON.stringify(snapshot));
-    if (bytes > 1_500_000) log.warn("catalog.snapshot_large", { store: storeId, bytes, products: products.length, limit: 2_000_000 });
-    return snapshot;
+const PART_SIZE = Math.max(1, Number(process.env.CATALOG_PART_SIZE) || 300);
+const loadIndexCached = perStoreCache(
+  "catalog-index-v7",
+  async (storeId: number | null) => {
+    const s = await sharedCatalogBuild(storeId, () => buildSnapshot(storeId));
+    return { categories: s.categories, brands: s.brands, models: s.models, order: s.products.map((p) => p.id), parts: partsFor(s.products.length, PART_SIZE) };
   },
   REVALIDATE,
 );
-/** Once per request (per store), however many components ask. */
-const loadSnapshotFor = cache(loadSnapshotCached);
+const loadPartCached = perStoreCache(
+  "catalog-part-v7",
+  async (storeId: number | null, part: number, parts: number): Promise<CatalogProduct[]> => {
+    const s = await sharedCatalogBuild(storeId, () => buildSnapshot(storeId));
+    const list = productsOfPart(s.products, part, parts);
+    // still too big for one cache entry (very large products – long spec lists, many variants): say so
+    const bytes = Buffer.byteLength(JSON.stringify(list));
+    if (bytes > 1_500_000) log.warn("catalog.part_large", { store: storeId, part, parts, bytes, products: list.length, limit: 2_000_000 });
+    return list;
+  },
+  REVALIDATE,
+);
+/** Once per request (per store), however many components ask: the index and every part, joined in order. */
+const loadSnapshotFor = cache(async (storeId: number | null): Promise<CatalogSnapshot> => {
+  const index = await loadIndexCached(storeId);
+  const parts = await Promise.all(Array.from({ length: index.parts }, (_, i) => loadPartCached(storeId, i, index.parts)));
+  return { categories: index.categories, brands: index.brands, models: index.models, products: joinParts(index.order, parts) };
+});
 const loadSnapshot = async () => loadSnapshotFor(await currentStoreId());
 
 const productDescriptionCached = perStoreCache("product-description-v3", async (storeId: number | null, productId: string): Promise<string> => {
@@ -431,17 +451,32 @@ export const getBanners = unstable_cache(
   { tags: [TAGS.content], revalidate: REVALIDATE }
 );
 
+/**
+ * The blog's post list – WITHOUT each post's text (only its reading time): with every article in one cache entry a
+ * blog would soon pass Next.js' 2 MB limit, and every blog page would then reload all posts. A post's text is cached
+ * per post (getBlogPost).
+ */
 const blogPostsCached = unstable_cache(
   async (storeId: number | null): Promise<BlogPost[]> =>
     // Blog posts are written in /cms → Content → Blog posts
-    (isCmsConfigured ? await cmsBlogPosts(storeId) : (await listAll("blog_posts")).filter((p) => p.status === "published")).sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)),
-  ["blog-posts-v3"],
+    (isCmsConfigured ? await cmsBlogPosts(storeId) : (await listAll("blog_posts")).filter((p) => p.status === "published"))
+      .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt))
+      .map((p) => ({ ...p, content: "", minutes: readingTime(p.content) })),
+  ["blog-posts-v4"],
   { tags: [TAGS.content], revalidate: REVALIDATE }
 );
 export const getBlogPosts = async () => blogPostsCached(await currentStoreId());
 
+/** One post with its text, cached on its own. */
+const blogPostCached = unstable_cache(
+  async (storeId: number | null, slug: string): Promise<BlogPost | null> =>
+    isCmsConfigured ? ((await cmsBlogPosts(storeId, slug))[0] ?? null) : ((await listAll("blog_posts")).find((p) => p.status === "published" && p.slug === slug) ?? null),
+  ["blog-post-v1"],
+  { tags: [TAGS.content], revalidate: REVALIDATE }
+);
 export async function getBlogPost(slug: string) {
-  return (await getBlogPosts()).find((p) => p.slug === slug) ?? null;
+  if (!slug) return null;
+  return blogPostCached(await currentStoreId(), slug);
 }
 
 const activeFlashSaleCached = unstable_cache(

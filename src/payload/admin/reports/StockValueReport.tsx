@@ -7,15 +7,20 @@ import type { StockValueReport as Data } from "../../../lib/stock-value";
 export function StockValueReport() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0); // "Try again" loads the report once more
   const money = useAdminMoney();
   useEffect(() => {
+    setError("");
     fetch("/cms-api/stock-value", { credentials: "include" })
       .then(async (r) => (r.ok ? r.json() : Promise.reject(new Error(((await r.json().catch(() => null)) as { error?: string } | null)?.error ?? "Could not load the report"))))
       .then(setData)
       .catch((e) => setError((e as Error).message));
-  }, []);
+  }, [attempt]);
 
   const total = data?.totals.costValue || 0;
+  // a failed load shows the error instead of skeletons that never finish
+  const pending = error ? "–" : "…";
+  const placeholder = (height: number) => (error ? <p className="urko-tip">No figures – the report didn&apos;t load.</p> : <div className="urko-skeleton" style={{ height }} />);
   return (
     <div className="urko-home">
       <div className="urko-pos__head">
@@ -26,12 +31,19 @@ export function StockValueReport() {
           </p>
         </div>
       </div>
-      {error && <p className="urko-tip">{error}</p>}
+      {error && (
+        <p className="urko-tip" role="alert">
+          {error}{" "}
+          <button type="button" className="urko-btn urko-btn--sm" onClick={() => setAttempt((a) => a + 1)}>
+            Try again
+          </button>
+        </p>
+      )}
       <div className="urko-grid urko-grid--stats" style={{ marginBottom: 16 }}>
-        <Stat label="At cost" value={data ? money(data.totals.costValue) : "…"} />
-        <Stat label="At today's prices" value={data ? money(data.totals.retailValue) : "…"} />
-        <Stat label="Units on the shelves" value={data ? String(data.totals.units) : "…"} />
-        <Stat label="Products in stock" value={data ? String(data.totals.products) : "…"} />
+        <Stat label="At cost" value={data ? money(data.totals.costValue) : pending} />
+        <Stat label="At today's prices" value={data ? money(data.totals.retailValue) : pending} />
+        <Stat label="Units on the shelves" value={data ? String(data.totals.units) : pending} />
+        <Stat label="Products in stock" value={data ? String(data.totals.products) : pending} />
       </div>
       {data && data.totals.missingCost > 0 && (
         <p className="urko-tip" role="note">
@@ -47,66 +59,70 @@ export function StockValueReport() {
       <div className="urko-card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginTop: 0 }}>How long since it last sold</h3>
         {!data ? (
-          <div className="urko-skeleton" style={{ height: 120 }} />
+          placeholder(120)
         ) : (
-          <table className="urko-table">
-            <thead>
-              <tr>
-                <th scope="col">Last sale</th>
-                <th scope="col" className="n">Products</th>
-                <th scope="col" className="n">Units</th>
-                <th scope="col" className="n">At cost</th>
-                <th scope="col" className="n">Share</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.buckets.map((b, i) => (
-                <tr key={b.key}>
-                  <td>{b.label}</td>
-                  <td className="n">{b.products}</td>
-                  <td className="n">{b.units}</td>
-                  <td className="n">{money(b.costValue)}</td>
-                  <td className="n">
-                    <span className={`urko-badge urko-badge--${i === 0 ? "g" : i === 1 ? "y" : "r"}`}>{total > 0 ? Math.round((b.costValue / total) * 100) : 0}%</span>
-                  </td>
+          <div className="urko-table-wrap">
+            <table className="urko-table">
+              <thead>
+                <tr>
+                  <th scope="col">Last sale</th>
+                  <th scope="col" className="n">Products</th>
+                  <th scope="col" className="n">Units</th>
+                  <th scope="col" className="n">At cost</th>
+                  <th scope="col" className="n">Share</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.buckets.map((b, i) => (
+                  <tr key={b.key}>
+                    <td>{b.label}</td>
+                    <td className="n">{b.products}</td>
+                    <td className="n">{b.units}</td>
+                    <td className="n">{money(b.costValue)}</td>
+                    <td className="n">
+                      <span className={`urko-badge urko-badge--${i === 0 ? "g" : i === 1 ? "y" : "r"}`}>{total > 0 ? Math.round((b.costValue / total) * 100) : 0}%</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
       <div className="urko-card">
         <h3 style={{ marginTop: 0 }}>Slow movers – no sale for over 3 months</h3>
         {!data ? (
-          <div className="urko-skeleton" style={{ height: 160 }} />
+          placeholder(160)
         ) : data.slow.length === 0 ? (
           <p className="urko-tip">Nothing has sat for over 3 months. 🎉</p>
         ) : (
-          <table className="urko-table">
-            <thead>
-              <tr>
-                <th scope="col">Product</th>
-                <th scope="col" className="n">Units</th>
-                <th scope="col" className="n">At cost</th>
-                <th scope="col" className="n">No sale for</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.slow.map((s) => (
-                <tr key={s.id}>
-                  <td>
-                    <a href={`/cms/collections/products/${s.id}`}>{s.title}</a> <span className="urko-tip">{s.sku}</span>
-                  </td>
-                  <td className="n">{s.units}</td>
-                  <td className="n">{money(s.costValue)}</td>
-                  <td className="n">
-                    {s.days} days{s.neverSold ? " (never sold)" : ""}
-                  </td>
+          <div className="urko-table-wrap">
+            <table className="urko-table">
+              <thead>
+                <tr>
+                  <th scope="col">Product</th>
+                  <th scope="col" className="n">Units</th>
+                  <th scope="col" className="n">At cost</th>
+                  <th scope="col" className="n">No sale for</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.slow.map((s) => (
+                  <tr key={s.id}>
+                    <td>
+                      <a href={`/cms/collections/products/${s.id}`}>{s.title}</a> <span className="urko-tip">{s.sku}</span>
+                    </td>
+                    <td className="n">{s.units}</td>
+                    <td className="n">{money(s.costValue)}</td>
+                    <td className="n">
+                      {s.days} days{s.neverSold ? " (never sold)" : ""}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
       <p className="urko-tip" style={{ marginTop: 12 }}>

@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { Field, fieldAria } from "@/components/checkout/field";
 import { formatPhoneInput } from "@/components/checkout/phone";
 import { useDateFormatter, useMoney, useStoreLocale } from "@/components/providers/locale";
+import { useShowStores } from "./account-nav-context";
 import { useState } from "react";
 
 // the shopper's own tabs first; ShopEngine's store management (for merchants) last, with its own icon
@@ -25,10 +26,12 @@ const LINKS = [
 
 export function AccountNav() {
   const pathname = usePathname();
+  // "Manage stores" only on ShopEngine's own address or for people who work in a store – not a shop's customers
+  const showStores = useShowStores() || pathname.startsWith("/account/stores");
   return (
     <nav aria-label="Account" className="scrollbar-none -mx-4 overflow-x-auto px-4">
       <ul className="flex gap-2">
-        {LINKS.map(({ href, label, icon: Icon }) => {
+        {LINKS.filter((l) => showStores || l.href !== "/account/stores").map(({ href, label, icon: Icon }) => {
           const active = href === "/account" ? pathname === "/account" : pathname.startsWith(href);
           return (
             <li key={href}>

@@ -74,6 +74,7 @@ export function SalesReport() {
   const [tab, setTab] = useState<Tab>("byProduct");
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0); // "Try again" loads the same period once more
 
   useEffect(() => {
     setData(null);
@@ -82,7 +83,10 @@ export function SalesReport() {
       .then(async (r) => (r.ok ? r.json() : Promise.reject(new Error(((await r.json().catch(() => ({}))) as { error?: string }).error || "Could not load the report"))))
       .then(setData)
       .catch((e) => setError((e as Error).message));
-  }, [from, to, basis]);
+  }, [from, to, basis, attempt]);
+  // a failed load shows the error instead of skeletons that never finish
+  const pending = error ? "–" : "…";
+  const placeholder = (height: number) => (error ? <p className="urko-tip">No figures – the report didn&apos;t load.</p> : <div className="urko-skeleton" style={{ height }} />);
 
   const rows = data?.[tab] ?? [];
   const product = tab === "byProduct" || tab === "byCategory" || tab === "byBrand";
@@ -149,19 +153,26 @@ export function SalesReport() {
         </div>
       </div>
 
-      {error && <p className="urko-tip">{error}</p>}
+      {error && (
+        <p className="urko-tip" role="alert">
+          {error}{" "}
+          <button type="button" className="urko-btn urko-btn--sm" onClick={() => setAttempt((a) => a + 1)}>
+            Try again
+          </button>
+        </p>
+      )}
 
       <div className="urko-grid urko-grid--stats" style={{ marginBottom: 16 }}>
-        <Stat label="Booked sales" value={t ? money(t.bookedSales) : "…"} hint="Went ahead + counter" />
-        <Stat label="Delivered sales" value={t ? money(t.deliveredSales) : "…"} hint="Money collected" />
-        <Stat label={`${basis === "booked" ? "Booked" : "Delivered"} orders & sales`} value={t ? String(t.orders) : "…"} hint={t ? `Average ${money(t.aov)}` : undefined} />
-        <Stat label="Shop counter" value={t ? money(t.counter.value) : "…"} hint={t ? `${t.counter.count} sale${t.counter.count === 1 ? "" : "s"}` : undefined} />
+        <Stat label="Booked sales" value={t ? money(t.bookedSales) : pending} hint="Went ahead + counter" />
+        <Stat label="Delivered sales" value={t ? money(t.deliveredSales) : pending} hint="Money collected" />
+        <Stat label={`${basis === "booked" ? "Booked" : "Delivered"} orders & sales`} value={t ? String(t.orders) : pending} hint={t ? `Average ${money(t.aov)}` : undefined} />
+        <Stat label="Shop counter" value={t ? money(t.counter.value) : pending} hint={t ? `${t.counter.count} sale${t.counter.count === 1 ? "" : "s"}` : undefined} />
       </div>
       <div className="urko-grid urko-grid--stats" style={{ marginBottom: 16 }}>
-        <Stat label="Open (not sales yet)" value={t ? String(t.open.count) : "…"} hint={t ? `${money(t.open.value)} pending / to confirm` : undefined} />
-        <Stat label="Refused (RTO)" value={t ? String(t.refused.count) : "…"} hint={t ? `${t.refusalRate}% of deliveries · ${money(t.refused.value)}` : undefined} />
-        <Stat label="Cancelled" value={t ? String(t.cancelled.count) : "…"} hint={t ? money(t.cancelled.value) : undefined} />
-        <Stat label="Refunds (returns)" value={t ? money(t.refunds) : "…"} hint={t ? `${t.returned.count} order${t.returned.count === 1 ? "" : "s"} fully returned` : undefined} />
+        <Stat label="Open (not sales yet)" value={t ? String(t.open.count) : pending} hint={t ? `${money(t.open.value)} pending / to confirm` : undefined} />
+        <Stat label="Refused (RTO)" value={t ? String(t.refused.count) : pending} hint={t ? `${t.refusalRate}% of deliveries · ${money(t.refused.value)}` : undefined} />
+        <Stat label="Cancelled" value={t ? String(t.cancelled.count) : pending} hint={t ? money(t.cancelled.value) : undefined} />
+        <Stat label="Refunds (returns)" value={t ? money(t.refunds) : pending} hint={t ? `${t.returned.count} order${t.returned.count === 1 ? "" : "s"} fully returned` : undefined} />
       </div>
 
       {p && (
@@ -207,7 +218,7 @@ export function SalesReport() {
             </div>
           </>
         ) : (
-          <div className="urko-skeleton" style={{ height: 160 }} />
+          placeholder(160)
         )}
       </section>
 
@@ -225,43 +236,45 @@ export function SalesReport() {
           </button>
         </div>
         {!data ? (
-          <div className="urko-skeleton" style={{ height: 160 }} />
+          placeholder(160)
         ) : rows.length === 0 ? (
           <p className="urko-tip">No sales in this period.</p>
         ) : (
-          <table className="urko-table">
-            <thead>
-              <tr>
-                <th scope="col">{TABS.find((x) => x[0] === tab)?.[1]}</th>
-                {product && <th scope="col" className="n">Qty</th>}
-                <th scope="col" className="n">{product ? "Orders" : "Sales"}</th>
-                <th scope="col" className="n">Amount</th>
-                <th scope="col" className="n">Share</th>
-                {showProfit && <th scope="col" className="n">Cost</th>}
-                {showProfit && <th scope="col" className="n">Profit</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const total = rows.reduce((s, x) => s + x.sales, 0) || 1;
-                return (
-                  <tr key={r.key}>
-                    <td>{r.label}</td>
-                    {product && <td className="n">{r.qty ?? 0}</td>}
-                    <td className="n">{r.orders}</td>
-                    <td className="n">{money(r.sales)}</td>
-                    <td className="n">{Math.round((r.sales / total) * 100)}%</td>
-                    {showProfit && <td className="n">{r.costKnown ? money(r.cost ?? 0) : "—"}</td>}
-                    {showProfit && (
-                      <td className="n">
-                        {r.costKnown ? <span className={`urko-badge urko-badge--${(r.profit ?? 0) < 0 ? "r" : "g"}`}>{money(r.profit ?? 0)}</span> : "—"}
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="urko-table-wrap">
+            <table className="urko-table">
+              <thead>
+                <tr>
+                  <th scope="col">{TABS.find((x) => x[0] === tab)?.[1]}</th>
+                  {product && <th scope="col" className="n">Qty</th>}
+                  <th scope="col" className="n">{product ? "Orders" : "Sales"}</th>
+                  <th scope="col" className="n">Amount</th>
+                  <th scope="col" className="n">Share</th>
+                  {showProfit && <th scope="col" className="n">Cost</th>}
+                  {showProfit && <th scope="col" className="n">Profit</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const total = rows.reduce((s, x) => s + x.sales, 0) || 1;
+                  return (
+                    <tr key={r.key}>
+                      <td>{r.label}</td>
+                      {product && <td className="n">{r.qty ?? 0}</td>}
+                      <td className="n">{r.orders}</td>
+                      <td className="n">{money(r.sales)}</td>
+                      <td className="n">{Math.round((r.sales / total) * 100)}%</td>
+                      {showProfit && <td className="n">{r.costKnown ? money(r.cost ?? 0) : "—"}</td>}
+                      {showProfit && (
+                        <td className="n">
+                          {r.costKnown ? <span className={`urko-badge urko-badge--${(r.profit ?? 0) < 0 ? "r" : "g"}`}>{money(r.profit ?? 0)}</span> : "—"}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
         {product && (
           <p className="urko-tip" style={{ marginTop: 12, marginBottom: 0 }}>

@@ -1,6 +1,5 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { draftMode } from "next/headers";
 import { notFound, permanentRedirect } from "next/navigation";
 import { LivePreview } from "@/components/blocks/live-preview";
 import { Barcode } from "lucide-react";
@@ -45,6 +44,7 @@ import type { CatalogProduct } from "@/lib/types";
 import { countryInText, type StoreLocale } from "@/lib/locale";
 import { formatMoney } from "@/lib/money";
 import { getStoreLocale } from "@/lib/store-locale";
+import { isPreviewing } from "@/lib/tenant";
 
 // Rendered per request (the store comes from the address – a cached page must never reach another store's visitors);
 // the data behind it stays cached per store. No build-time list: products, brands and posts added later work at once.
@@ -56,7 +56,7 @@ type Params = Promise<{ category: string; product: string }>;
 async function resolveProduct(params: Params): Promise<CatalogProduct> {
   const { category, product: slug } = await params;
   // staff preview (Draft Mode): the latest draft instead of the published product
-  const preview = (await draftMode()).isEnabled ? await getPreviewProductBySlug(slug) : null;
+  const preview = (await isPreviewing()) ? await getPreviewProductBySlug(slug) : null;
   const product = preview ?? (await getProductBySlug(slug));
   if (!product) notFound();
   if (product.topCategorySlug !== category) permanentRedirect(product.url);
@@ -265,7 +265,7 @@ export default async function ProductPage({ params }: { params: Params }) {
 
         <RecentlyViewed product={product} />
       </div>
-      {(await draftMode()).isEnabled && <LivePreview />}
+      {(await isPreviewing()) && <LivePreview />}
     </>
   );
 }

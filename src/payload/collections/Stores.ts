@@ -33,6 +33,29 @@ export const normalizeDomain = (v: unknown) =>
 
 const DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
+/**
+ * ShopEngine's own addresses – the platform domain and every store sub-domain under it, the marketing site, the main
+ * site – can never be a store's custom domain (a verified custom domain wins over a sub-domain: it would take over
+ * another store's address or the main shop).
+ */
+function platformOwnedDomain(domain: string): boolean {
+  const root = (process.env.PLATFORM_ROOT_DOMAIN ?? "").trim().toLowerCase().replace(/^\.+|\.+$/g, "");
+  const hostOf = (url: string | undefined) => {
+    try {
+      return url ? new URL(url).hostname.toLowerCase() : "";
+    } catch {
+      return "";
+    }
+  };
+  const own = [
+    root,
+    ...(process.env.MARKETING_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase().replace(/:\d+$/, "")),
+    hostOf(process.env.NEXT_PUBLIC_SITE_URL),
+    (process.env.RAILWAY_PUBLIC_DOMAIN ?? "").trim().toLowerCase(),
+  ].filter(Boolean);
+  return own.some((h) => domain === h || domain.endsWith(`.${h}`) || (h.startsWith("www.") && domain === h.slice(4)));
+}
+
 /** A store's owner (in the store they work in) may edit its profile; everything else stays with platform admins. */
 const storeOwnerField: FieldAccess = async ({ req, id }) => {
   const t = await getTenant(req);
@@ -61,7 +84,8 @@ export const Stores: CollectionConfig = {
     update: async ({ req }) => {
       const t = await getTenant(req);
       if (t.platformAdmin) return true;
-      return t.activeStoreId != null && hasStoreRole(t, t.activeStoreId, "store_owner") ? ({ id: { equals: t.activeStoreId } } satisfies Where) : false;
+      // (not while the store is read-only – suspended, closed, plan ended – like every other store record)
+      return t.activeStoreId != null && hasStoreRole(t, t.activeStoreId, "store_owner") && !t.readOnly.has(t.activeStoreId) ? ({ id: { equals: t.activeStoreId } } satisfies Where) : false;
     },
     delete: platformAdmins,
   },
@@ -75,6 +99,7 @@ export const Stores: CollectionConfig = {
         const sub = data.subdomain ?? originalDoc?.subdomain;
         if (sub && RESERVED_STORE_NAMES.has(String(sub))) throw userError(`“${sub}” is reserved – choose another store address.`, 400);
         if (data.customDomain && !DOMAIN_RE.test(String(data.customDomain))) throw userError("Enter a domain like shop.example.com (no https://).", 400);
+        if (data.customDomain && platformOwnedDomain(String(data.customDomain))) throw userError("That address belongs to ShopEngine – use a domain you own.", 400);
         // region: ISO codes ("Pakistan" → "PK"); a new store is in Pakistan unless it says otherwise; a new country
         // brings its currency and time zone unless those were changed in the same save (the admin sends every field,
         // so "given" means "different from before")
@@ -100,6 +125,15 @@ export const Stores: CollectionConfig = {
       },
     ],
     beforeChange: [
+      // a custom domain is a plan feature – also when set through /cms or the API (Account → Stores checked it, these didn't)
+      async ({ data, originalDoc, req, context }) => {
+        if (context?.system || !req.user || !data.customDomain || data.customDomain === originalDoc?.customDomain) return data;
+        const t = await getTenant(req);
+        if (t.platformAdmin) return data;
+        const { hasFeature, storeLimits } = await import("../../lib/billing");
+        if (!hasFeature(await storeLimits(req.payload, Number(originalDoc?.id)), "custom_domain")) throw userError("Your plan doesn't include a custom domain – upgrade to use one.", 403);
+        return data;
+      },
       ({ data, originalDoc }) => {
         // a new custom domain must be proved again (DNS TXT record) before the store answers on it
         const domain = data.customDomain !== undefined ? data.customDomain : originalDoc?.customDomain;

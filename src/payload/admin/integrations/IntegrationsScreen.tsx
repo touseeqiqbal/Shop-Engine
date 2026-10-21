@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { toast } from "../ui/toast";
 import { CATEGORIES, type IntegrationCategory, type IntegrationInfo } from "../../../lib/integrations/catalog-types";
 import { StoreApiPanel } from "./StoreApiPanel";
@@ -184,6 +185,9 @@ function Connect({ info, conn, isOwner, onClose, onChanged }: { info: Info; conn
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
+  // focus moves into the dialog, Tab stays inside, and goes back to the card's button on close
+  const box = useRef<HTMLDivElement>(null);
+  useFocusTrap(box, true);
 
   async function run(fn: () => Promise<{ ok?: boolean; message?: string; switchedOff?: string[] }>, done?: string) {
     setBusy(true);
@@ -205,7 +209,7 @@ function Connect({ info, conn, isOwner, onClose, onChanged }: { info: Info; conn
 
   return (
     <div className="urko-dialog__backdrop" role="dialog" aria-modal="true" aria-labelledby="int-dialog-title" onClick={onClose}>
-      <div className="urko-dialog urko-int__dialog" onClick={(e) => e.stopPropagation()}>
+      <div ref={box} className="urko-dialog urko-int__dialog" onClick={(e) => e.stopPropagation()}>
         <div className="urko-int__dhead">
           <Initial info={info} />
           <div style={{ flex: 1, minWidth: 0 }}>

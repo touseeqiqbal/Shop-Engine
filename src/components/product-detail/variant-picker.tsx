@@ -16,8 +16,23 @@ export function initialPick(variants: CatalogProduct[], slug?: string | null): R
 }
 
 /**
- * Option buttons (e.g. Colour: Black / Silver, Size: S / M / L). A value that makes no existing combination is disabled;
- * one whose variant is sold out is crossed out but still selectable (so shoppers can ask for a stock alert).
+ * The choices after picking `value` for option `name`: kept as they are when that combination exists, else switched to
+ * the nearest existing one (most other choices kept, one that can be ordered first) – Black + XL → Silver + XL.
+ */
+export function pickValue(variants: CatalogProduct[], options: VariantOptions, pick: Record<string, string>, name: string, value: string) {
+  const next = { ...pick, [name]: value };
+  if (matchVariant(variants, options, next)) return next;
+  const kept = (v: CatalogProduct) => options.filter((o) => o.name !== name && (v.optionValues ?? {})[o.name] === pick[o.name]).length;
+  const best = variants
+    .filter((v) => (v.optionValues ?? {})[name] === value)
+    .sort((a, b) => kept(b) - kept(a) || Number(canOrder(b)) - Number(canOrder(a)))[0];
+  return best ? { ...(best.optionValues ?? {}) } : next;
+}
+
+/**
+ * Option buttons (e.g. Colour: Black / Silver, Size: S / M / L). A value no variant has at all is disabled; one that only
+ * exists with other choices stays selectable (picking it switches those – see pickValue). One whose variant is sold out
+ * is crossed out but still selectable (so shoppers can ask for a stock alert).
  */
 export function VariantPicker({
   options,
@@ -39,22 +54,26 @@ export function VariantPicker({
           </legend>
           <div className="flex flex-wrap gap-2">
             {o.values.map((value) => {
-              const v = matchVariant(variants, options, { ...pick, [o.name]: value });
+              // the variant picking this value leads to – this exact combination, or the nearest one it switches to
+              const v = matchVariant(variants, options, { ...pick, [o.name]: value }) ?? matchVariant(variants, options, pickValue(variants, options, pick, o.name, value));
+              // some variant has this value (maybe with other choices)
+              const exists = Boolean(v) || variants.some((x) => (x.optionValues ?? {})[o.name] === value);
               const selected = pick[o.name] === value;
+              // crossed out when the variant it leads to can't be ordered (also via the switch)
               const soldOut = v ? !canOrder(v) : false;
               return (
                 <button
                   key={value}
                   type="button"
-                  disabled={!v}
+                  disabled={!exists}
                   aria-pressed={selected}
-                  aria-label={`${o.name}: ${value}${!v ? " – not available" : soldOut ? " – sold out" : ""}`}
+                  aria-label={`${o.name}: ${value}${!exists ? " – not available" : soldOut ? " – sold out" : ""}`}
                   onClick={() => onPick(o.name, value)}
                   className={cn(
                     "min-h-11 min-w-11 rounded-xl border px-4 text-sm font-semibold transition",
                     selected ? "border-violet-400 bg-violet-500/15 text-fg" : "border-border bg-surface text-fg hover:border-violet-400/60",
                     soldOut && "text-muted line-through",
-                    !v && "cursor-not-allowed opacity-40"
+                    !exists && "cursor-not-allowed opacity-40"
                   )}
                 >
                   {value}

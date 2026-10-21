@@ -175,6 +175,8 @@ const addressSchema = (country: string) =>
     postalCode: z.string().trim().max(12, "Postcode is too long").optional(),
     address: z.string().trim().min(country === "PK" ? 10 : 5, "Complete address required").max(300),
     landmark: z.string().trim().max(120).optional(),
+    // an address abroad (stores that ship to other countries) – kept, not dropped on save
+    country: z.string().regex(/^[A-Z]{2}$/).optional(),
   });
 
 /** Replaces the signed-in customer's saved addresses (max 10). */

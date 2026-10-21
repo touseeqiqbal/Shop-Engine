@@ -50,6 +50,8 @@ export const salesReportEndpoint: Endpoint = {
     const to = dayParam(url.searchParams.get("to")) ?? today;
     let from = dayParam(url.searchParams.get("from")) ?? addDays(to, -29);
     if (from > to) from = to;
+    // at most about a year at a time: every order of the range is read into this process (the one serving the shop)
+    if (Date.parse(to) - Date.parse(from) > 366 * 864e5) from = addDays(to, -366);
     const basis = url.searchParams.get("basis") === "delivered" ? "delivered" : "booked";
     const start = new Date(dayStart(from, tz)).toISOString();
     const end = new Date(dayStart(addDays(to, 1), tz)).toISOString();

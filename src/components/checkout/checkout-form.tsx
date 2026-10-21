@@ -46,6 +46,7 @@ import { toRequestLines, useCartCoupon, useCartSync } from "./use-coupon";
 import { Turnstile } from "@/components/ui/turnstile";
 import { saveDraft } from "@/app/(frontend)/(store)/checkout/draft-actions";
 import { honeypotProps } from "@/lib/honeypot";
+import { floorMoney } from "@/lib/money";
 
 const MAX_FILE = 5 * 1024 * 1024;
 const FILE_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -135,9 +136,15 @@ export function CheckoutForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
   // what this store offers (lib/payments/methods.ts) – first one that isn't paid on another site (COD unless switched off)
-  const methods = useMemo(() => checkoutMethods(settings), [settings]);
+  // downloads only: nothing is delivered, so nothing can be paid on delivery (the server refuses it too)
+  const downloadsOnly = lines.length > 0 && lines.every((l) => l.shipsNothing);
+  const methods = useMemo(() => checkoutMethods(settings).filter((m) => !downloadsOnly || m.due !== "on-delivery"), [settings, downloadsOnly]);
   const [method, setMethod] = useState<PaymentMethod>(() => (methods.find((m) => m.kind !== "gateway") ?? methods[0])?.id ?? "cod");
   const current: CheckoutMethod | null = methods.find((m) => m.id === method) ?? null;
+  // the cart loaded (or changed) and the chosen way to pay isn't offered for it any more (a downloads-only cart): the next one
+  useEffect(() => {
+    if (!methods.some((m) => m.id === method) && methods[0]) setMethod(methods[0].id);
+  }, [methods, method]);
   // card payments and some payment providers (Paystack, Flutterwave, Tap) need an email for the receipt
   const emailNeeded = emailRequired || method === "card" || Boolean(current?.needsEmail);
   const [file, setFile] = useState<File | null>(null);
@@ -276,8 +283,10 @@ export function CheckoutForm({
   const { discount, delivery, fee, total } = totals;
   const payMethod: PaymentMethod = giftCovers ? GIFT_CARD_METHOD.id : method;
   // what the card pays and what is left (cash on delivery, a transfer or a card payment covers the rest)
-  const giftUsed = gift ? Math.min(gift.balance, total) : 0;
-  const toPay = Math.max(0, Math.round((total - giftUsed) * 100) / 100);
+  // as the server: the card pays at most its balance, rounded down to the currency's unit; amounts in the currency's own
+  // decimals (KWD has 3 – a fixed 2 put the COD limit and the advance on the wrong number)
+  const giftUsed = gift ? floorMoney(Math.min(gift.balance, total), money.currency) : 0;
+  const toPay = Math.max(0, money.round(total - giftUsed));
   // a chosen delivery method's own delivery time (Express: "Next working day" …)
   const chosenShipping = quote && quote.options.length > 1 ? quote.options.find((o) => o.id === shipping) : null;
   const eta = f.city ? (chosenShipping?.estimate ? { label: chosenShipping.estimate, days: chosenShipping.estimate } : deliveryEstimate(f.city, settings, f.postalCode, shipTo)) : null;

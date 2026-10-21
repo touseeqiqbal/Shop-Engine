@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { safePath } from "@/lib/safe-path";
 import { adminRequest, canSeeStore } from "@/payload/route-access";
 import { PREVIEW_STORE_COOKIE } from "@/lib/tenant-shared";
+import { previewCookieValue } from "@/lib/preview-cookie";
 
 /**
  * Entry point for /cms live preview & "Preview" buttons: /api/preview?path=/pages/about
@@ -39,6 +40,7 @@ export async function GET(request: Request) {
   }
 
   (await draftMode()).enable();
-  if (store != null) (await cookies()).set(PREVIEW_STORE_COOKIE, String(store), { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 });
+  // signed: the storefront honours only a store this route chose (one this person works in), for an hour
+  if (store != null) (await cookies()).set(PREVIEW_STORE_COOKIE, previewCookieValue(store, Date.now() + 60 * 60_000), { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 });
   redirect(path);
 }

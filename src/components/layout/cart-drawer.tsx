@@ -5,14 +5,14 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, m as motion } from "framer-motion";
 import { Minus, Plus, ShoppingBag, Trash2, Truck, X } from "lucide-react";
 import { cartCount, cartSubtotal, useCart } from "@/store/cart";
-import { usePrefs } from "@/components/providers/preferences";
+import { Tr } from "@/components/providers/preferences";
 import { useMoney, useStoreLocale } from "@/components/providers/locale";
 import { CITY_KEY, freeDeliveryAbove, type DeliveryInfo } from "@/lib/cities";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
+import { MAX_QTY_PER_ITEM } from "@/lib/cart-limits";
 
 export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
   const { lines, drawerOpen, closeDrawer, setQty, remove } = useCart();
-  const { t } = usePrefs();
   const money = useMoney();
   const pk = useStoreLocale().country === "PK"; // "all over Pakistan" only for Pakistani stores
   const cod = delivery.cod.enabled; // Cash on Delivery is only promised while the store offers it
@@ -67,7 +67,7 @@ export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
             <div className="flex items-center justify-between border-b border-border px-5 py-4">
               <h2 className="flex items-center gap-2 text-lg font-bold">
                 <ShoppingBag className="size-5 text-violet-400" aria-hidden="true" />
-                {t("cart")} <span className="text-sm font-medium text-muted">({cartCount(lines)})</span>
+                <Tr k="cart" /> <span className="text-sm font-medium text-muted">({cartCount(lines)})</span>
               </h2>
               <button type="button" onClick={closeDrawer} className="btn btn-ghost btn-icon" aria-label="Close cart">
                 <X className="size-5" aria-hidden="true" />
@@ -79,10 +79,10 @@ export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
                 <div className="grid size-20 place-items-center rounded-full bg-surface-strong">
                   <ShoppingBag className="size-9 text-muted" aria-hidden="true" />
                 </div>
-                <p className="text-lg font-semibold">{t("emptyCart")}</p>
+                <p className="text-lg font-semibold"><Tr k="emptyCart" /></p>
                 <p className="text-sm text-muted">Browse laptops and accessories – {pk ? (cod ? "Cash on Delivery all over Pakistan" : "delivery all over Pakistan") : "fast delivery nationwide"}.</p>
                 <Link href="/shop" onClick={closeDrawer} className="btn btn-primary">
-                  {t("continueShopping")}
+                  <Tr k="continueShopping" />
                 </Link>
               </div>
             ) : (
@@ -130,14 +130,15 @@ export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
                             <p className="mt-0.5 text-xs text-violet-300">+ {l.upgrades.map((u) => u.label).join(", ")}</p>
                           )}
                           <div className="mt-2 flex items-center justify-between gap-2">
-                            <div className="flex items-center rounded-full border border-border-strong">
-                              <button type="button" onClick={() => setQty(l.key, l.qty - 1)} className="grid size-8 place-items-center" aria-label={`Decrease quantity of ${l.name}`}>
+                            {/* same limits as the cart page's stepper: not below 1 (the bin removes), not above the stock */}
+                            <div className="flex items-center rounded-full border border-border-strong" role="group" aria-label={`Quantity of ${l.name}`}>
+                              <button type="button" onClick={() => setQty(l.key, l.qty - 1)} disabled={l.qty <= 1} className="grid size-8 place-items-center rounded-full disabled:opacity-40" aria-label={`Decrease quantity of ${l.name}`}>
                                 <Minus className="size-3.5" aria-hidden="true" />
                               </button>
-                              <span className="w-7 text-center text-sm font-semibold tabular-nums" aria-live="polite">
+                              <span className="w-7 text-center text-sm font-semibold tabular-nums" aria-live="polite" aria-atomic="true">
                                 {l.qty}
                               </span>
-                              <button type="button" onClick={() => setQty(l.key, l.qty + 1)} className="grid size-8 place-items-center" aria-label={`Increase quantity of ${l.name}`}>
+                              <button type="button" onClick={() => setQty(l.key, l.qty + 1)} disabled={l.qty >= Math.min(Math.max(l.stock, 1), MAX_QTY_PER_ITEM)} className="grid size-8 place-items-center rounded-full disabled:opacity-40" aria-label={`Increase quantity of ${l.name}`}>
                                 <Plus className="size-3.5" aria-hidden="true" />
                               </button>
                             </div>
@@ -153,16 +154,16 @@ export function CartDrawer({ delivery }: { delivery: DeliveryInfo }) {
                 </ul>
                 <div className="space-y-3 border-t border-border p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
                   <div className="flex items-center justify-between text-base">
-                    <span className="text-muted">{t("subtotal")}</span>
+                    <span className="text-muted"><Tr k="subtotal" /></span>
                     <span className="font-display text-xl font-bold tabular-nums">{money(subtotal)}</span>
                   </div>
                   <p className="text-xs text-muted">Delivery calculated at checkout{cod ? " · Cash on Delivery available" : ""}</p>
                   <div className="grid grid-cols-2 gap-2">
                     <Link href="/cart" onClick={closeDrawer} className="btn btn-secondary">
-                      {t("viewCart")}
+                      <Tr k="viewCart" />
                     </Link>
                     <Link href="/checkout" onClick={closeDrawer} className="btn btn-primary">
-                      {t("checkout")}
+                      <Tr k="checkout" />
                     </Link>
                   </div>
                 </div>

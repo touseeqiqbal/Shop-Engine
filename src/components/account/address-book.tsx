@@ -54,8 +54,9 @@ export function AddressBook({ mode, initial = [] }: { mode: "remote" | "local"; 
     if (!draft.label.trim()) errs.label = "Give this address a label";
     if (draft.name.trim().length < 3) errs.name = "Enter the receiver's name";
     if (!normalizePhone(draft.phone, country)) errs.phone = "Enter a valid mobile number";
-    if (!draft.city) errs.city = "Choose a city";
-    if (draft.address.trim().length < 10) errs.address = "Enter the complete address";
+    if (pk ? !draft.city : draft.city.trim().length < 2) errs.city = pk ? "Choose a city" : "Enter your city";
+    // the same rule as checkout (and the server): 10 characters in Pakistan, 5 elsewhere
+    if (draft.address.trim().length < (pk ? 10 : 5)) errs.address = "Enter the complete address";
     setErrors(errs);
     if (Object.keys(errs).length) return;
     const entry: SavedAddress = {
@@ -66,6 +67,11 @@ export function AddressBook({ mode, initial = [] }: { mode: "remote" | "local"; 
       city: draft.city,
       address: draft.address.trim(),
       landmark: draft.landmark?.trim() || undefined,
+      // outside Pakistan, as at checkout
+      region: (!pk && draft.region?.trim()) || undefined,
+      postalCode: (!pk && draft.postalCode?.trim()) || undefined,
+      // an address abroad saved at checkout keeps its country when edited here
+      country: draft.country || undefined,
     };
     const next = draft.id ? list.map((a) => (a.id === draft.id ? entry : a)) : [entry, ...list].slice(0, 10);
     persist(next, () => {
@@ -113,6 +119,16 @@ export function AddressBook({ mode, initial = [] }: { mode: "remote" | "local"; 
               />
             </Field>
             <CityCombobox id="ab-city" value={draft.city} onChange={(city) => setDraft({ ...draft, city })} required error={errors.city} name="ab-city" />
+            {!pk && (
+              <>
+                <Field id="ab-region" label="State / province" optional>
+                  <input {...fieldAria("ab-region")} autoComplete="address-level1" value={draft.region ?? ""} onChange={(e) => setDraft({ ...draft, region: e.target.value })} maxLength={60} />
+                </Field>
+                <Field id="ab-postal" label="Postcode" optional>
+                  <input {...fieldAria("ab-postal")} autoComplete="postal-code" value={draft.postalCode ?? ""} onChange={(e) => setDraft({ ...draft, postalCode: e.target.value })} maxLength={12} />
+                </Field>
+              </>
+            )}
             <Field id="ab-address" label="Complete address" required error={errors.address} className="sm:col-span-2">
               <textarea {...fieldAria("ab-address", errors.address)} rows={2} value={draft.address} onChange={(e) => setDraft({ ...draft, address: e.target.value })} maxLength={300} placeholder="House / flat no., street, block, area" />
             </Field>
@@ -150,7 +166,7 @@ export function AddressBook({ mode, initial = [] }: { mode: "remote" | "local"; 
                   {a.address}
                   {a.landmark ? `, near ${a.landmark}` : ""}
                   <br />
-                  {a.city}
+                  {[a.city, a.region, a.postalCode].filter(Boolean).join(", ")}
                 </p>
               </div>
               <div className="flex flex-col gap-1">

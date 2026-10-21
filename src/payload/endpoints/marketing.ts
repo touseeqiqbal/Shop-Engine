@@ -11,8 +11,8 @@ import { logActivity } from "../collections/history";
 type Doc = Record<string, unknown>;
 const cell = (v: unknown) => {
   const s = v == null ? "" : String(v);
-  // spreadsheet formula injection: a leading = + - @ is made plain text
-  const safe = /^[=+\-@]/.test(s) ? `'${s}` : s;
+  // spreadsheet formula injection: a leading = + - @ (or a tab / carriage return before one) is made plain text
+  const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
   return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 };
 

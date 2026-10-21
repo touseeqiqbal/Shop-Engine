@@ -158,7 +158,21 @@ type OrderDoc = { id: number; status?: string; stockHeld?: boolean; total?: numb
 const returnResolution: CollectionBeforeChangeHook = async ({ data, originalDoc, operation, req }) => {
   // also when a return is entered already finished (e.g. created in /cms as Refunded)
   if (!data.status || !RETURN_DONE.has(String(data.status))) return data;
-  if (operation === "update" && data.status === originalDoc?.status) return data;
+  if (operation === "update" && data.status === originalDoc?.status) {
+    // a refunded return's money is settled: its amount, method and items can't be changed afterwards (raising the
+    // amount on a finished return skipped every limit below, and a cash refund lowered the till by it)
+    if (data.status === "refunded") {
+      const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+      const itemsOf = (v: unknown) => ((v as ReturnItem[] | undefined) ?? []).map((i) => [relId(i.product), Number(i.qty) || 0, Number(i.unitPrice) || 0]);
+      if (
+        (data.refundAmount !== undefined && Number(data.refundAmount) !== Number(originalDoc?.refundAmount)) ||
+        (data.refundMethod !== undefined && !same(data.refundMethod, originalDoc?.refundMethod)) ||
+        (data.items !== undefined && !same(itemsOf(data.items), itemsOf(originalDoc?.items)))
+      )
+        throw userError("This return is already refunded – its refund can't be changed. Record another return for anything else.", 400);
+    }
+    return data;
+  }
   const notThis = originalDoc?.id ? [{ id: { not_equals: originalDoc.id } }] : [];
   const requestNumber = String(data.requestNumber ?? originalDoc?.requestNumber ?? "");
   const items = ((data.items ?? originalDoc?.items) as ReturnItem[] | undefined) ?? [];
@@ -170,7 +184,12 @@ const returnResolution: CollectionBeforeChangeHook = async ({ data, originalDoc,
 
   // refund can't be more than what was paid for the returned items – nor, with the order's earlier refunds, its total
   const refund = Number(data.refundAmount ?? originalDoc?.refundAmount) || 0;
-  const paidForItems = items.reduce((s, i) => s + (Number(i.unitPrice) || 0) * (Number(i.qty) || 1), 0);
+  // the items' share of what was really paid: their prices less the order's discount (a 50% coupon order's item can't be
+  // refunded at full price)
+  const listed = items.reduce((s, i) => s + (Number(i.unitPrice) || 0) * (Number(i.qty) || 1), 0);
+  const orderSub = Number((order as { subtotal?: number } | null)?.subtotal) || 0;
+  const orderDiscount = Number((order as { discount?: number } | null)?.discount) || 0;
+  const paidForItems = orderSub > 0 && orderDiscount > 0 ? listed * Math.max(0, (orderSub - orderDiscount) / orderSub) : listed;
   // amounts in the order's currency (or the store's)
   const money = () => storeMoneyOf(req.payload, storeId, req, order?.currency);
   if (data.status === "refunded" && paidForItems > 0 && refund > paidForItems) {
@@ -192,6 +211,27 @@ const returnResolution: CollectionBeforeChangeHook = async ({ data, originalDoc,
     if (refundedBefore + refund > total + 0.005) {
       const m = await money();
       throw userError(`Refunds for this order would come to ${m(refundedBefore + refund)} – more than its total (${m(total)}). Already refunded: ${m(refundedBefore)}${before.online ? ` (${m(before.online)} of it through the online payment)` : ""}.`, 400);
+    }
+  }
+
+  if (data.status === "refunded" && !order) {
+    const receipt = String(data.orderNumber ?? originalDoc?.orderNumber ?? "").trim().toUpperCase();
+    if (receipt.startsWith("POS-")) {
+      const sale = (await req.payload.find({ collection: "pos-sales", where: { and: [{ receiptNumber: { equals: receipt } }, ...inStore] }, limit: 1, depth: 0, overrideAccess: true, req })).docs[0] as { id?: number; total?: number } | undefined;
+      if (sale) {
+        // returns of one receipt together never give back more than the sale took (each used to be checked alone)
+        if (req.transactionID) {
+          const { lockRowStatus } = await import("../stock");
+          await lockRowStatus(req.payload, "cms_pos_sales", Number(sale.id), req);
+        }
+        const earlier = await req.payload.find({ collection: "return-requests", where: { and: [{ orderNumber: { equals: receipt } }, { status: { equals: "refunded" } }, ...inStore, ...notThis] }, limit: 500, depth: 0, overrideAccess: true, req });
+        const before = (earlier.docs as { refundAmount?: number }[]).reduce((sum, r) => sum + (Number(r.refundAmount) || 0), 0);
+        const total = Number(sale.total) || 0;
+        if (before + refund > total + 0.005) {
+          const m = await money();
+          throw userError(`Refunds for receipt ${receipt} would come to ${m(before + refund)} – more than the sale took (${m(total)}). Already refunded: ${m(before)}.`, 400);
+        }
+      }
     }
   }
 

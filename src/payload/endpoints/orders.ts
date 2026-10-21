@@ -92,7 +92,9 @@ const rto: Endpoint = {
     const today = dayIn(Date.now(), tz);
     const valid = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v)) ? v : null);
     const to = valid(url.searchParams.get("to")) ?? today;
-    const from = valid(url.searchParams.get("from")) ?? addDays(to, -89);
+    let from = valid(url.searchParams.get("from")) ?? addDays(to, -89);
+    // at most about a year at a time (every order of the range is read into this process)
+    if (Date.parse(to) - Date.parse(from) > 366 * 864e5) from = addDays(to, -366);
     const [orders, shipping] = await Promise.all([
       req.payload.find({
         collection: "orders",

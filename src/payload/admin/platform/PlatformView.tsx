@@ -50,30 +50,32 @@ export async function PlatformView(props: AdminViewServerProps) {
         </div>
         <section className="urko-card">
           <h2 className="urko-h">Last 12 months</h2>
-          <table className="urko-table urko-history">
-            <thead>
-              <tr>
-                <th>Month</th>
-                <th>New stores</th>
-                <th>Orders</th>
-                <th>Order value</th>
-                <th>Plan payments collected</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.map((h) => (
-                <tr key={h.month}>
-                  <td>{monthName(h.month)}</td>
-                  <td>{n(h.storesCreated)}</td>
-                  <td>
-                    <span className="urko-history__bar" style={{ width: `${Math.round((h.orders / maxOrders) * 100)}%` }} aria-hidden="true" /> {n(h.orders)}
-                  </td>
-                  <td>{Object.keys(h.orderValue).length ? amounts(h.orderValue) : "–"}</td>
-                  <td>{Object.keys(h.planRevenue).length ? amounts(h.planRevenue) : "–"}</td>
+          <div className="urko-table-wrap">
+            <table className="urko-table urko-history">
+              <thead>
+                <tr>
+                  <th>Month</th>
+                  <th>New stores</th>
+                  <th>Orders</th>
+                  <th>Order value</th>
+                  <th>Plan payments collected</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {history.map((h) => (
+                  <tr key={h.month}>
+                    <td>{monthName(h.month)}</td>
+                    <td>{n(h.storesCreated)}</td>
+                    <td>
+                      <span className="urko-history__bar" style={{ width: `${Math.round((h.orders / maxOrders) * 100)}%` }} aria-hidden="true" /> {n(h.orders)}
+                    </td>
+                    <td>{Object.keys(h.orderValue).length ? amounts(h.orderValue) : "–"}</td>
+                    <td>{Object.keys(h.planRevenue).length ? amounts(h.planRevenue) : "–"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <p className="urko-small urko-muted">Orders that weren’t cancelled, refused or returned (still-unpaid card orders not counted); money per currency. Also as JSON: GET /cms-api/platform/history.</p>
         </section>
         <div className="urko-grid urko-grid--panels">

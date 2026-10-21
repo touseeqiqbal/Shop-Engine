@@ -71,7 +71,7 @@ If `DATABASE_URL`, `PAYLOAD_SECRET`, `AUTH_SECRET` or the `S3_*` bucket variable
 | `PLATFORM_ROOT_DOMAIN` | The domain merchants' shops live under, e.g. `shopengine.app` → `myshop.shopengine.app`. Needs a wildcard DNS record and certificate for `*.shopengine.app`. Without it every address shows the original (default) store. |
 | `DEFAULT_STORE_NAME`, `DEFAULT_STORE_SLUG`, `DEFAULT_STORE_ORDER_PREFIX` | Only read once, by the first multi-store migration, to name the original shop's store (defaults: the shop's Store details name, `main`, `UTS`). |
 | `STRIPE_SECRET_KEY` | Card payments (customers pay each shop's own Stripe account) and ShopEngine's own plan billing. |
-| `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET` | Signing secrets of the two Stripe webhook endpoints, both pointing at `/api/webhooks/stripe` – one for the platform account, one for connected accounts. Orders are only marked paid from these. |
+| `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET` | Signing secrets of the two Stripe webhook endpoints, both pointing at `/api/webhooks/stripe` – one for the platform account, one for connected accounts. Orders are only marked paid from these. The connected-accounts endpoint needs the events `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `account.updated` and – so a refund that fails later is noticed – `charge.refund.updated` (or `refund.updated` / `refund.failed`). |
 | `PLATFORM_FEE_PERCENT` | Optional commission ShopEngine keeps on each card order (e.g. `1.5`). |
 | `BILLING_GRACE_DAYS` | Days a shop stays open after a failed plan payment (default 7). |
 | `MAX_STORES_PER_USER` | How many stores one account may own (default 3). |
@@ -193,7 +193,7 @@ If you set up the **uptime monitor**, you'll also get an email / SMS within ~2 m
 
 1. **DNS:** `www` and the root domain point to Railway (CNAME), **Proxied** (orange cloud).
 2. **SSL/TLS:** mode **Full (strict)**; turn on **Always Use HTTPS**.
-3. **Caching → Cache Rules:** cache only addresses starting with `/media/` and `/_next/static/`. **Never** cache pages, `/api`, `/cms` or `/cms-api`.
+3. **Caching → Cache Rules:** cache only addresses starting with `/media/`, `/_next/static/` and `/_next/image` (the resized photos – the shop's server makes each size once, keep the query string in the cache key). **Never** cache pages, `/api`, `/cms` or `/cms-api`.
 4. **Speed:** turn **Rocket Loader off**.
 5. **Rules → Redirect:** send the root domain to `www` (or the other way – pick one and keep it).
 6. After a big change (like the cutover), **Caching → Configuration → Purge Everything**.

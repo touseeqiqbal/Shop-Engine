@@ -62,7 +62,9 @@ export async function countDownload(payload: Payload, orderId: number, fileId: n
   const key = String(fileId);
   const { rows } = await (await conn(payload)).execute(sql`
     UPDATE "payload"."cms_orders"
-    SET "download_counts" = jsonb_set(COALESCE("download_counts", '{}'::jsonb), ARRAY[${key}], to_jsonb(COALESCE(("download_counts" ->> ${key})::int, 0) + 1))
+    SET "download_counts" = jsonb_set(COALESCE("download_counts", '{}'::jsonb), ARRAY[${key}], to_jsonb(COALESCE(("download_counts" ->> ${key})::int, 0) + 1)),
+        -- a save of the order that read it before this count must not write the old count back (orderGuards)
+        "updated_at" = now()
     WHERE "id" = ${orderId} AND COALESCE(("download_counts" ->> ${key})::int, 0) < ${limit}
     RETURNING "id"`);
   return rows.length > 0;

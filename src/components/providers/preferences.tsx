@@ -34,9 +34,10 @@ export function PreferencesProvider({ children, defaultTheme = "dark" }: { child
     } catch {}
   }, []);
 
+  // the page keeps the store's own language (<html lang>): only a few labels are translated – each is marked as
+  // Urdu itself (<Tr>), so screen readers read the rest (products, content) in the right voice
   const setLang = useCallback((l: Lang) => {
     setLangState(l);
-    document.documentElement.lang = l === "ur" ? "ur" : "en";
     try {
       localStorage.setItem("urko-lang", l);
     } catch {}
@@ -45,6 +46,18 @@ export function PreferencesProvider({ children, defaultTheme = "dark" }: { child
   const t = useCallback((key: DictKey) => dict[key][lang], [lang]);
 
   return <Ctx.Provider value={{ theme, setTheme, lang, setLang, t }}>{children}</Ctx.Provider>;
+}
+
+/** A translated label: marked as Urdu (right to left) when shown in Urdu, plain text otherwise. */
+export function Tr({ k }: { k: DictKey }) {
+  const { lang, t } = usePrefs();
+  return lang === "ur" ? (
+    <span lang="ur" dir="rtl">
+      {t(k)}
+    </span>
+  ) : (
+    <>{t(k)}</>
+  );
 }
 
 export function usePrefs() {

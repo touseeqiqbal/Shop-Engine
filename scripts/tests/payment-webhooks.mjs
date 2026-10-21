@@ -1,7 +1,8 @@
 /**
  * Card payment webhooks, end to end on a running server (no Stripe account needed – events are signed locally):
  * a correct payment marks the order paid, replays change nothing, a wrong amount or another merchant's account never
- * marks paid, bad / old signatures are refused, an expired checkout cancels the order.
+ * marks paid, bad / old signatures are refused, an expired checkout cancels the order, a refund that fails later
+ * puts the order back to Paid.
  *
  *   STRIPE_WEBHOOK_SECRET=whsec_localtest npm run dev        (test database only – it writes orders and payments)
  *   STRIPE_WEBHOOK_SECRET=whsec_localtest BASE_URL=http://localhost:3000 npm run test:webhooks
@@ -97,6 +98,22 @@ const o4 = await mkOrder(n4, 1200);
 await send(event(`evt_${tag}_5`, "checkout.session.expired", { id: `cs_${n4}`, mode: "payment", payment_status: "unpaid" }));
 o = (await q(`select status from payload.cms_orders where id=$1`, [o4]))[0];
 check(o.status === "cancelled", `expired checkout cancels the order (${o.status})`);
+
+// 5b. a refund that was pending fails later at the provider: the order is Paid again (not "refunded")
+const n5 = `T${tag}E`;
+const o5 = (await q(`insert into payload.cms_orders (order_number, placed_at, customer_name, customer_phone, customer_city, customer_address, subtotal, total, payment_method, payment_status, status, store_id, stock_held)
+    values ($1, now(), 'Card Buyer', '0300-5555555', 'Karachi', 'Street 9, area', 1500, 1500, 'card', 'refunded', 'delivered', $2, false) returning id`, [n5, store]))[0].id;
+await q(`insert into payload.cms_payment_transactions (store_id, order_id, kind, status, provider, provider_ref, payment_intent, amount, refunded_amount, currency, idempotency_key)
+    values ($1, $2, 'charge', 'refunded', 'stripe', $3, $4, 1500, 1500, 'PKR', $5)`, [store, o5, `cs_${n5}`, `pi_${n5}`, `checkout:${o5}`]);
+await q(`insert into payload.cms_payment_transactions (store_id, order_id, kind, status, provider, provider_ref, amount, currency, idempotency_key)
+    values ($1, $2, 'refund', 'pending', 'stripe', $3, 1500, 'PKR', $4)`, [store, o5, `re_${n5}`, `refund:${o5}:0:1500`]);
+let r5 = await send(event(`evt_${tag}_r1`, "charge.refund.updated", { id: `re_${n5}`, object: "refund", status: "failed", failure_reason: "expired_or_canceled_card", amount: 150000 }));
+o = (await q(`select payment_status from payload.cms_orders where id=$1`, [o5]))[0];
+const rf = (await q(`select status from payload.cms_payment_transactions where provider_ref=$1`, [`re_${n5}`]))[0];
+check(r5.status === 200 && rf.status === "failed" && o.payment_status === "paid", `a refund failing later at the provider → refund failed, order Paid again (${rf.status}, ${o.payment_status})`);
+r5 = await send(event(`evt_${tag}_r2`, "charge.refund.updated", { id: `re_${n5}`, object: "refund", status: "failed" }));
+o = (await q(`select payment_status from payload.cms_orders where id=$1`, [o5]))[0];
+check(r5.status === 200 && o.payment_status === "paid", "the same answer in a new event changes nothing more");
 
 // 6. ShopEngine's own billing (platform account events – no `account`)
 const plan = (await q(`select id from payload.cms_subscription_plans order by price_monthly desc limit 1`))[0]?.id;

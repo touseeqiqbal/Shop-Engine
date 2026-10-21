@@ -8,7 +8,16 @@ import { isPublicMediaKey } from "@/lib/media";
  */
 export async function GET(_req: Request, ctx: { params: Promise<{ key: string[] }> }) {
   const { key: parts } = await ctx.params;
-  const key = parts.map((p) => decodeURIComponent(p)).join("/");
+  // (a malformed escape such as %zz is a "not found", not a server error)
+  const key = parts
+    .map((p) => {
+      try {
+        return decodeURIComponent(p);
+      } catch {
+        return p;
+      }
+    })
+    .join("/");
   if (!isPublicMediaKey(key)) return new Response("Not found", { status: 404 });
   const obj = await getObject(key);
   if (!obj) return new Response("Not found", { status: 404, headers: { "Cache-Control": "public, max-age=60" } });

@@ -18,7 +18,10 @@ import type { StoreLocale } from "../../lib/locale";
  */
 
 type Doc = Record<string, unknown>;
-const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v) || 0);
+const num = (v: unknown) => {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const METHODS = new Set(["cash", "card", "bank", "jazzcash", "easypaisa", "other"]);
@@ -227,6 +230,12 @@ const voidSale: Endpoint = {
     let s: Doc | null = null;
     let updated: unknown;
     try {
+      // another store's sale (or none): "not found" – before anything about it is revealed or its row locked
+      const owner = (await req.payload.findByID({ collection: "pos-sales", id: num(body?.saleId), depth: 0, overrideAccess: true, req }).catch(() => null)) as unknown as Doc | null;
+      if (!owner || !sameStoreAs(gate, owner)) {
+        await killTransaction(req);
+        return bad("Sale not found.", 404);
+      }
       // lock the sale: two clicks (or two managers) can't both put the stock back
       const status = await lockRowStatus(req.payload, "cms_pos_sales", num(body?.saleId), req);
       if (status === null) {

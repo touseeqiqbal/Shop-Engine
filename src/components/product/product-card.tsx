@@ -157,6 +157,7 @@ export function ProductCard({
               </p>
               <Link
                 href={quoteHref(p.slug)}
+                aria-label={`Request quote: ${p.name}`}
                 className={cn("btn btn-sm mt-3 w-full", list ? "btn-primary sm:w-auto" : "btn-secondary group-hover:border-transparent group-hover:bg-brand-gradient group-hover:text-white")}
               >
                 <FileText className="size-4" aria-hidden="true" />
@@ -175,6 +176,8 @@ export function ProductCard({
             // options (colour / size …) are chosen on the product page
             <Link
               href={p.url}
+              // a list of cards reads "Choose options" many times – say which product (visible text first, for voice control)
+              aria-label={`${outOfStock ? "Sold out" : "Choose options"}: ${p.name}`}
               className={cn("btn btn-sm mt-3 w-full", list ? "btn-primary sm:w-auto" : "btn-secondary group-hover:border-transparent group-hover:bg-brand-gradient group-hover:text-white")}
             >
               {outOfStock ? "Sold out" : "Choose options"}
@@ -188,6 +191,7 @@ export function ProductCard({
               if (limited) toast(limited, "error");
               trackEvent("add_to_cart", { currency, value: analyticsItem.price, items: [analyticsItem], source: "product_card" });
             }}
+            aria-label={`${outOfStock ? "Sold out" : "Add to Cart"}: ${p.name}`}
             className={cn("btn btn-sm mt-3 w-full", list ? "btn-primary sm:w-auto" : "btn-secondary group-hover:border-transparent group-hover:bg-brand-gradient group-hover:text-white")}
           >
             <ShoppingBag className="size-4" aria-hidden="true" />

@@ -34,6 +34,15 @@ export function currencyDigits(currency: string): number {
   }
 }
 
+/**
+ * Rounds DOWN to the currency's smallest unit – what a balance can pay (a gift card holding Rs 50.5 pays Rs 50: rounding
+ * it up to 51 asked for more than the card held, and the payment was refused every time).
+ */
+export function floorMoney(amount: number, currency: string = DEFAULT_LOCALE.currency): number {
+  const f = 10 ** currencyDigits(currency);
+  return Math.floor((Number(amount) || 0) * f + 1e-9) / f;
+}
+
 /** Rounds to the currency's smallest unit (1 rupee, 1 cent …). */
 export function roundMoney(amount: number, currency: string = DEFAULT_LOCALE.currency): number {
   const f = 10 ** currencyDigits(currency);

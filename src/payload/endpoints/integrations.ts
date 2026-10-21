@@ -159,9 +159,15 @@ const test: Endpoint = {
   path: "/integration-tools/test",
   method: "post",
   handler: async (req) => {
-    const gate = await storeGate(req, "store_manager");
+    // a write (a failed check marks the connection "error", which hides a payment method) – and the same role rule as
+    // connecting it: owner-only integrations (payments) are tested by the owner
+    const gate = await storeGate(req, "store_manager", { write: true });
     if (gate instanceof Response) return gate;
     const body = (await req.json?.().catch(() => null)) as { provider?: string } | null;
+    const info = integrationInfo(str(body?.provider));
+    if (!info) return Response.json({ error: "Unknown integration." }, { status: 404 });
+    const denied = await canConnect(req, gate.store!, info);
+    if (denied) return Response.json({ error: denied }, { status: 403 });
     const c = await getConnection(req.payload, gate.store, str(body?.provider), { all: true, fresh: true });
     if (!c) return Response.json({ error: "Not connected." }, { status: 404 });
     const r = await testAndRecord(req, c);

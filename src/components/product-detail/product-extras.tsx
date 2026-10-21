@@ -1,5 +1,5 @@
 "use client";
-import { startTransition, useActionState, useState } from "react";
+import { startTransition, useActionState, useEffect, useRef, useState } from "react";
 import { BellRing, MessageCircleQuestion, TrendingDown } from "lucide-react";
 import { askQuestion, subscribeAlert, type SimpleState } from "@/app/(frontend)/(store)/[category]/[product]/engagement-actions";
 import { Turnstile } from "@/components/ui/turnstile";
@@ -17,12 +17,27 @@ const keepTyped = (action: (fd: FormData) => void) => (e: React.FormEvent<HTMLFo
   startTransition(() => action(fd));
 };
 
+/** The thank-you message replaces the form: focus moves to it so keyboard / screen-reader users aren't left on nothing. */
+function useFocusOnDone(ok: boolean | undefined) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (ok) ref.current?.focus();
+  }, [ok]);
+  return ref;
+}
+
 export function StockPriceAlert({ productId, inStock }: { productId: string; inStock: boolean }) {
   const kind = inStock ? "price" : "stock";
   const [open, setOpen] = useState(!inStock);
   const [state, action, pending] = useActionState<SimpleState, FormData>(subscribeAlert.bind(null, productId, kind), {});
   const { country } = useStoreLocale();
-  if (state.ok) return <p className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300 light:text-emerald-700">{state.message}</p>;
+  const doneRef = useFocusOnDone(state.ok);
+  if (state.ok)
+    return (
+      <p ref={doneRef} tabIndex={-1} role="status" className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300 outline-none light:text-emerald-700">
+        {state.message}
+      </p>
+    );
   if (!open)
     return (
       <button type="button" onClick={() => setOpen(true)} className="mt-3 inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg">
@@ -42,10 +57,14 @@ export function StockPriceAlert({ productId, inStock }: { productId: string; inS
         </label>
         <input id={`alert-${productId}`} name="contact" className="input flex-1" placeholder={`Email or ${country === "PK" ? "0300-1234567" : phonePlaceholder(country)}`} required />
         <button className="btn btn-primary" disabled={pending}>
-          {pending ? "…" : "Notify me"}
+          {pending ? "Sending…" : "Notify me"}
         </button>
       </div>
-      {state.message && <p className="mt-2 text-sm text-rose-300 light:text-rose-700">{state.message}</p>}
+      {state.message && (
+        <p role="alert" className="mt-2 text-sm text-rose-300 light:text-rose-700">
+          {state.message}
+        </p>
+      )}
     </form>
   );
 }
@@ -93,6 +112,7 @@ export type QA = { id: string; name: string; question: string; answer: string; c
 export function ProductQuestions({ productId, questions }: { productId: string; questions: QA[] }) {
   const [open, setOpen] = useState(false);
   const [state, action, pending] = useActionState<SimpleState, FormData>(askQuestion.bind(null, productId), {});
+  const doneRef = useFocusOnDone(state.ok);
   return (
     <div className="space-y-4">
       {questions.length ? (
@@ -111,7 +131,9 @@ export function ProductQuestions({ productId, questions }: { productId: string; 
         <p className="text-sm text-muted">No questions yet – ask the first one.</p>
       )}
       {state.ok ? (
-        <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300 light:text-emerald-700">{state.message}</p>
+        <p ref={doneRef} tabIndex={-1} role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300 outline-none light:text-emerald-700">
+          {state.message}
+        </p>
       ) : !open ? (
         <button type="button" className="btn btn-secondary" onClick={() => setOpen(true)}>
           <MessageCircleQuestion className="size-4" aria-hidden="true" /> Ask a question
@@ -134,7 +156,11 @@ export function ProductQuestions({ productId, questions }: { productId: string; 
             </label>
           </div>
           <Turnstile action="question" />
-          {state.message && <p className="text-sm text-rose-300 light:text-rose-700">{state.message}</p>}
+          {state.message && (
+            <p role="alert" className="text-sm text-rose-300 light:text-rose-700">
+              {state.message}
+            </p>
+          )}
           <button className="btn btn-primary" disabled={pending}>
             {pending ? "Sending…" : "Send question"}
           </button>

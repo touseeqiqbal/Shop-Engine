@@ -52,4 +52,6 @@ const load = unstable_cache(
 );
 
 /** A store's notification settings (who gets alerts, which messages customers get). */
-export const getNotifySettings = (storeId: number | null) => load(storeId).catch(() => DEFAULT_NOTIFY);
+// (no fallback to the defaults: unreadable settings used to switch every channel back on – SMS the store turned off,
+// alerts it doesn't want; the messages are built in the outbox, which tries again)
+export const getNotifySettings = (storeId: number | null) => load(storeId);

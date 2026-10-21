@@ -98,10 +98,10 @@ export async function cmsFaqs(storeId: number | null): Promise<FaqItem[] | null>
   return g ? arr(g.items).map((f) => ({ q: str(f.q), a: str(f.a), ...(str(f.group) ? { group: str(f.group) } : {}) })) : null;
 }
 
-/** Published blog posts from /cms → Content → Blog posts (Markdown content, as the blog renders it). */
-export async function cmsBlogPosts(storeId: number | null): Promise<BlogPost[]> {
+/** Published blog posts from /cms → Content → Blog posts (Markdown content, as the blog renders it); `slug`: just that one. */
+export async function cmsBlogPosts(storeId: number | null, slug?: string): Promise<BlogPost[]> {
   const payload = await payloadClient();
-  const res = await payload.find({ collection: "posts" as never, where: { and: [{ _status: { equals: "published" } }, inStore(storeId)] }, limit: 0, pagination: false, depth: 1, overrideAccess: true, sort: "-publishedAt" });
+  const res = await payload.find({ collection: "posts" as never, where: { and: [{ _status: { equals: "published" } }, inStore(storeId), ...(slug ? [{ slug: { equals: slug } }] : [])] }, limit: slug ? 1 : 0, pagination: false, depth: 1, overrideAccess: true, sort: "-publishedAt" });
   return Promise.all(
     (res.docs as Doc[]).map(async (p): Promise<BlogPost> => {
       const meta = obj(p.meta);

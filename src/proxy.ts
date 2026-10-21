@@ -4,6 +4,7 @@ import { isStaging, stagingAuthorized } from "@/lib/staging";
 import { ipFromHeaders } from "@/lib/client-ip";
 import { isMarketingHost, MARKETING_PREFIX, PASS_THROUGH } from "@/lib/marketing/hosts";
 import { log } from "@/lib/log";
+import { canonicalPath } from "@/lib/canonical-path";
 
 /**
  * Next.js 16 Proxy (formerly Middleware) – runs on the Node.js runtime before every matched request.
@@ -125,15 +126,18 @@ export async function proxy(request: NextRequest) {
       headers: { "WWW-Authenticate": 'Basic realm="ShopEngine staging", charset="UTF-8"', "X-Robots-Tag": "noindex, nofollow" },
     });
   }
-  if (UNSAFE.has(request.method) && pathname.startsWith("/cms-api/") && foreignOrigin(request))
+  // the checks below match the path as the router will see it: decoded (/cms-api/users/%6Cogin IS the sign-in), single
+  // slashes, no trailing slash, any case – an encoded path used to skip every sign-in limit
+  const routePath = canonicalPath(pathname);
+  if (UNSAFE.has(request.method) && routePath.startsWith("/cms-api/") && foreignOrigin(request))
     return NextResponse.json({ errors: [{ message: "This request must come from the admin itself." }] }, { status: 403 });
   if (request.method === "POST") {
     const ip = ipFromHeaders(request.headers);
-    const rule = AUTH_LIMITS.find(([re]) => re.test(pathname));
-    if (rule && limited(`${pathname}:${ip}`, rule[1], rule[2]))
+    const rule = AUTH_LIMITS.find(([re]) => re.test(routePath));
+    if (rule && limited(`${routePath}:${ip}`, rule[1], rule[2]))
       return NextResponse.json({ errors: [{ message: "Too many attempts – please wait a few minutes and try again." }] }, { status: 429 });
     // wrong passwords for one account from one network: 8 per 15 minutes (other networks – the owner – are not affected)
-    if (SIGN_IN.test(pathname)) {
+    if (SIGN_IN.test(routePath)) {
       const email = await signInEmail(request);
       if (email && limited(`signin:${email}:${ip}`, 8, 15 * 60_000))
         return NextResponse.json({ errors: [{ message: "Too many sign-in attempts for this account – please wait 15 minutes." }] }, { status: 429 });

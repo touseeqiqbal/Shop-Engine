@@ -98,6 +98,22 @@ export async function registerCustomer(input: {
   if (!isDatabaseConfigured) return { ok: false, error: "Customer accounts are available once the store database is connected." };
   const email = input.email.trim().toLowerCase();
   if (input.password.length < 8) return { ok: false, error: "Password must be at least 8 characters." };
+  // an email we already know (an account, or orders placed as a guest): the same answer and the same email either way –
+  // a link to set a password – so signing up doesn't reveal which (or that it ordered at any store on the platform)
+  // At most one such email per address per 30 minutes: signing up with someone else's address must not flood their
+  // inbox – nor replace a reset link they asked for themselves a minute ago.
+  const knownEmail = async (address: string): Promise<{ ok: false; error: string }> => {
+    const { rateLimitKey } = await import("@/lib/rate-limit");
+    if (rateLimitKey(`signup-known-email:${address}`, 1, 30 * 60_000)) {
+      try {
+        await requestPasswordResetCms(address);
+      } catch (err) {
+        log.error("account.known_email_link", err);
+        return { ok: false, error: "This email is already registered. Use “Forgot password” on the sign-in page to set a new password." };
+      }
+    }
+    return { ok: false, error: "This email is already registered – we've emailed it a link to set a new password (check spam too; one link per 30 minutes). Or sign in if you know your password." };
+  };
   if (isCmsConfigured) {
     const existing = await getUserByEmailCms(email);
     // ordered before as a guest: the emailed "set your password" link proves the mailbox is theirs and turns the
@@ -115,15 +131,9 @@ export async function registerCustomer(input: {
         const res = await signInWithPassword(email, input.password);
         return res.ok ? { ok: true } : res;
       }
-      try {
-        await requestPasswordResetCms(email);
-      } catch (err) {
-        log.error("account.guest_set_password_email", err);
-        return { ok: false, error: "You've ordered with us before with this email, but we couldn't send the set-password email just now. Please try again in a few minutes or contact us on WhatsApp." };
-      }
-      return { ok: false, error: "You've ordered with us before – we've emailed you a link to set your password. Open it to finish your account (check spam too)." };
+      return knownEmail(email);
     }
-    if (existing) return { ok: false, error: "An account with this email already exists." };
+    if (existing) return knownEmail(email);
     let created: Awaited<ReturnType<typeof createCustomerCms>>;
     try {
       created = await createCustomerCms({ email, name: input.name, phone: input.phone, password: input.password });

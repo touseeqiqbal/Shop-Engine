@@ -97,6 +97,16 @@ async function roleIn(payload: Payload, userId: number, storeId: number): Promis
   return m ? String(m.role) : null;
 }
 
+/** Does this account work in any store (an active membership)? – the account nav shows "Manage stores" then. */
+export async function worksInAnyStore(sessionUserId: string): Promise<boolean> {
+  if (!sessionUserId || !isCmsConfigured) return false;
+  const payload = await payloadClient();
+  const user = await userDoc(payload, sessionUserId);
+  if (!user) return false;
+  const { totalDocs } = await payload.count({ collection: "store-memberships", where: { and: [{ user: { equals: user.id } }, { status: { equals: "active" } }] }, overrideAccess: true });
+  return totalDocs > 0;
+}
+
 /** The stores this account works in (active memberships), with what Account → Stores shows about each. */
 export async function listStoresForUser(sessionUserId: string): Promise<MyStore[]> {
   if (!sessionUserId || !isCmsConfigured) return [];
@@ -227,7 +237,9 @@ export async function createStoreForUser(sessionUserId: string, input: StoreTena
         status: "draft",
         owner: user.id,
         billingEmail: user.email,
-        subscriptionStatus: plan ? "trialing" : "expired",
+        // no plan state until choosePlan below sets the real one (free → active, trial → trialing, paid → after payment):
+        // "trialing" here left a store whose payment page was abandoned (or failed) on an unlimited plan for ever
+        subscriptionStatus: "expired",
       } as never,
       depth: 0,
       overrideAccess: true,
@@ -432,11 +444,26 @@ export async function verifyCustomDomainForUser(sessionUserId: string, storeIdRa
   const domain = String(store.customDomain ?? "");
   const token = String(store.domainVerificationToken ?? "");
   if (!domain || !token) return { ok: false, error: "Set a custom domain first." };
+  const { hasFeature, storeLimits } = await import("@/lib/billing");
+  if (!hasFeature(await storeLimits(payload, storeId), "custom_domain")) return { ok: false, error: "Your plan doesn't include a custom domain – upgrade to use one." };
   const { resolveTxt } = await import("node:dns/promises");
   // the TXT record may be on the domain itself or on _shopengine.<domain>
   const records = (await Promise.all([domain, `_shopengine.${domain}`].map((name) => resolveTxt(name).catch(() => [] as string[][])))).flat();
   const verified = records.some((r) => r.join("").trim() === token);
-  if (verified && !store.domainVerifiedAt) await payload.update({ collection: "stores", id: storeId, data: { domainVerifiedAt: new Date().toISOString() } as never, depth: 0, overrideAccess: true, context: { system: true } });
+  if (verified && !store.domainVerifiedAt) {
+    // only if the store still has THIS domain and token: the DNS lookup takes a while, and a domain changed meanwhile
+    // (to another store's address, or ShopEngine's own) must not get the "verified" mark meant for the old one
+    const { sql } = await import("@payloadcms/db-postgres");
+    const { conn } = await import("@/payload/stock");
+    const { rows } = await (await conn(payload)).execute(sql`
+      UPDATE "payload"."cms_stores" SET "domain_verified_at" = now(), "updated_at" = now()
+      WHERE "id" = ${storeId} AND "custom_domain" = ${domain} AND "domain_verification_token" = ${token} AND "domain_verified_at" IS NULL
+      RETURNING "id"`);
+    if (!rows.length) return { ok: false, error: "The domain changed while it was being checked – please check it again." };
+    const { clearRedirectCache, revalidate } = await import("@/payload/revalidate");
+    clearRedirectCache();
+    revalidate(["stores"]);
+  }
   return { ok: true, verified };
 }
 

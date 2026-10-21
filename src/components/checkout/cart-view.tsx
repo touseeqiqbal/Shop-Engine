@@ -20,6 +20,7 @@ import { CityCombobox } from "./city-combobox";
 import { CouponBox } from "./coupon-box";
 import { useCartCoupon, useCartSync } from "./use-coupon";
 import { FreeDeliveryBar } from "./free-delivery-bar";
+import { MAX_QTY_PER_ITEM } from "@/lib/cart-limits";
 
 export function CartView({ settings }: { settings: StoreSettings }) {
   const hydrated = useHydrated();
@@ -93,7 +94,8 @@ export function CartView({ settings }: { settings: StoreSettings }) {
             {syncNotice}
           </p>
         )}
-        {freeAbove > 0 && <FreeDeliveryBar subtotal={subtotal} threshold={freeAbove} where={city || null} className="card p-4" />}
+        {/* after the discount – free delivery is judged on what the items cost after it (as at checkout) */}
+        {freeAbove > 0 && <FreeDeliveryBar subtotal={Math.max(0, subtotal - discount)} threshold={freeAbove} where={city || null} className="card p-4" />}
         <ul className="card divide-y divide-border">
           <AnimatePresence initial={false}>
             {lines.map((l) => (
@@ -139,7 +141,7 @@ export function CartView({ settings }: { settings: StoreSettings }) {
                     </ul>
                   )}
                   <div className="mt-auto flex flex-wrap items-end justify-between gap-3 pt-3">
-                    <QtyStepper name={l.name} qty={l.qty} max={Math.max(l.stock, 1)} onChange={(q) => setQty(l.key, q)} />
+                    <QtyStepper name={l.name} qty={l.qty} max={Math.min(Math.max(l.stock, 1), MAX_QTY_PER_ITEM)} onChange={(q) => setQty(l.key, q)} />
                     <div className="text-right">
                       <p className="font-display text-lg font-bold tabular-nums">{money(l.unitPrice * l.qty)}</p>
                       {l.qty > 1 && <p className="text-xs text-muted tabular-nums">{money(l.unitPrice)} each</p>}

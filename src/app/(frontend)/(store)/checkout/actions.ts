@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { revalidateTag } from "next/cache";
+import { forgetCatalogBuilds } from "@/lib/catalog-parts";
 import { after } from "next/server";
 import { z } from "zod";
 import { priceCart } from "@/lib/cart-pricing";
@@ -11,7 +12,7 @@ import { orderTotals } from "@/lib/order-totals";
 import { PAKISTAN_CITIES, hasShippingChoices, shippingOptions, shippingZoneFor, shipsTo } from "@/lib/cities";
 import { findCheckoutMethod, GIFT_CARD_METHOD } from "@/lib/payments/methods";
 import { countryName, storeLocale, toCountryCode, type StoreLocale } from "@/lib/locale";
-import { moneyFormatter } from "@/lib/money";
+import { floorMoney, moneyFormatter } from "@/lib/money";
 import { normalizePhone, phonePlaceholder } from "@/lib/phone";
 import { advanceReason, getProtectionSettings, isBlockedPhone, needsConfirmation, newConfirmation, riskFor } from "@/lib/protection";
 import { emailRequiredAtCheckout, getSessionUser, getUserProfile, mustConfirmEmailToOrder, updateUserProfile } from "@/lib/auth";
@@ -275,6 +276,8 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   const discount = discounts.discount;
   // the code whose use is counted: the typed one, else a lone automatic discount (its usage limit / per-customer limit)
   const couponCode = discounts.code ?? (discounts.applied.length === 1 ? discounts.applied[0].code : null);
+  // an automatic discount combined with the typed code: its use counts too
+  const extraCouponCode = discounts.code ? (discounts.applied.find((a) => a.automatic)?.code ?? null) : null;
 
   // the delivery method (stores that offer a choice) and the cart's weight (zones that price by weight)
   const weights = new Map(priced.products.map((p) => [p.id, p.weightKg ?? 0]));
@@ -282,6 +285,10 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
   const shippingChoice = str(fd, "shipping").trim().slice(0, 60) || "standard";
   // downloads only: nothing to deliver (no delivery charge, no method to choose)
   const downloadsOnly = priced.items.length > 0 && priced.items.every((i) => priced.products.find((p) => p.id === i.productId)?.shipsNothing);
+  // downloads only: nothing is delivered, so nothing can be paid on delivery (no rider to collect, no COD fee) – the
+  // links are released once the order is paid
+  if (downloadsOnly && payOnDelivery)
+    return { ok: false, message: "Downloads are paid before they're sent – please choose another way to pay.", fieldErrors: { paymentMethod: "Choose a way to pay now" }, ts };
   const offered = downloadsOnly ? [] : shippingOptions(data.city, subtotal - discount, settings, data.postalCode, shipCountry, weightKg);
   if (!downloadsOnly && !offered.some((o) => o.id === shippingChoice))
     return { ok: false, message: "That delivery method isn't available for this address – please choose again.", fieldErrors: { city: "Choose a delivery method" }, ts };
@@ -311,7 +318,8 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     const found = await findGiftCard(await payloadClient(), giftCode, storeId);
     const problem = giftCardProblem(found);
     if (problem || !found) return { ok: false, message: problem ?? "Gift card not found.", fieldErrors: { giftCard: problem ?? "Gift card not found" }, ts };
-    gift = { code: found.code, amount: money.round(Math.min(found.balance, total)) };
+    // never more than the card holds: rounded DOWN to the currency's unit (rounding up was refused by the balance check)
+    gift = { code: found.code, amount: floorMoney(Math.min(found.balance, total), money.currency) };
     if (giftOnly && gift.amount < total)
       return { ok: false, message: `The gift card covers ${money(gift.amount)} – choose how to pay the other ${money(total - gift.amount)}.`, fieldErrors: { paymentMethod: "Choose how to pay the rest" }, ts };
     // it pays everything: then it is the way to pay (no cash on delivery of nothing, no card payment of nothing)
@@ -485,7 +493,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     let placed: Awaited<ReturnType<typeof placeOrderCms>> | null = null;
     for (let attempt = 0; attempt < 3 && !placed; attempt++) {
       try {
-        placed = await placeOrderCms(order, lines, { attemptId, couponCode, giftCard: gift });
+        placed = await placeOrderCms(order, lines, { attemptId, couponCode, extraCouponCode, giftCard: gift });
       } catch (err) {
         // a clashing order number (very rare) – try again with a new one
         if (/unique|duplicate key|invalid/i.test(String((err as Error)?.message)) && /order_number|orderNumber|Order number/i.test(String((err as Error)?.message)) && attempt < 2) {
@@ -502,7 +510,10 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
     if (!placed) return failed("Something went wrong while placing your order. Please try again or order on WhatsApp.");
     if (!placed.ok) {
       if (placed.reason === "attempt-reused") return failed("Your cart changed since the last try (or that try was cancelled) – please press Place order again.");
-      if (placed.reason === "coupon") return failed(`The coupon ${couponCode} has just run out or expired. Remove it and place the order again.`, { couponError: "This coupon can't be used any more" });
+      if (placed.reason === "coupon")
+        return placed.code && placed.code !== couponCode
+          ? failed(`The automatic discount ${placed.code} has just run out – the price changed. Please place the order again.`)
+          : failed(`The coupon ${couponCode} has just run out or expired. Remove it and place the order again.`, { couponError: "This coupon can't be used any more" });
       if (placed.reason === "gift-card") return failed("The gift card's balance changed meanwhile (used in another order?). Check it and place the order again.", { fieldErrors: { giftCard: "Check the gift card again" } });
       if (placed.reason === "payment-reference")
         return failed("This transaction ID was already used for another order. Please check it – one payment pays for one order.", { fieldErrors: { paymentReference: "This transaction ID was already used" } });
@@ -586,6 +597,7 @@ export async function placeOrder(_prev: PlaceOrderState, fd: FormData): Promise<
       // this store's catalog only (src/lib/cache-tags.ts) – in the background: stock shown on product pages may lag a
       // moment, the cart and checkout always check live stock; expiring it at once made every order's next visitors
       // rebuild the whole catalogue together
+      forgetCatalogBuilds();
       revalidateTag(catalogTagOf(storeId), "max");
     } catch (err) {
       log.error("checkout.revalidate", err);

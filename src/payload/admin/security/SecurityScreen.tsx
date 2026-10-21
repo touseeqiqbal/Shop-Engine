@@ -24,7 +24,13 @@ export function SecurityScreen() {
   const [busy, setBusy] = useState(false);
   const [current, setCurrent] = useState(""); // code from the CURRENT app (or a backup code) – to move phones / renew codes
   const [moving, setMoving] = useState(false);
-  const load = useCallback(async () => setStatus(await call<Status>("status").catch(() => null)), []);
+  // a failed status call shows an error with "Try again" (not a skeleton forever); a failed refresh keeps what's shown
+  const [failed, setFailed] = useState(false);
+  const load = useCallback(async () => {
+    const s = await call<Status>("status").catch(() => null);
+    setFailed(!s);
+    if (s) setStatus(s);
+  }, []);
   useEffect(() => {
     void load();
   }, [load]);
@@ -88,8 +94,16 @@ export function SecurityScreen() {
       <h1 style={{ margin: "0 0 4px" }}>Security</h1>
       <p className="urko-tip">2-step verification: after your password, you also type a 6-digit code from an app on your phone. Someone who steals your password still can&apos;t get in.</p>
 
+      {failed && (
+        <p className="urko-pos__msg" role="alert">
+          Couldn’t load your 2-step verification status.{" "}
+          <button type="button" className="urko-btn" onClick={() => void load()}>
+            Try again
+          </button>
+        </p>
+      )}
       {!status ? (
-        <div className="urko-skeleton" style={{ height: 120 }} />
+        failed ? null : <div className="urko-skeleton" style={{ height: 120 }} />
       ) : backup ? (
         <div className="urko-card">
           <h2 style={{ marginTop: 0 }}>Save your backup codes</h2>

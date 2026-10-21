@@ -57,8 +57,21 @@ export async function stripe<T = Record<string, unknown>>(method: "GET" | "POST"
 
 /** Currencies Stripe counts in whole units (no cents). */
 const ZERO_DECIMAL = new Set(["bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf"]);
-export const toMinor = (amount: number, currency: string) => Math.round(amount * (ZERO_DECIMAL.has(currency.toLowerCase()) ? 1 : 100));
-export const fromMinor = (amount: number, currency: string) => (ZERO_DECIMAL.has(currency.toLowerCase()) ? amount : amount / 100);
+/**
+ * Currencies Stripe counts in thousandths – and only in whole hundredths (the last digit must be 0). They used to be
+ * multiplied by 100 like cents, so a 10.000 KWD order was charged (and refunded) 1.000 KWD.
+ */
+const THREE_DECIMAL = new Set(["bhd", "jod", "kwd", "omr", "tnd"]);
+export const toMinor = (amount: number, currency: string) => {
+  const c = currency.toLowerCase();
+  if (ZERO_DECIMAL.has(c)) return Math.round(amount);
+  if (THREE_DECIMAL.has(c)) return Math.round(amount * 100) * 10;
+  return Math.round(amount * 100);
+};
+export const fromMinor = (amount: number, currency: string) => {
+  const c = currency.toLowerCase();
+  return ZERO_DECIMAL.has(c) ? amount : THREE_DECIMAL.has(c) ? amount / 1000 : amount / 100;
+};
 
 /**
  * Verifies a webhook: the `Stripe-Signature` header (t=…,v1=…) must be an HMAC-SHA256 of "t.body" with the endpoint's

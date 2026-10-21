@@ -162,7 +162,14 @@ export const Users: CollectionConfig = {
           req,
         });
         const user = found.docs[0] as unknown as { id: string | number; legacyPasswordHash?: string | null } | undefined;
-        if (user?.legacyPasswordHash && (await bcrypt.compare(password, user.legacyPasswordHash))) {
+        // no such account: spend about the time checking a password takes (Payload answers an unknown email at once,
+        // so the delay alone told which emails have accounts)
+        if (!user) {
+          const { pbkdf2 } = await import("node:crypto");
+          await new Promise<void>((done) => pbkdf2(password, "no-such-account", 25_000, 512, "sha256", () => done()));
+          return args;
+        }
+        if (user.legacyPasswordHash && (await bcrypt.compare(password, user.legacyPasswordHash))) {
           await req.payload.update({
             collection: "users",
             id: user.id,

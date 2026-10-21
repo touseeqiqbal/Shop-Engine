@@ -124,6 +124,9 @@ async function lowStockAlert(payload: Payload, req: PayloadRequest | undefined, 
     await queueNotification(payload, "staff", p.storeId, { subject, lines: [p.after <= 0 ? "The last one was just sold." : `Only ${p.after} left – your warning level is ${p.threshold}.`], link: { href: `/cms/collections/products/${p.productId}`, label: "Open the product" } }, { req, dedupeKey: `stock-alert:${p.productId}:${p.after <= 0 ? "out" : "low"}:${new Date().toISOString().slice(0, 10)}` });
   } catch (e) {
     log.error("stock.low_alert_failed", e, { product: p.productId });
+    // a database error has aborted the sale's transaction: the sale must fail, not quietly roll back at COMMIT
+    const { rethrowIfAborted } = await import("./tx-errors");
+    rethrowIfAborted(e, req);
   }
 }
 
@@ -359,6 +362,14 @@ export async function lockRowStatus(payload: Payload, table: "cms_orders" | "cms
 }
 
 export const lockOrderStatus = (payload: Payload, orderId: number, req: PayloadRequest) => lockRowStatus(payload, "cms_orders", orderId, req);
+
+/** Locks an order's row for the rest of the transaction: its current status and when it was last saved. */
+export async function lockOrderRow(payload: Payload, orderId: number, req: PayloadRequest): Promise<{ status: string; updatedAt: string | null } | null> {
+  const { rows } = await (await conn(payload, req)).execute(sql`SELECT "status", "updated_at" FROM "payload"."cms_orders" WHERE "id" = ${orderId} FOR UPDATE`);
+  if (!rows.length) return null;
+  const at = rows[0].updated_at as unknown;
+  return { status: String(rows[0].status), updatedAt: at == null ? null : at instanceof Date ? at.toISOString() : String(at) };
+}
 
 /** A stock change saved through a normal product save (edited in /cms, CSV import, new product). */
 export async function recordStockChange(payload: Payload, req: PayloadRequest | undefined, productId: number, title: unknown, change: number, stockAfter: number, reason: StockReason) {

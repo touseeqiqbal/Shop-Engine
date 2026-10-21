@@ -20,6 +20,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ orderNumber: s
   const current = String(o.status);
   const { STAFF_MOVES } = await import("@/payload/collections/content");
   if (!(STAFF_MOVES[current] ?? []).includes(next)) return apiError(409, `An order that is “${current}” can't become “${next || "?"}” through the API.`, { allowed: STAFF_MOVES[current] ?? [] });
+  // a paid (or advance-paid) order: cancelling it means refunding the customer – the store's owner or a manager does that
+  // in /cms, where the refund reminder goes out; an API key (an ERP, an automation) can't
+  if (next === "cancelled" && ["paid", "partial", "awaiting-verification"].includes(String(o.paymentStatus ?? "")))
+    return apiError(409, "This order is already paid (or has an advance) – cancel it in /cms, where the payment is refunded.");
   const courier = String(body?.courier ?? "").trim().slice(0, 60);
   const trackingNumber = String(body?.trackingNumber ?? "").trim().slice(0, 80);
   const note = String(body?.note ?? "").trim().slice(0, 300);

@@ -14,13 +14,17 @@ export function FunnelReport() {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<Funnel | null>(null);
   const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0); // "Try again" loads the same period once more
   useEffect(() => {
     setData(null);
+    setError("");
     fetch(`/cms-api/shop-funnel?days=${days}`, { credentials: "include" })
       .then(async (r) => (r.ok ? r.json() : Promise.reject(new Error(((await r.json().catch(() => null)) as { error?: string } | null)?.error ?? "Could not load the report"))))
       .then(setData)
       .catch((e) => setError((e as Error).message));
-  }, [days]);
+  }, [days, attempt]);
+  // a failed load shows the error instead of skeletons that never finish
+  const placeholder = (height: number) => (error ? <p className="urko-tip">No figures – the report didn&apos;t load.</p> : <div className="urko-skeleton" style={{ height }} />);
 
   const t = data?.totals;
   const steps = t
@@ -49,10 +53,17 @@ export function FunnelReport() {
           ))}
         </div>
       </div>
-      {error && <p className="urko-tip">{error}</p>}
+      {error && (
+        <p className="urko-tip" role="alert">
+          {error}{" "}
+          <button type="button" className="urko-btn urko-btn--sm" onClick={() => setAttempt((a) => a + 1)}>
+            Try again
+          </button>
+        </p>
+      )}
       <div className="urko-card" style={{ marginBottom: 16 }}>
         {!data ? (
-          <div className="urko-skeleton" style={{ height: 180 }} />
+          placeholder(180)
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
             {steps.map((s) => (
@@ -72,30 +83,32 @@ export function FunnelReport() {
       <div className="urko-card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginTop: 0 }}>Most viewed products</h3>
         {!data ? (
-          <div className="urko-skeleton" style={{ height: 140 }} />
+          placeholder(140)
         ) : data.products.length === 0 ? (
           <p className="urko-tip">Nothing yet.</p>
         ) : (
-          <table className="urko-table">
-            <thead>
-              <tr>
-                <th scope="col">Product</th>
-                <th scope="col" className="n">Views</th>
-                <th scope="col" className="n">Added to cart</th>
-                <th scope="col" className="n">Rate</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.products.map((p) => (
-                <tr key={p.ref}>
-                  <td>{p.id ? <a href={`/cms/collections/products/${p.id}`}>{p.title}</a> : p.title}</td>
-                  <td className="n">{p.views}</td>
-                  <td className="n">{p.carts}</td>
-                  <td className="n">{pct(p.carts, p.views)}</td>
+          <div className="urko-table-wrap">
+            <table className="urko-table">
+              <thead>
+                <tr>
+                  <th scope="col">Product</th>
+                  <th scope="col" className="n">Views</th>
+                  <th scope="col" className="n">Added to cart</th>
+                  <th scope="col" className="n">Rate</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.products.map((p) => (
+                  <tr key={p.ref}>
+                    <td>{p.id ? <a href={`/cms/collections/products/${p.id}`}>{p.title}</a> : p.title}</td>
+                    <td className="n">{p.views}</td>
+                    <td className="n">{p.carts}</td>
+                    <td className="n">{pct(p.carts, p.views)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
         <p className="urko-tip" style={{ marginTop: 8 }}>
           Many views but few carts? Check the price, the photos and the delivery charge for that product.
@@ -105,32 +118,34 @@ export function FunnelReport() {
       <div className="urko-card">
         <h3 style={{ marginTop: 0 }}>Day by day</h3>
         {!data ? (
-          <div className="urko-skeleton" style={{ height: 140 }} />
+          placeholder(140)
         ) : data.days.length === 0 ? (
           <p className="urko-tip">Nothing yet.</p>
         ) : (
-          <table className="urko-table">
-            <thead>
-              <tr>
-                <th scope="col">Day</th>
-                <th scope="col" className="n">Views</th>
-                <th scope="col" className="n">Carts</th>
-                <th scope="col" className="n">Checkouts</th>
-                <th scope="col" className="n">Orders</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...data.days].reverse().map((d) => (
-                <tr key={d.day}>
-                  <td>{d.day}</td>
-                  <td className="n">{d.views}</td>
-                  <td className="n">{d.carts}</td>
-                  <td className="n">{d.checkouts}</td>
-                  <td className="n">{d.orders}</td>
+          <div className="urko-table-wrap">
+            <table className="urko-table">
+              <thead>
+                <tr>
+                  <th scope="col">Day</th>
+                  <th scope="col" className="n">Views</th>
+                  <th scope="col" className="n">Carts</th>
+                  <th scope="col" className="n">Checkouts</th>
+                  <th scope="col" className="n">Orders</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {[...data.days].reverse().map((d) => (
+                  <tr key={d.day}>
+                    <td>{d.day}</td>
+                    <td className="n">{d.views}</td>
+                    <td className="n">{d.carts}</td>
+                    <td className="n">{d.checkouts}</td>
+                    <td className="n">{d.orders}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

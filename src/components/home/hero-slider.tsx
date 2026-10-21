@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useStoreLocale } from "@/components/providers/locale";
 import { AnimatePresence, m as motion, useReducedMotion } from "framer-motion";
-import { ArrowRight, ChevronLeft, ChevronRight, ShieldCheck, Truck, Wallet } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, Pause, Play, ShieldCheck, Truck, Wallet } from "lucide-react";
 import type { Banner } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useHydrated } from "@/hooks/use-hydrated";
 
 const INTERVAL = 6000;
 
@@ -15,9 +16,12 @@ export function HeroSlider({ slides, cod }: { slides: Banner[]; cod: boolean }) 
   const pk = useStoreLocale().country === "PK";
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  // the shopper pressed Pause (hover / focus only pause while they last)
+  const [stopped, setStopped] = useState(false);
   // The first slide is server-rendered fully visible (fast LCP); only later slide changes animate in.
   const [changed, setChanged] = useState(false);
   const reduce = useReducedMotion();
+  const hydrated = useHydrated(); // the Pause button depends on the device's motion setting – client only
   // rotation starts only once the page has loaded and the browser is idle, and stops while the tab is hidden
   const [ready, setReady] = useState(false);
   const [hidden, setHidden] = useState(false);
@@ -48,12 +52,15 @@ export function HeroSlider({ slides, cod }: { slides: Banner[]; cod: boolean }) 
     };
   }, []);
 
+  const playing = ready && !hidden && !paused && !stopped && !reduce && count > 1;
+  // the progress bar stands still (full) whenever the slides don't move on by themselves
+  const still = paused || stopped || Boolean(reduce);
   useEffect(() => {
-    if (!ready || hidden || paused || reduce || count < 2) return;
+    if (!playing) return;
     // The first rotation waits longer so the initial slide stays the page's LCP element during load.
     const t = setTimeout(() => go(index + 1), changed ? INTERVAL : INTERVAL * 2);
     return () => clearTimeout(t);
-  }, [index, ready, hidden, paused, reduce, count, go, changed]);
+  }, [index, playing, go, changed]);
 
   if (!count) return null;
   const s = slides[index];
@@ -94,7 +101,8 @@ export function HeroSlider({ slides, cod }: { slides: Banner[]; cod: boolean }) 
             exit={{ opacity: 0, y: -16 }}
             transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
             className="relative z-10 order-2 md:order-1"
-            aria-live="polite"
+            // not read out on every automatic change – only when the shopper moves the slides
+            aria-live={playing ? "off" : "polite"}
           >
             {s.eyebrow && <p className="chip mb-4 border-violet-500/40 bg-violet-500/10 text-violet-300 light:text-violet-700">{s.eyebrow}</p>}
             <h2 className="text-[2rem] font-bold leading-[1.05] text-fg sm:text-5xl lg:text-6xl">{s.title}</h2>
@@ -133,30 +141,36 @@ export function HeroSlider({ slides, cod }: { slides: Banner[]; cod: boolean }) 
 
       {count > 1 && (
         <div className="absolute inset-x-0 bottom-6 z-10 flex items-center justify-between px-6 sm:px-10 lg:px-14">
-          <div className="flex gap-2" role="tablist" aria-label="Choose slide">
+          {/* plain buttons (not tabs – there's no tab panel); the shown slide is marked current */}
+          <div className="flex gap-2" role="group" aria-label="Choose slide">
             {slides.map((b, i) => (
               <button
                 key={b.id}
                 type="button"
-                role="tab"
-                aria-selected={i === index}
+                aria-current={i === index ? "true" : undefined}
                 aria-label={`Slide ${i + 1}: ${b.title}`}
                 onClick={() => go(i)}
                 className="relative h-1.5 w-8 overflow-hidden rounded-full bg-surface-strong sm:w-12"
               >
                 {i === index && (
                   <motion.span
-                    key={`${index}-${paused}`}
+                    key={`${index}-${still}`}
                     className="absolute inset-y-0 left-0 bg-brand-gradient"
-                    initial={{ width: paused || reduce ? "100%" : "0%" }}
+                    initial={{ width: still ? "100%" : "0%" }}
                     animate={{ width: "100%" }}
-                    transition={{ duration: paused || reduce ? 0 : (changed ? INTERVAL : INTERVAL * 2) / 1000, ease: "linear" }}
+                    transition={{ duration: still ? 0 : (changed ? INTERVAL : INTERVAL * 2) / 1000, ease: "linear" }}
                   />
                 )}
               </button>
             ))}
           </div>
           <div className="flex gap-2">
+            {/* moving content needs a way to stop it (WCAG 2.2.2); with reduced motion nothing moves on its own */}
+            {hydrated && !reduce && (
+              <button type="button" onClick={() => setStopped((v) => !v)} className="glass grid size-10 place-items-center rounded-full" aria-label={stopped ? "Play slideshow" : "Pause slideshow"}>
+                {stopped ? <Play className="size-4" aria-hidden="true" /> : <Pause className="size-4" aria-hidden="true" />}
+              </button>
+            )}
             <button type="button" onClick={() => go(index - 1)} className="glass grid size-10 place-items-center rounded-full" aria-label="Previous slide">
               <ChevronLeft className="size-5" aria-hidden="true" />
             </button>

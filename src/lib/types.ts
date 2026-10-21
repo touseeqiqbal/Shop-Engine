@@ -182,7 +182,9 @@ export interface BlogPost {
   slug: string;
   title: string;
   excerpt: string;
-  content: string; // Markdown
+  content: string; // Markdown ("" in post lists – see `minutes`)
+  /** reading time in minutes – set in post lists, whose posts come without their content */
+  minutes?: number;
   cover: string;
   category: string;
   tags: string[];

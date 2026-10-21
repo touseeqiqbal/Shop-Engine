@@ -9,16 +9,22 @@ import { isPublicMediaKey } from "@/lib/media";
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ key: string[] }> }) {
   const { key: parts } = await ctx.params;
-  const key = parts.map((p) => decodeURIComponent(p)).join("/");
+  // (a malformed escape such as %zz is a "not found", not a server error)
+  const key = parts
+    .map((p) => {
+      try {
+        return decodeURIComponent(p);
+      } catch {
+        return p;
+      }
+    })
+    .join("/");
   if (!isPublicMediaKey(key)) return new Response("Not found", { status: 404 });
 
-  const obj = await getObject(key);
+  // the browser has it already: answered without fetching the file from the bucket
+  const obj = await getObject(key, { ifNoneMatch: req.headers.get("if-none-match") });
   if (!obj) return new Response("Not found", { status: 404, headers: { "Cache-Control": "public, max-age=60" } });
-
-  if (obj.etag && req.headers.get("if-none-match") === obj.etag) {
-    await obj.body.cancel();
-    return new Response(null, { status: 304, headers: { ETag: obj.etag, "Cache-Control": "public, max-age=31536000, immutable" } });
-  }
+  if ("notModified" in obj) return new Response(null, { status: 304, headers: { ETag: obj.etag, "Cache-Control": "public, max-age=31536000, immutable" } });
 
   const headers = new Headers({
     "Content-Type": obj.contentType,

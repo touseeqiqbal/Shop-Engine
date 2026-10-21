@@ -138,14 +138,21 @@ const orderGuards: CollectionBeforeChangeHook = async ({ data, originalDoc, oper
   if (context?.migrating) return data;
   const prevStatus = originalDoc?.status as string | undefined;
   const expect = (context?.expectStatus as string | undefined) ?? req.searchParams?.get("expectStatus") ?? undefined;
-  const changingStatus = operation === "update" && data.status !== undefined && data.status !== prevStatus;
-  if (operation === "update" && originalDoc?.id && (expect || changingStatus)) {
-    // lock the row: a second change arriving at the same moment waits here, then sees the new status
-    // (always for a status change – two cancels at once must not put the stock back twice)
-    const { lockOrderStatus } = await import("../stock");
-    const current = req.transactionID ? await lockOrderStatus(req.payload, Number(originalDoc.id), req) : prevStatus;
+  if (operation === "update" && originalDoc?.id && req.transactionID) {
+    // every change locks the row: a second change arriving at the same moment waits here, then sees what the first one
+    // saved – two cancels at once must not put the stock back twice, and a change must never write back a copy read
+    // before someone else's save (Payload saves the whole order: an item edit waiting behind a cancel would re-open
+    // the order and keep its stock; a parcel or a payment recorded meanwhile would be lost)
+    const { lockOrderRow } = await import("../stock");
+    const current = await lockOrderRow(req.payload, Number(originalDoc.id), req);
     const wanted = expect ?? prevStatus;
-    if (current !== wanted) throw userError(`This order was changed meanwhile – it is now “${current}”. Reload the page and check it again.`, 409);
+    if (current && current.status !== wanted) throw userError(`This order was changed meanwhile – it is now “${current.status}”. Reload the page and check it again.`, 409);
+    const savedAt = current?.updatedAt ? Date.parse(current.updatedAt) : 0;
+    const readAt = originalDoc.updatedAt ? Date.parse(String(originalDoc.updatedAt)) : 0;
+    if (savedAt && readAt && savedAt > readAt) throw userError("This order was changed by someone else just now. Reload the page and check it again.", 409);
+  } else if (operation === "update" && expect && prevStatus !== expect) {
+    // no transaction to lock in: the status the caller expects is still checked against the order as it was read
+    throw userError(`This order was changed meanwhile – it is now “${prevStatus}”. Reload the page and check it again.`, 409);
   }
 
   if (operation === "update" && data.paymentStatus === "unpaid" && originalDoc?.paymentStatus === "awaiting-verification") data.advancePaid = null;
@@ -407,6 +414,8 @@ const orderStock: CollectionBeforeChangeHook = async ({ data, originalDoc, opera
       // a cancelled / refused order gives its coupon use back – only if it really used one (orders typed in /cms don't)
       if (status !== "returned" && originalDoc?.couponCode && originalDoc?.couponConsumed) {
         await releaseCoupon(req.payload, String(originalDoc.couponCode), storeIdOf(originalDoc.store), req);
+        // … and the automatic discount used with it
+        if (originalDoc.extraCouponCode) await releaseCoupon(req.payload, String(originalDoc.extraCouponCode), storeIdOf(originalDoc.store), req);
         data.couponConsumed = false;
         data.couponReturned = true;
       }
@@ -431,6 +440,9 @@ const orderStock: CollectionBeforeChangeHook = async ({ data, originalDoc, opera
         const { consumeCoupon } = await import("../stock");
         if (!(await consumeCoupon(req.payload, coupon, storeIdOf(originalDoc?.store), req)))
           throw userError(`Cannot re-open – the coupon ${coupon} has no uses left (or has expired). Remove the coupon and its discount from the order first.`, 409);
+        const extra = originalDoc?.extraCouponCode ? String(originalDoc.extraCouponCode) : "";
+        if (extra && !(await consumeCoupon(req.payload, extra, storeIdOf(originalDoc?.store), req)))
+          throw userError(`Cannot re-open – the automatic discount ${extra} has no uses left (or has ended). Take its part of the discount off the order first.`, 409);
         data.couponConsumed = true;
         data.couponReturned = false;
       }
@@ -501,6 +513,7 @@ const orderDeleteStock: CollectionBeforeDeleteHook = async ({ id, req }) => {
     if (doc.couponCode && doc.couponConsumed) {
       const { releaseCoupon } = await import("../stock");
       await releaseCoupon(req.payload, String(doc.couponCode), storeIdOf(doc.store), req);
+      if (doc.extraCouponCode) await releaseCoupon(req.payload, String(doc.extraCouponCode), storeIdOf(doc.store), req);
     }
     if (doc.giftCardCode && doc.giftCardCharged && Number(doc.giftCardAmount) > 0) {
       const { giveBackToGiftCard } = await import("../gift-cards");
@@ -672,6 +685,9 @@ const orderWebhooks: CollectionAfterChangeHook = async ({ doc, previousDoc, oper
     await emitStoreEvent(req.payload, storeIdOf(doc.store), created ? "order.created" : "order.updated", { ...orderEventData(doc), ...(created ? {} : { previousStatus: previousDoc?.status }) }, req);
   } catch (e) {
     log.error("orders.webhook_queue_failed", e);
+    // a database error has aborted the save's transaction: let the save fail instead of quietly rolling back
+    const { rethrowIfAborted } = await import("../tx-errors");
+    rethrowIfAborted(e, req);
   }
   return doc;
 };
@@ -687,6 +703,8 @@ const orderStatusNotify: CollectionAfterChangeHook = async ({ doc, previousDoc, 
     await queueNotification(req.payload, "order-status", storeIdOf(doc.store), { orderId: doc.id, status: doc.status }, { req, dedupeKey: `order-status:${doc.id}:${doc.status}:${String(doc.updatedAt ?? Date.now())}` });
   } catch (e) {
     log.error("orders.status_notification_failed", e);
+    const { rethrowIfAborted } = await import("../tx-errors");
+    rethrowIfAborted(e, req);
   }
   return doc;
 };
@@ -809,6 +827,8 @@ export const Orders: CollectionConfig = {
     { name: "downloadCounts", type: "json", label: "Downloads used", access: { create: () => false, update: () => false }, admin: { readOnly: true, condition: (d) => Boolean(d?.downloadCounts && Object.keys(d.downloadCounts as object).length) } },
     { name: "pointsEarned", type: "number", label: "Loyalty points earned", access: { create: () => false, update: () => false }, admin: { readOnly: true, condition: (d) => Number(d?.pointsEarned) > 0, description: "Given to the customer when the order was delivered." } },
     { name: "giftCardCharged", type: "checkbox", defaultValue: false, access: { read: storeRoleField("store_staff"), create: () => false, update: () => false }, admin: { hidden: true } },
+    // the automatic discount used TOGETHER with the typed code (both count as used) – set by the checkout
+    { name: "extraCouponCode", type: "text", index: true, label: "Automatic discount (with the code)", access: { create: () => false, update: () => false }, admin: { readOnly: true, condition: (d) => Boolean(d?.extraCouponCode) } },
     { type: "row", fields: [
       { name: "couponCode", type: "text", label: "Coupon code", admin: { width: "50%" } },
       { name: "taxTotal", type: "number", defaultValue: 0, min: 0, label: "Tax included", admin: { width: "50%", readOnly: true, description: "Tax inside the total, from the store's tax rate when the order was placed." } },

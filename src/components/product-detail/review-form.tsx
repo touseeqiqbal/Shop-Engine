@@ -166,8 +166,9 @@ export function ReviewForm({ productId, productName }: { productId: string; prod
                 {photos.map((f, i) => (
                   <span key={i} className="relative size-16 overflow-hidden rounded-xl border border-border bg-surface">
                     <FilePreview file={f} className="size-full object-cover" />
-                    <button type="button" aria-label="Remove photo" onClick={() => setPhotos(photos.filter((_, j) => j !== i))} className="absolute right-0.5 top-0.5 rounded-full bg-black/70 px-1.5 text-xs">
-                      ×
+                    {/* at least 24px to tap (WCAG 2.5.8) */}
+                    <button type="button" aria-label={`Remove photo ${i + 1}`} onClick={() => setPhotos(photos.filter((_, j) => j !== i))} className="absolute right-0.5 top-0.5 grid size-6 place-items-center rounded-full bg-black/70 text-sm leading-none text-white">
+                      <span aria-hidden="true">×</span>
                     </button>
                   </span>
                 ))}

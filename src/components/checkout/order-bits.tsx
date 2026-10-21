@@ -59,24 +59,26 @@ export function SuccessBadge() {
 }
 
 export function CopyButton({ value, label = "Copy", className }: { value: string; label?: string; className?: string }) {
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<"idle" | "copied" | "failed">("idle");
+  // clipboard blocked (older browser, no permission): say so, so the shopper copies it by hand
+  const text = status === "copied" ? "Copied" : status === "failed" ? "Couldn't copy – select the number" : label;
   return (
     <button
       type="button"
       className={cn("btn btn-secondary btn-sm", className)}
       onClick={async () => {
+        let ok = false;
         try {
           await navigator.clipboard.writeText(value);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1800);
-        } catch {
-          /* clipboard blocked */
-        }
+          ok = true;
+        } catch {}
+        setStatus(ok ? "copied" : "failed");
+        setTimeout(() => setStatus("idle"), ok ? 1800 : 4000);
       }}
-      aria-label={copied ? "Copied" : `${label} ${value}`}
+      aria-label={status === "idle" ? `${label} ${value}` : text}
     >
-      {copied ? <Check className="size-4 text-emerald-400" aria-hidden="true" /> : <Copy className="size-4" aria-hidden="true" />}
-      <span aria-live="polite">{copied ? "Copied" : label}</span>
+      {status === "copied" ? <Check className="size-4 text-emerald-400" aria-hidden="true" /> : <Copy className="size-4" aria-hidden="true" />}
+      <span aria-live="polite">{text}</span>
     </button>
   );
 }

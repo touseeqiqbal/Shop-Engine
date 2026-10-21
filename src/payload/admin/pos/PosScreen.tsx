@@ -56,10 +56,10 @@ export function PosScreen({ storeName }: { storeName: string }) {
       <div className="urko-pos__head">
         <h1>Shop counter</h1>
         <nav className="urko-tabs" aria-label="Shop counter">
-          <button type="button" className={tab === "sell" ? "is-active" : undefined} onClick={() => setTab("sell")}>
+          <button type="button" className={tab === "sell" ? "is-active" : undefined} aria-pressed={tab === "sell"} onClick={() => setTab("sell")}>
             Sell
           </button>
-          <button type="button" className={tab === "cashup" ? "is-active" : undefined} onClick={() => setTab("cashup")}>
+          <button type="button" className={tab === "cashup" ? "is-active" : undefined} aria-pressed={tab === "cashup"} onClick={() => setTab("cashup")}>
             Cash-up
           </button>
           <a href="/cms/collections/pos-sales">All shop sales</a>
@@ -108,6 +108,18 @@ function Sell({ storeName, isManager }: { storeName: string; isManager: boolean 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [loadRecent]);
+
+  // the "Sale complete" box: New sale, Escape or a click outside close it, ready for the next scan
+  const closeDone = useCallback(() => {
+    setDone(null);
+    search.current?.focus();
+  }, []);
+  useEffect(() => {
+    if (!done) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeDone();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [done, closeDone]);
 
   // every amount rounded to the currency (no 0.30000000000000004 with cents)
   const subtotal = money.round(lines.reduce((s, l) => s + l.qty * l.unitPrice, 0));
@@ -228,7 +240,8 @@ function Sell({ storeName, isManager }: { storeName: string; isManager: boolean 
             autoComplete="off"
           />
         </label>
-        {message && <p className="urko-pos__msg">{message}</p>}
+        {/* always in the page so screen readers hear each new lookup answer */}
+        <div role="status">{message && <p className="urko-pos__msg">{message}</p>}</div>
         <ul className="urko-pos__results">
           {results.map((p) => (
             <li key={p.id}>
@@ -318,11 +331,11 @@ function Sell({ storeName, isManager }: { storeName: string; isManager: boolean 
                     <span className="urko-pos__qty">1</span>
                   ) : (
                     <span className="urko-pos__stepper">
-                      <button type="button" aria-label="One less" onClick={() => setLines((ls) => ls.map((x) => (x === l ? { ...x, qty: Math.max(1, x.qty - 1) } : x)))}>
+                      <button type="button" aria-label={`One less ${l.product.title}`} onClick={() => setLines((ls) => ls.map((x) => (x === l ? { ...x, qty: Math.max(1, x.qty - 1) } : x)))}>
                         −
                       </button>
                       <span>{l.qty}</span>
-                      <button type="button" aria-label="One more" onClick={() => setLines((ls) => ls.map((x) => (x === l ? { ...x, qty: Math.min(l.product.stock, x.qty + 1) } : x)))}>
+                      <button type="button" aria-label={`One more ${l.product.title}`} onClick={() => setLines((ls) => ls.map((x) => (x === l ? { ...x, qty: Math.min(l.product.stock, x.qty + 1) } : x)))}>
                         +
                       </button>
                     </span>
@@ -434,7 +447,7 @@ function Sell({ storeName, isManager }: { storeName: string; isManager: boolean 
       </section>
 
       {done && (
-        <div className="urko-dialog__backdrop" role="dialog" aria-modal="true" aria-label="Sale complete" onClick={() => setDone(null)}>
+        <div className="urko-dialog__backdrop" role="dialog" aria-modal="true" aria-label="Sale complete" onClick={closeDone}>
           <div className="urko-dialog urko-pos__done" onClick={(e) => e.stopPropagation()}>
             <p className="urko-pos__done-ok">✓ Sale complete</p>
             <h2>{money(done.total)}</h2>
@@ -452,10 +465,7 @@ function Sell({ storeName, isManager }: { storeName: string; isManager: boolean 
                 type="button"
                 className="urko-btn urko-btn--primary"
                 autoFocus
-                onClick={() => {
-                  setDone(null);
-                  search.current?.focus();
-                }}
+                onClick={closeDone}
               >
                 New sale
               </button>

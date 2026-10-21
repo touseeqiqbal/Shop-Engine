@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNav } from "@payloadcms/ui";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { Icon } from "../ui/icons";
 import { useAdminMoney } from "../ui/store-context";
 import { formatMoney, type Money } from "../../../lib/money";
@@ -31,8 +32,22 @@ async function getJson<T>(url: string): Promise<T | null> {
 
 type Docs = { docs: Record<string, unknown>[] };
 
-/** `money` = the store's; an order shows in the currency it was placed in. */
-async function search(term: string, money: Money): Promise<Result[]> {
+/** A list this role may not read (403) is simply empty; any other failure is null. */
+async function getDocs(url: string): Promise<Docs | null> {
+  try {
+    const res = await fetch(url, { credentials: "include" });
+    if (res.status === 403) return { docs: [] };
+    return res.ok ? ((await res.json()) as Docs) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `money` = the store's; an order shows in the currency it was placed in.
+ * null = nothing found but a lookup failed – "Nothing found" would be untrue then.
+ */
+async function search(term: string, money: Money): Promise<Result[] | null> {
   const digits = term.replace(/\D/g, "");
   // phone numbers are stored like 0300-1234567: match on the last 7 digits
   const phone = digits.length >= 7 ? digits.slice(-7) : "";
@@ -41,9 +56,9 @@ async function search(term: string, money: Money): Promise<Result[]> {
   const userWhere: Record<string, string> = { "where[or][0][name][like]": term, "where[or][1][email][like]": term };
   if (phone) userWhere["where[or][2][phone][like]"] = phone;
   const [orders, products, users] = await Promise.all([
-    getJson<Docs>(`${API}/orders?${q({ ...orderWhere, limit: "5", depth: "0", sort: "-placedAt" })}`),
-    getJson<Docs>(`${API}/products?${q({ "where[or][0][title][like]": term, "where[or][1][sku][like]": term, "where[or][2][model][like]": term, limit: "5", depth: "1" })}`),
-    getJson<Docs>(`${API}/users?${q({ ...userWhere, limit: "5", depth: "0" })}`),
+    getDocs(`${API}/orders?${q({ ...orderWhere, limit: "5", depth: "0", sort: "-placedAt" })}`),
+    getDocs(`${API}/products?${q({ "where[or][0][title][like]": term, "where[or][1][sku][like]": term, "where[or][2][model][like]": term, limit: "5", depth: "1" })}`),
+    getDocs(`${API}/users?${q({ ...userWhere, limit: "5", depth: "0" })}`),
   ]);
   const out: Result[] = [];
   for (const o of orders?.docs ?? []) {
@@ -59,7 +74,7 @@ async function search(term: string, money: Money): Promise<Result[]> {
   for (const u of users?.docs ?? []) {
     out.push({ group: "Customers", title: String(u.name || u.email), sub: [u.email, u.phone].filter(Boolean).join(" · "), href: `${ADMIN}/collections/users/${u.id}` });
   }
-  return out;
+  return out.length || [orders, products, users].every(Boolean) ? out : null;
 }
 
 function SearchDialog({ onClose }: { onClose: () => void }) {
@@ -67,27 +82,40 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
   const [term, setTerm] = useState("");
   const [results, setResults] = useState<Result[]>([]);
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [cursor, setCursor] = useState(0);
+  const [attempt, setAttempt] = useState(0); // "Try again" runs the same search once more
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const money = useAdminMoney();
+  // Tab stays inside the dialog; focus goes back to the search button on close
+  useFocusTrap(dialogRef, true);
 
   useEffect(() => inputRef.current?.focus(), []);
   useEffect(() => {
     const t = term.trim();
+    setFailed(false);
     if (t.length < 2) {
       setResults([]);
+      setBusy(false);
       return;
     }
     setBusy(true);
+    let stale = false; // an older, slower answer mustn't replace the newer one
     const timer = setTimeout(() => {
       search(t, money).then((r) => {
-        setResults(r);
+        if (stale) return;
+        setResults(r ?? []);
+        setFailed(!r);
         setCursor(0);
         setBusy(false);
       });
     }, 250);
-    return () => clearTimeout(timer);
-  }, [term, money]);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [term, money, attempt]);
 
   const go = (r: Result | undefined) => {
     if (!r) return;
@@ -98,7 +126,16 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="urko-dialog__backdrop" onClick={onClose}>
-      <div className="urko-dialog urko-search" role="dialog" aria-modal="true" aria-label="Search" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        className="urko-dialog urko-search"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search"
+        onClick={(e) => e.stopPropagation()}
+        // Escape closes from anywhere in the dialog (the close button, a result), not just the search box
+        onKeyDown={(e) => e.key === "Escape" && onClose()}
+      >
         <label className="urko-search__field">
           <Icon name="search" />
           <input
@@ -106,7 +143,6 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
             value={term}
             onChange={(e) => setTerm(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Escape") onClose();
               if (e.key === "ArrowDown") setCursor((c) => Math.min(c + 1, results.length - 1));
               if (e.key === "ArrowUp") setCursor((c) => Math.max(c - 1, 0));
               if (e.key === "Enter") go(results[cursor]);
@@ -121,7 +157,22 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
         <div className="urko-search__results" aria-live="polite">
           {term.trim().length < 2 && <p className="urko-muted">Type at least 2 letters or the last digits of a phone number.</p>}
           {busy && <p className="urko-muted">Searching…</p>}
-          {!busy && term.trim().length >= 2 && !results.length && <p className="urko-muted">Nothing found for “{term.trim()}”.</p>}
+          {!busy && failed && (
+            <p className="urko-muted">
+              Search failed.{" "}
+              <button
+                type="button"
+                className="urko-btn urko-btn--sm"
+                onClick={() => {
+                  setAttempt((a) => a + 1);
+                  inputRef.current?.focus(); // this button goes away while searching
+                }}
+              >
+                Try again
+              </button>
+            </p>
+          )}
+          {!busy && !failed && term.trim().length >= 2 && !results.length && <p className="urko-muted">Nothing found for “{term.trim()}”.</p>}
           {groups.map(({ g, items }) => (
             <section key={g}>
               <h3 className="urko-search__group">{g}</h3>
@@ -193,7 +244,8 @@ export function TopActions() {
       { n: todo.paymentsToVerify, text: "payments to verify", href: `${ADMIN}/collections/orders?where%5BpaymentStatus%5D%5Bequals%5D=awaiting-verification` },
       { n: todo.lowStockTotal + todo.outOfStockTotal, text: "products low or out of stock", href: `${ADMIN}/collections/products?where%5BstockStatus%5D%5Bin%5D%5B0%5D=low&where%5BstockStatus%5D%5Bin%5D%5B1%5D=out` },
       { n: todo.newWholesale, text: "new wholesale enquiries", href: `${ADMIN}/collections/wholesale-inquiries?where%5Bstatus%5D%5Bequals%5D=new` },
-      { n: todo.openMessages, text: "unread messages", href: `${ADMIN}/collections/contact-messages` },
+      // the same messages the count is of: not yet marked handled
+      { n: todo.openMessages, text: "unread messages", href: `${ADMIN}/collections/contact-messages?where%5Bhandled%5D%5Bnot_equals%5D=true` },
     ].filter((a) => a.n > 0);
   }, [todo]);
   const alertCount = alerts.reduce((s, a) => s + a.n, 0);
@@ -250,12 +302,12 @@ export function TopActions() {
           <Icon name="home" size={22} />
           Home
         </Link>
-        <Link href={`${ADMIN}/collections/orders`} className={isActive(`${ADMIN}/collections/orders`) ? "is-active" : ""}>
+        <Link href={`${ADMIN}/collections/orders`} className={isActive(`${ADMIN}/collections/orders`) ? "is-active" : ""} aria-current={isActive(`${ADMIN}/collections/orders`) ? "page" : undefined}>
           <Icon name="orders" size={22} />
           Orders
           {todo?.pendingOrders ? <span className="urko-tabbar__badge">{todo.pendingOrders}</span> : null}
         </Link>
-        <Link href={`${ADMIN}/collections/products`} className={isActive(`${ADMIN}/collections/products`) ? "is-active" : ""}>
+        <Link href={`${ADMIN}/collections/products`} className={isActive(`${ADMIN}/collections/products`) ? "is-active" : ""} aria-current={isActive(`${ADMIN}/collections/products`) ? "page" : undefined}>
           <Icon name="products" size={22} />
           Products
         </Link>

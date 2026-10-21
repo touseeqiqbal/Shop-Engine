@@ -630,6 +630,7 @@ export interface Order {
    */
   pointsEarned?: number | null;
   giftCardCharged?: boolean | null;
+  extraCouponCode?: string | null;
   couponCode?: string | null;
   /**
    * Tax inside the total, from the store's tax rate when the order was placed.
@@ -5163,6 +5164,7 @@ export interface OrdersSelect<T extends boolean = true> {
   downloadCounts?: T;
   pointsEarned?: T;
   giftCardCharged?: T;
+  extraCouponCode?: T;
   couponCode?: T;
   taxTotal?: T;
   taxBreakdown?: T;

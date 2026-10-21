@@ -37,7 +37,8 @@ export async function createAccountFromOrder(orderNumber: string): Promise<Creat
     await linkOrderToCustomerCms(order.orderNumber, { email, name: order.customer.name, phone: order.customer.phone });
     const user = await getUserByEmailCms(email);
     if (!user) return { ok: false, message: "We couldn't set up your account just now. Please try again in a minute." };
-    if (user.role !== "customer") return { ok: false, message: "This email belongs to a staff account." };
+    // (never say what kind of account it is)
+    if (user.role !== "customer") return { ok: true, signIn: true, message: "You already have an account with this email – sign in to see this order. Forgot the password? Use “Forgot password” on the sign-in page." };
     if (user.hasAccount && !user.emailVerified)
       return { ok: true, signIn: true, message: "There's already an account with this email that hasn't been confirmed yet. Sign in and confirm the email (or use “Forgot password”) – this order then appears in it." };
     if (user.hasAccount) return { ok: true, signIn: true, message: "You already have an account with this email – sign in to see this order. Forgot the password? Use “Forgot password” on the sign-in page." };

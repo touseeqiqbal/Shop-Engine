@@ -127,6 +127,28 @@ try {
   check(both.every((r) => r === "ok"), `two returns that fit are both finished (${both.join(" | ")})`);
   const third = await finishReturn("c", 100);
   check(third !== "ok" && /more than its total/.test(third), `a third return beyond the total is refused (${third.slice(0, 120)})`);
+  // a refunded return's amount can't be raised afterwards (it skipped every limit)
+  const finishedId = returnIds[0];
+  const raised = await payload
+    .update({ collection: "return-requests", id: finishedId, data: { refundAmount: 50_000 } as never, overrideAccess: true, depth: 0 })
+    .then(() => "saved")
+    .catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
+  check(/already refunded/.test(raised), `a refunded return's amount can't be raised afterwards (${raised.slice(0, 70)})`);
+  // an order with a 50% discount: one of its two items is refunded at most at its discounted price
+  const halfOff = (await payload.create({
+    collection: "orders",
+    data: { store, orderNumber: `HALF-${tag}`, placedAt: new Date().toISOString(), status: "delivered", customer: { name: "Half Off", phone: "0300-1112230", city: "Karachi", address: "Street 1, Block 2" }, items: [{ title: "A", qty: 1, unitPrice: 1000 }, { title: "B", qty: 1, unitPrice: 1000 }], subtotal: 2000, discount: 1000, total: 1000, paymentMethod: "cod", paymentStatus: "paid" } as never,
+    overrideAccess: true,
+    depth: 0,
+    context: { migrating: true },
+  })) as unknown as Doc;
+  cleanup.push(() => payload.delete({ collection: "orders", id: Number(halfOff.id), overrideAccess: true, context: { migrating: true, system: true } }));
+  const fullPrice = await payload
+    .create({ collection: "return-requests", data: { store, order: Number(halfOff.id), orderNumber: `HALF-${tag}`, status: "refunded", customerName: "Half Off", customerPhone: "0300-1112230", reason: "test", items: [{ title: "A", qty: 1, unitPrice: 1000 }], refundMethod: "cash", refundAmount: 1000 } as never, overrideAccess: true, depth: 0, context: { storeId: store } })
+    .then((d) => (returnIds.push(Number((d as unknown as Doc).id)), "saved"))
+    .catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
+  check(/more than was paid for these items/.test(fullPrice), `an item of a 50%-off order can't be refunded at full price (${fullPrice.slice(0, 70)})`);
+
   const { refundCardOrder } = await import("../../src/lib/payments");
   const { createLocalReq } = await import("payload");
   // the card payment itself still shows 1000 unrefunded – but the order has nothing left: the online refund is refused
@@ -173,6 +195,50 @@ try {
   const statusOf = async (id: number) => String(((await payload.findByID({ collection: "orders", id, depth: 0, overrideAccess: true })) as unknown as Doc).status);
   check((await statusOf(orphan)) === "cancelled", "an order waiting for a payment that no longer exists is cancelled (its stock goes back)");
   check((await statusOf(withVoucher)) === "awaiting-payment", "…one with a payment still open is left alone");
+
+  // ── a refund that is pending at the provider and then FAILS: taken off the payment and the order again, team told ──
+  const { settleRefund } = await import("../../src/lib/payments");
+  const refundedOrder = (await payload.create({
+    collection: "orders",
+    data: { store, orderNumber: `RFL-${tag}`, placedAt: new Date().toISOString(), status: "delivered", customer: { name: "Refund Fail", phone: "0300-1112228", city: "Karachi", address: "Street 1, Block 2" }, items: [{ title: "Mouse", qty: 1, unitPrice: 1000 }], subtotal: 1000, total: 1000, paymentMethod: "card", paymentStatus: "partially-refunded" } as never,
+    overrideAccess: true,
+    depth: 0,
+    context: { migrating: true },
+  })) as unknown as Doc;
+  const rfId = Number(refundedOrder.id);
+  cleanup.push(() => payload.delete({ collection: "orders", id: rfId, overrideAccess: true, context: { migrating: true, system: true } }));
+  const rfCharge = (await payload.create({ collection: "payment-transactions", data: { store, order: rfId, kind: "charge", status: "partially_refunded", provider: "stripe", providerRef: `cs_test_rf_${tag}`, paymentIntent: `pi_test_rf_${tag}`, amount: 1000, refundedAmount: 400, currency: "PKR", idempotencyKey: `rf-${tag}` } as never, overrideAccess: true, depth: 0 })) as unknown as Doc;
+  const rfRefund = (await payload.create({ collection: "payment-transactions", data: { store, order: rfId, kind: "refund", status: "pending", provider: "stripe", providerRef: `re_test_${tag}`, amount: 400, currency: "PKR", idempotencyKey: `refund:${rfId}:0:400` } as never, overrideAccess: true, depth: 0 })) as unknown as Doc;
+  cleanup.unshift(() => payload.delete({ collection: "payment-transactions", where: { order: { equals: rfId } }, overrideAccess: true }));
+  check((await settleRefund(payload, { provider: "stripe", refundRef: `re_test_${tag}`, status: "failed", reason: "card closed" })) === "updated", "the provider says the pending refund failed");
+  const rfAfter = (await payload.findByID({ collection: "orders", id: rfId, depth: 0, overrideAccess: true })) as unknown as Doc;
+  const chargeAfter = (await payload.findByID({ collection: "payment-transactions", id: Number(rfCharge.id), depth: 0, overrideAccess: true })) as unknown as Doc;
+  const refundAfter = (await payload.findByID({ collection: "payment-transactions", id: Number(rfRefund.id), depth: 0, overrideAccess: true })) as unknown as Doc;
+  check(refundAfter.status === "failed" && Number(chargeAfter.refundedAmount) === 0 && chargeAfter.status === "succeeded", `…the refund is failed and taken off the payment (refunded ${String(chargeAfter.refundedAmount)}, ${String(chargeAfter.status)})`);
+  check(rfAfter.paymentStatus === "paid", `…the order is Paid again, not "refunded" (${String(rfAfter.paymentStatus)})`);
+  check((await outbox({ dedupeKey: { equals: `refund-failed:${String(rfRefund.id)}` } })).length === 1, "…and the store's team is told the customer still has to be paid");
+  check((await settleRefund(payload, { provider: "stripe", refundRef: `re_test_${tag}`, status: "failed" })) === "unchanged", "the same answer again changes nothing");
+  check((await settleRefund(payload, { provider: "stripe", refundRef: "re_not_ours", status: "failed" })) === "ignored", "a refund that isn't ours is ignored");
+
+  // Stripe sends two events for one failure (charge.refund.updated AND refund.updated) at the same moment; another
+  // refund of 300 on the order succeeded – the failed 400 must come off once: 700 → 300, not 700 → 0
+  const twoOrder = (await payload.create({
+    collection: "orders",
+    data: { store, orderNumber: `RF2-${tag}`, placedAt: new Date().toISOString(), status: "delivered", customer: { name: "Refund Twice", phone: "0300-1112229", city: "Karachi", address: "Street 1, Block 2" }, items: [{ title: "Mouse", qty: 1, unitPrice: 1000 }], subtotal: 1000, total: 1000, paymentMethod: "card", paymentStatus: "partially-refunded" } as never,
+    overrideAccess: true,
+    depth: 0,
+    context: { migrating: true },
+  })) as unknown as Doc;
+  const twoId = Number(twoOrder.id);
+  cleanup.push(() => payload.delete({ collection: "orders", id: twoId, overrideAccess: true, context: { migrating: true, system: true } }));
+  cleanup.unshift(() => payload.delete({ collection: "payment-transactions", where: { order: { equals: twoId } }, overrideAccess: true }));
+  const twoCharge = (await payload.create({ collection: "payment-transactions", data: { store, order: twoId, kind: "charge", status: "partially_refunded", provider: "stripe", providerRef: `cs_test_rf2_${tag}`, paymentIntent: `pi_test_rf2_${tag}`, amount: 1000, refundedAmount: 700, currency: "PKR", idempotencyKey: `rf2-${tag}` } as never, overrideAccess: true, depth: 0 })) as unknown as Doc;
+  await payload.create({ collection: "payment-transactions", data: { store, order: twoId, kind: "refund", status: "succeeded", provider: "stripe", providerRef: `re_ok_${tag}`, amount: 300, currency: "PKR", idempotencyKey: `refund:${twoId}:0:300` } as never, overrideAccess: true, depth: 0 });
+  await payload.create({ collection: "payment-transactions", data: { store, order: twoId, kind: "refund", status: "pending", provider: "stripe", providerRef: `re_two_${tag}`, amount: 400, currency: "PKR", idempotencyKey: `refund:${twoId}:300:400` } as never, overrideAccess: true, depth: 0 });
+  const twice = await Promise.all([settleRefund(payload, { provider: "stripe", refundRef: `re_two_${tag}`, status: "failed" }), settleRefund(payload, { provider: "stripe", refundRef: `re_two_${tag}`, status: "failed" })]);
+  const twoAfter = (await payload.findByID({ collection: "payment-transactions", id: Number(twoCharge.id), depth: 0, overrideAccess: true })) as unknown as Doc;
+  const twoOrderAfter = (await payload.findByID({ collection: "orders", id: twoId, depth: 0, overrideAccess: true })) as unknown as Doc;
+  check(Number(twoAfter.refundedAmount) === 300 && twoAfter.status === "partially_refunded" && twoOrderAfter.paymentStatus === "partially-refunded", `the same failure reported twice at once is taken off once (refunded ${String(twoAfter.refundedAmount)}, ${String(twoAfter.status)}, order ${String(twoOrderAfter.paymentStatus)}; ${twice.join(", ")})`);
 
   // ── editing an order in /cms keeps what the checkout added on top: tax added on top (follows the goods) and the
   //    cash-on-delivery fee; an order waiting for its online payment can't change its total ──

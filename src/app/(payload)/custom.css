@@ -392,6 +392,10 @@ html[data-theme="dark"] .nav {
   color: var(--theme-text);
   font: 500 16px var(--font-body);
 }
+/* the input has no outline of its own: the whole field shows where the keyboard is */
+.urko-search__field:focus-within {
+  box-shadow: inset 0 0 0 2px var(--urko-accent);
+}
 .urko-search__results {
   max-height: 60vh;
   overflow-y: auto;
@@ -873,7 +877,8 @@ a.urko-ocell:hover strong { color: var(--urko-accent); }
 .urko-table th { font-size: 12px; color: var(--theme-elevation-600); font-weight: 600; }
 .urko-table .n { text-align: right; white-space: nowrap; }
 .urko-table a { color: var(--theme-text); }
-@media (max-width: 600px) { .urko-table th:nth-child(5), .urko-table td:nth-child(5) { display: none; } }
+/* wide tables scroll sideways on phones (the page itself clips sideways overflow) instead of hiding a column */
+.urko-table-wrap { overflow-x: auto; max-width: 100%; }
 
 /* returns & warranty */
 .urko-photos { margin-bottom: 24px; }

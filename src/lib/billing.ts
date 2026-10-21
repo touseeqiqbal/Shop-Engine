@@ -67,9 +67,16 @@ export async function choosePlan(payload: Payload, input: { storeId: number; pla
   if (!plan || plan.status !== "active") return { ok: false, error: "This plan isn't available." };
   const store = (await payload.findByID({ collection: "stores", id: input.storeId, depth: 0, overrideAccess: true })) as unknown as Doc;
   const price = Number(input.cycle === "annual" ? plan.priceAnnual : plan.priceMonthly) || 0;
+  // free only when the plan costs nothing either way – a paid plan with no yearly price set (0, the default) must not
+  // become free by choosing "yearly"
+  if (price === 0 && ((Number(plan.priceMonthly) || 0) > 0 || (Number(plan.priceAnnual) || 0) > 0)) return { ok: false, error: `This plan isn't offered ${input.cycle === "annual" ? "yearly" : "monthly"}.` };
   const now = new Date();
   if (price === 0) {
-    await setPlanState(payload, input.storeId, { plan: input.planId, status: "active", billingCycle: input.cycle, amount: 0, currency: String(plan.currency || "PKR"), paymentProvider: "free", currentPeriodStart: now.toISOString(), currentPeriodEnd: null, trialEndsAt: null, graceEndsAt: null });
+    // moving to a free plan ends the paid subscription at Stripe too (it used to keep charging, and its next event
+    // brought the paid plan back)
+    const current = await subscriptionOf(payload, input.storeId);
+    if (current?.externalSubscriptionId && stripeConfigured()) await stripe("DELETE", `/subscriptions/${encodeURIComponent(String(current.externalSubscriptionId))}`);
+    await setPlanState(payload, input.storeId, { plan: input.planId, status: "active", billingCycle: input.cycle, amount: 0, currency: String(plan.currency || "PKR"), paymentProvider: "free", externalSubscriptionId: null, currentPeriodStart: now.toISOString(), currentPeriodEnd: null, trialEndsAt: null, graceEndsAt: null });
     return { ok: true };
   }
   // the one free trial a store gets
@@ -129,6 +136,12 @@ export async function handleBillingEvent(payload: Payload, event: { type: string
     case "customer.subscription.deleted": {
       const storeId = storeOf(o.metadata);
       if (!storeId) return false;
+      // a subscription that is no longer the store's (it moved to a free plan, or subscribed anew): its late events
+      // must not bring the old plan back
+      if (event.type !== "customer.subscription.created") {
+        const row = await subscriptionOf(payload, storeId);
+        if (row && String(row.externalSubscriptionId ?? "") !== String(o.id)) return true;
+      }
       // events can arrive late or out of order (retries): with Stripe set up, the subscription's CURRENT state is read
       // from Stripe instead of this event's (possibly old) snapshot
       await syncSubscription(payload, storeId, String(o.id), { customer: String(o.customer ?? ""), planId: Number((o.metadata as Doc)?.planId) || null, ...(stripeConfigured() ? {} : { object: o }) });
@@ -237,6 +250,7 @@ export async function storeLimits(payload: Payload, storeId: number | null): Pro
   const store = (await payload.findByID({ collection: "stores", id: storeId, depth: 1, overrideAccess: true }).catch(() => null)) as unknown as Doc | null;
   if (!store || store.isDefault) return unlimited;
   const plan = store.plan && typeof store.plan === "object" ? (store.plan as Doc) : null;
-  if (!plan) return unlimited;
+  // a store without a plan (none chosen yet, the payment page abandoned) gets none of the paid features
+  if (!plan) return { ...unlimited, features: [] };
   return { maxProducts: Number(plan.maxProducts) || 0, maxStaffMembers: Number(plan.maxStaffMembers) || 0, maxStorageGb: Number(plan.maxStorageGb) || 0, features: Array.isArray(plan.features) ? (plan.features as string[]) : [] };
 }

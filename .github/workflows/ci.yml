@@ -166,6 +166,8 @@ jobs:
           E2E_BASE_URL=http://localhost:3000 npm run test:e2e || (tail -n 80 server.log; exit 1)
           # the same server: anonymous access to every collection, private files and admin endpoints is refused
           npm run test:security -- http://localhost:3000 || (tail -n 80 server.log; exit 1)
+          # every page and link of the shop answers (an error on one store page – e.g. /about – fails the build)
+          npm run test:crawl -- http://localhost:3000 || (tail -n 80 server.log; exit 1)
 
       # the backup service's image builds, and a dump made exactly like its nightly one restores into an empty database
       # with every table and row (docs/BACKUP-RESTORE.md, "Option B")

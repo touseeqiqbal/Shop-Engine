@@ -1,6 +1,7 @@
 import { revalidatePath, revalidateTag } from "next/cache";
 import { after } from "next/server";
 import { log } from "../lib/log";
+import { forgetCatalogBuilds } from "../lib/catalog-parts";
 
 /** Outside a Next.js request (CLI scripts, migrations, jobs) there is nothing to revalidate – any other error is real. */
 const outsideNext = (e: unknown) => /store missing|outside a request|static generation|workAsyncStorage|not.*request scope|after\(\) was called/i.test(String((e as Error)?.message ?? e));
@@ -31,6 +32,7 @@ export function clearRedirectCache() {
 }
 
 function run(tags: string[], paths: string[], layout: boolean, soft = false) {
+  forgetCatalogBuilds();
   for (const t of tags) revalidateTag(t, soft ? "max" : { expire: 0 });
   for (const p of paths) revalidatePath(p);
   if (layout) revalidatePath("/", "layout");
